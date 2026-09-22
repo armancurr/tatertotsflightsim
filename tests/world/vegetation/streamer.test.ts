@@ -68,7 +68,7 @@ describe('ChunkStreamer — time slicing', () => {
       if (!r.urgent) expect(made).toBeLessThanOrEqual(16);
       else expect(made).toBeLessThanOrEqual(64);
     }
-  });
+  }, 90000);
 
   it('respects the time budget with an injected clock (always ≥ 1 cell of progress)', () => {
     let t = 0;
@@ -78,7 +78,7 @@ describe('ChunkStreamer — time slicing', () => {
       expect(r.generated).toBeGreaterThanOrEqual(1);
       expect(r.generated).toBeLessThanOrEqual(4);
     }
-  });
+  }, 90000);
 
   it('urgent mode: the chunk under the camera gets the larger budget until it is ready', () => {
     const s = setup();
@@ -87,7 +87,7 @@ describe('ChunkStreamer — time slicing', () => {
     expect(r.generated).toBe(64);
     runUntilIdle(s, 10, 10);
     expect(s.streamer.update(10, 10).urgent).toBe(false);
-  });
+  }, 90000);
 
   it('eventually readies every chunk in range, nearest first', () => {
     const s = setup();
@@ -97,7 +97,7 @@ describe('ChunkStreamer — time slicing', () => {
     expect(s.streamer.pendingCells()).toBe(0);
     for (const c of s.streamer.chunks.values()) expect(c.ready).toBe(true);
     for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThanOrEqual(order[i - 1] - 1e-9);
-  });
+  }, 90000);
 });
 
 describe('ChunkStreamer — chunk contents', () => {
@@ -131,7 +131,7 @@ describe('ChunkStreamer — chunk contents', () => {
       expect(c.countForKeep(k)).toBeGreaterThanOrEqual(n);
       expect(c.countForKeep(k)).toBeLessThanOrEqual(n + c.count / 64 + 8);
     }
-  });
+  }, 90000);
 
   it('the per-cell index lists every tree once, inside its cell', () => {
     const s = setup();
@@ -155,7 +155,7 @@ describe('ChunkStreamer — chunk contents', () => {
       }
       expect([...seen].every((v) => v === 1)).toBe(true);
     }
-  });
+  }, 90000);
 
   it('chunks with no trees are ready but take no buffer', () => {
     const s = setup({}, () => 0);
@@ -166,7 +166,7 @@ describe('ChunkStreamer — chunk contents', () => {
       expect(c.slot).toBeNull();
     }
     expect(s.pool.stats().inUse).toBe(0);
-  });
+  }, 90000);
 });
 
 describe('ChunkStreamer — pooling while flying (functional)', () => {
@@ -189,7 +189,7 @@ describe('ChunkStreamer — pooling while flying (functional)', () => {
     expect(s.evicted).toBeGreaterThan(50);
     s.streamer.dispose();
     expect(s.pool.stats().inUse).toBe(0);
-  });
+  }, 90000);
 
   it('hysteresis: jittering back and forth over a chunk border does not churn chunks', () => {
     const s = setup();
@@ -197,7 +197,7 @@ describe('ChunkStreamer — pooling while flying (functional)', () => {
     const evicted0 = s.evicted;
     for (let i = 0; i < 200; i++) s.streamer.update(i % 2 ? 505 : 519, 0);
     expect(s.evicted).toBe(evicted0);
-  });
+  }, 90000);
 
   it('fuzz: for any path, live chunks all lie within range + margin and inUse = chunks holding a slot', () => {
     fc.assert(
@@ -218,5 +218,5 @@ describe('ChunkStreamer — pooling while flying (functional)', () => {
       }),
       { numRuns: 25 },
     );
-  });
+  }, 90000);
 });

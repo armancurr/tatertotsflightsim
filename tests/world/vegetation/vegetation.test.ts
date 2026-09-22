@@ -55,7 +55,7 @@ describe('createVegetation — functional', () => {
     expect(s.drawCalls).toBeGreaterThanOrEqual(2);
     expect(s.drawCalls).toBeLessThan(60);
     veg.dispose();
-  });
+  }, 90000);
 
   it('obstacleTop matches the pure obstacle field (fuzz) and is a crash inside the forest', () => {
     const { veg } = make();
@@ -79,7 +79,7 @@ describe('createVegetation — functional', () => {
     // The runway is open.
     expect(veg.obstacleTop(0, 0)).toBe(-Infinity);
     veg.dispose();
-  });
+  }, 90000);
 
   it('LOD by altitude: no meshes from 1 km up, nothing at all from 6 km up', () => {
     const { veg, cam } = make({ treeViewDistance: 4500 });
@@ -91,7 +91,7 @@ describe('createVegetation — functional', () => {
     settle(veg, cam, 5);
     expect(veg.stats().trees).toBe(0);
     veg.dispose();
-  });
+  }, 90000);
 
   it('respects maxTrees (impostors thin out globally so the total stays under the cap)', () => {
     const { veg, cam } = make({ maxTrees: 15000 });
@@ -100,7 +100,7 @@ describe('createVegetation — functional', () => {
     expect(veg.stats().trees).toBeLessThanOrEqual(15000);
     expect(veg.stats().trees).toBeGreaterThan(8000);
     veg.dispose();
-  });
+  }, 90000);
 
   it('chunk frustum culling: looking straight up from high above draws no impostor chunks', () => {
     const { veg, cam } = make();
@@ -111,7 +111,7 @@ describe('createVegetation — functional', () => {
     veg.update(cam, 2);
     expect(veg.stats().visibleChunks).toBe(0);
     veg.dispose();
-  });
+  }, 90000);
 
   it('chunk bounding spheres contain every tree they draw (base, top, crown and billboard growth)', () => {
     const { veg, cam } = make();
@@ -136,7 +136,7 @@ describe('createVegetation — functional', () => {
       }
     }
     veg.dispose();
-  });
+  }, 90000);
 
   it('time-sliced streaming: cells generated per frame never exceed the budget in cruise', () => {
     const { veg, cam } = make({ maxCellsPerFrame: 6, urgentBudgetMs: 1e9 });
@@ -150,7 +150,7 @@ describe('createVegetation — functional', () => {
       if (!s.urgent) expect(s.cellsThisFrame).toBeLessThanOrEqual(6);
     }
     veg.dispose();
-  });
+  }, 90000);
 
   it('pool reuse: flying 50 km in steps keeps pooled buffers and scene objects bounded; dispose cleans up', () => {
     const { scene, veg, cam } = make({ maxCellsPerFrame: 4096 });

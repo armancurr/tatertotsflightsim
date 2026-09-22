@@ -11,10 +11,12 @@ describe('species meshes', () => {
       const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
       const col = g.getAttribute('color') as THREE.BufferAttribute;
 
-      it('is a low-poly mesh of a few hundred triangles with normals and vertex colours', () => {
+      it('is a low-poly leaf-card mesh (a few hundred triangles) with normals, UVs and vertex colours', () => {
         const tris = triangleCount(g);
         expect(tris).toBeGreaterThanOrEqual(150);
-        expect(tris).toBeLessThanOrEqual(600);
+        expect(tris).toBeLessThanOrEqual(1000);
+        expect(g.getAttribute('uv').count).toBe(pos.count);
+        expect(g.getAttribute('leaf').count).toBe(pos.count);
         expect(nrm.count).toBe(pos.count);
         expect(col.count).toBe(pos.count);
         expect(g.index).not.toBeNull();
@@ -53,13 +55,17 @@ describe('species meshes', () => {
         expect(maxRho).toBeGreaterThan(0.85);
       });
 
-      it('is irregular, not a cone or a ball: the silhouette radius varies around the crown', () => {
+      it('is irregular, not a cone or a ball: the foliage radius varies around the crown', () => {
+        // (the outermost cards are clamped to the physics envelope, so measure the mean radius per sector)
         const bins = new Float64Array(16);
+        const nb = new Float64Array(16);
         for (let i = 0; i < pos.count; i++) {
           const a = Math.atan2(pos.getZ(i), pos.getX(i));
           const b = Math.min(15, Math.floor(((a + Math.PI) / (2 * Math.PI)) * 16));
-          bins[b] = Math.max(bins[b], Math.hypot(pos.getX(i), pos.getZ(i)));
+          bins[b] += Math.hypot(pos.getX(i), pos.getZ(i));
+          nb[b]++;
         }
+        for (let b = 0; b < 16; b++) bins[b] /= Math.max(1, nb[b]);
         const mean = bins.reduce((a, b) => a + b, 0) / 16;
         const sd = Math.sqrt(bins.reduce((a, b) => a + (b - mean) ** 2, 0) / 16);
         expect(sd / mean).toBeGreaterThan(0.015);

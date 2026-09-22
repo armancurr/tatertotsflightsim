@@ -24,6 +24,13 @@ import {
   BUSH,
   MAX_CROWN_RADIUS,
   MAX_TREE_HEIGHT,
+  SPRUCE,
+  PINE,
+  BROADLEAF,
+  BIRCH,
+  WILLOW,
+  type VegWorld,
+  type SiteSample,
 } from '../../../src/world/vegetation/placement';
 
 const P = placementParams();
@@ -127,19 +134,37 @@ describe('treesInCell — tree records', () => {
     expect(c.count).toBeLessThanOrEqual(P.gridPerCell * P.gridPerCell);
   });
 
-  it('produces all four species across a varied landscape', () => {
+  it('produces all seven species across a varied landscape (willows by the water)', () => {
     const seen = new Set<number>();
     const density = (x: number, z: number) => 0.5 + 0.5 * Math.sin(x / 900) * Math.cos(z / 700);
-    for (let i = 0; i < 400 && seen.size < 4; i++) {
-      const c = treesInCell((i % 20) * 9 - 90, Math.floor(i / 20) * 9 - 90, density, hills, 11);
+    // a river along z = 0 and ground rising to the north (conifers up there)
+    const world: VegWorld = {
+      heightAt: (x, z) => 60 + Math.max(0, -z) * 0.25,
+      densityAt: density,
+      site(x, z, _ny, _nz, out: SiteSample) {
+        out.density = density(x, z);
+        out.height = this.heightAt(x, z);
+        out.water = Math.abs(z) - 20;
+        out.field = 0;
+        out.urban = 0;
+        out.grass = 0.2;
+        out.forest = out.density;
+        out.road = Infinity;
+        out.airport = Infinity;
+        return out;
+      },
+    };
+    for (let i = 0; i < 600 && seen.size < SPECIES_COUNT; i++) {
+      const c = treesInCell((i % 20) * 9 - 90, Math.floor(i / 20) * 3 - 60, world, 11);
       for (let t = 0; t < c.count; t++) seen.add(c.data[t * TREE_STRIDE + T_SPECIES]);
     }
-    expect([...seen].sort()).toEqual([CONIFER, DECIDUOUS, POPLAR, BUSH]);
+    expect([...seen].sort()).toEqual([SPRUCE, PINE, BROADLEAF, BIRCH, POPLAR, WILLOW, BUSH]);
+    expect([CONIFER, DECIDUOUS]).toEqual([SPRUCE, BROADLEAF]);
   });
 
   it('species sizes are realistic: conifers and poplars tall, bushes low', () => {
-    const sum = new Float64Array(4);
-    const n = new Float64Array(4);
+    const sum = new Float64Array(SPECIES_COUNT);
+    const n = new Float64Array(SPECIES_COUNT);
     const density = (x: number, z: number) => 0.55 + 0.45 * Math.sin(x / 700);
     for (let i = 0; i < 300; i++) {
       const c = treesInCell(i - 150, (i * 13) % 97, density, hills, 5);
@@ -151,8 +176,10 @@ describe('treesInCell — tree records', () => {
     }
     const mean = (s: number) => sum[s] / Math.max(1, n[s]);
     expect(mean(CONIFER)).toBeGreaterThan(12);
+    expect(mean(PINE)).toBeGreaterThan(12);
     expect(mean(POPLAR)).toBeGreaterThan(14);
     expect(mean(DECIDUOUS)).toBeGreaterThan(8);
+    expect(mean(BIRCH)).toBeGreaterThan(8);
     expect(mean(BUSH)).toBeLessThan(5);
   });
 });
@@ -274,7 +301,7 @@ describe('canopy profile (the obstacle shape of every species)', () => {
 
   it('fuzz: non-increasing from trunk to crown edge, within [0, 1]', () => {
     fc.assert(
-      fc.property(fc.integer({ min: 0, max: 3 }), fc.double({ min: 0, max: 1, noNaN: true }), fc.double({ min: 0, max: 1, noNaN: true }), (s, a, b) => {
+      fc.property(fc.integer({ min: 0, max: SPECIES_COUNT - 1 }), fc.double({ min: 0, max: 1, noNaN: true }), fc.double({ min: 0, max: 1, noNaN: true }), (s, a, b) => {
         const lo = Math.min(a, b);
         const hi = Math.max(a, b);
         const pl = canopyProfile(s, lo);

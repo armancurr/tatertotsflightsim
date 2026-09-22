@@ -511,18 +511,18 @@ export const CONFIG = {
       /** Beyond this distance (m, camera → tree) no tree is drawn; the terrain colour takes over. */
       treeViewDistance: 4500,
       /** Hard cap on tree instances submitted to the GPU per frame (all LODs). */
-      maxTrees: 160000,
+      maxTrees: 200000,
       /** Placement cell (m): the unit of deterministic generation, streaming work and the obstacle hash. */
       cellSize: 64,
       /** Jittered-grid candidates per cell side (cellSize / gridPerCell = tree spacing in full forest, m). */
       gridPerCell: 10,
       /** Streaming chunk (m, a multiple of cellSize): one impostor draw call per visible chunk. */
-      chunkSize: 1024,
+      chunkSize: 2048,
       /** Full 3D meshes out to this distance (m); impostors beyond. */
-      meshDistance: 300,
+      meshDistance: 210,
       /** Width of the dithered mesh ↔ impostor cross-fade band (m), ending at meshDistance. */
-      lodFadeBand: 60,
-      /** Near trees closer than this cast sun shadows (m). */
+      lodFadeBand: 50,
+      /** (legacy) every near mesh casts shadows; the sun's shadow map covers about this far. */
       shadowDistance: 200,
       /** Impostors fade out over this band (m) ending at treeViewDistance. */
       farFadeBand: 1100,
@@ -531,23 +531,58 @@ export const CONFIG = {
       thinExponent: 1.5,
       /** Maximum impostor enlargement compensating for thinning. */
       thinCompensationMax: 1.6,
-      /** Preallocated near-mesh instances per species (the near pool). */
-      nearCapacity: 12000,
-      /** Rebuild the near-mesh set after the camera moves this far (m). */
-      nearRebuildDistance: 12,
-      /** Time budget for generating tree cells per frame (ms) — streaming never hitches. */
+      /** Preallocated near-mesh instances per species. */
+      nearCapacity: 6000,
+      /** Rebuild the near-mesh set after the camera moves this far (m)… */
+      nearRebuildDistance: 8,
+      /** …or turns by more than acos(this) (cos 7°). */
+      nearRebuildCos: 0.9925,
+      /** The near set is culled per placement cell against the view frustum widened by this factor… */
+      nearFrustumWiden: 1.4,
+      /** …except cells within this distance (m), which always draw (their shadows fall into view). */
+      nearAlwaysDistance: 60,
+      /** Web Workers generating tree chunks and grass cells (0 = inline on the main thread). */
+      workers: 3,
+      /** Inline fallback only: time budget for generating tree cells per frame (ms). */
       frameBudgetMs: 1.5,
-      /** Budget when the camera's own chunk has no trees yet (first frame / teleport), ms. */
+      /** Inline fallback only: budget when the camera's own chunk has no trees yet (ms). */
       urgentBudgetMs: 30,
-      /** Hard cap on cells generated per frame (in addition to the time budget). */
+      /** Inline fallback only: hard cap on cells generated per frame. */
       maxCellsPerFrame: 48,
       /** Placement cells kept for obstacle queries (LRU). */
       obstacleCacheCells: 256,
-      /** Impostor atlas tile size (px); the atlas is 4 view elevations × 4 species. */
-      impostorTileSize: 256,
+      /** Impostor atlas tile size (px); the atlas is 6 view elevations × 7 species. */
+      impostorTileSize: 192,
       /** Wind sway: strength multiplier and gust speed multiplier. */
       windStrength: 1,
       windSpeed: 1,
+      /** Strength of the sunlit-leaf translucency (back-lit glow), 0 = off. */
+      translucency: 1,
+    },
+    /** Grass tufts and wildflowers near the camera (owned by src/world/grass). */
+    grass: {
+      /** Tufts are drawn out to this distance from the camera (m), thinning with distance. */
+      viewDistance: 120,
+      /** Full density within this distance (m); beyond, keep ∝ (d0/d)^thinExponent. */
+      fullDensityDistance: 16,
+      thinExponent: 1.35,
+      /** No grass once the camera is this high above the ground (m); fades in below fadeHeight. */
+      maxHeight: 90,
+      fadeHeight: 45,
+      /** Grass cell size (m) and candidate tufts per cell side (cellSize/perSide = tuft spacing). */
+      cellSize: 16,
+      perSide: 32,
+      /** The mown airfield: within this distance of the runway centre (m). */
+      mownRadius: 1300,
+      /** Hard cap on tufts drawn. */
+      maxTufts: 60000,
+      /** Rebuild the instance list after the camera moves this far (m) or turns acos(rebuildCos). */
+      rebuildDistance: 2,
+      rebuildCos: 0.99,
+      /** Blades per tuft. */
+      blades: 7,
+      /** Wind sway multiplier. */
+      windStrength: 1,
     },
     /** Buildings, farmsteads and roads (owned by src/world/towns + src/world/roads). */
     towns: {
