@@ -236,6 +236,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.time = clock.time;
     visual.cameraMode = camRig.mode;
     visual.instruments = readings;
+    visual.crashed = state.phase === 'crashed';
+    visual.crashAge = state.crash ? Math.max(0, state.time - state.crash.time) : 0;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.
