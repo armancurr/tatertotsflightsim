@@ -7,7 +7,7 @@
 > `/Users/jt/Code/coeus/EX_PROMPT_7_FLIGHT_SIM.md`; this PLAN.md holds the architecture,
 > contracts and wave status, RECORD.md holds the build log. Read both, run `npm test`,
 > start `npm start` (port 8092) in the background, then continue with the first wave
-> that is not ✅. Work in waves of at most 5 Opus sub-agents on file-disjoint tasks,
+> that is not ✅ (start with RESUME.md). Work in waves of up to 10 Opus sub-agents (git worktrees) on file-disjoint tasks,
 > test-first; integrate, fly the sim in the on-screen Chrome window (Playwright MCP),
 > photograph every done line into `qa/screenshots/`, commit after each wave.
 
@@ -92,9 +92,10 @@ Vite port 81xx) and commit there; the orchestrator merges each branch into `main
 | Wave | Agents | Status |
 | --- | --- | --- |
 | 0 | Orchestrator: scaffold, types, config, math/frames, runway, shot tool, plan, window.sim, app wiring, interim flyable build | ✅ |
-| 1 (main tree) | PHYSICS · INPUT+CAMERA+LOOP ✅ · WORLD-TERRAIN · ATMOSPHERE · AIRCRAFT-MODEL | ⏳ |
-| 2 (worktrees) | hud (8101) · audiofx (8102) · qatests — fuzz/functional/e2e (8103) · airport (8104) · trees (8105) · towns+roads (8106) | ⏳ |
-| 3 | Orchestrator: merge + integrate app.ts, play-test in Chrome → fix agents; performance pass | |
+| 1 (main tree) | PHYSICS ✅ · INPUT+CAMERA+LOOP ✅ · WORLD-TERRAIN ✅ · ATMOSPHERE ✅ · AIRCRAFT-MODEL ✅ | ✅ |
+| 2 (worktrees) | hud ✅ · audiofx ✅ (unverified in browser) · qatests ✅ · airport ⚠️ data layer only (interim renderer by orchestrator) · trees ✅ (unQA'd) · towns+roads ⚠️ interim renderers — all merged | ✅ merged |
+| — | **STOP POINT 2026-09-22 — see RESUME.md for the handoff prompt and prioritized remaining work** | |
+| 3 | Airport renderer, cockpit/prop polish, towns/roads geometry, vegetation QA, terrain realism, audio/fx verification, startup hitch (see RESUME.md §4–5); orchestrator flies the full flight | next |
 | 4 | Visual QA at 1440 & 1024, docs, final regression | |
 
 Testing layers (user requirement): unit · fuzz/property (fast-check) · functional (scripted
