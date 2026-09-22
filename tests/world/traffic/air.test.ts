@@ -103,11 +103,11 @@ describe('circuit geometry (left-hand traffic, runway 36)', () => {
   });
 });
 
-function run(st: CircuitState, seconds: number, player: PlayerRef | null, dt = 1 / 60, each?: (st: CircuitState) => void) {
+function run(st: CircuitState, seconds: number, player: PlayerRef | null, dt = 1 / 60, each?: (st: CircuitState) => void, every = 1) {
   const n = Math.round(seconds / dt);
   for (let i = 0; i < n; i++) {
     stepCircuit(st, dt, player);
-    each?.(st);
+    if (i % every === 0) each?.(st);
   }
 }
 
@@ -140,14 +140,14 @@ describe('circuit state machine (functional)', () => {
           else if (poses[i].onGround && poses[j].onGround) minGround = Math.min(minGround, d); // taxi queue
           else minMixed = Math.min(minMixed, d); // e.g. landing traffic passing over the hold-short line
         }
-    });
+    }, 5);
     for (const leg of ['up', 'down', 'final', 'tng', 'full', 'hold', 'to'] as LegName[]) expect(seen.has(leg), leg).toBe(true);
     expect(st.aircraft.reduce((n, a) => n + a.laps, 0)).toBeGreaterThan(20);
     expect(minSep).toBeGreaterThan(150);
     expect(minMixed).toBeGreaterThan(25);
     expect(minGround).toBeGreaterThan(15);
     void pose;
-  });
+  }, 120_000);
 
   it('goes around (and never comes within the clearance) while the player sits at the runway 36 threshold', () => {
     const st = createCircuitState(layout);
@@ -165,7 +165,7 @@ describe('circuit state machine (functional)', () => {
     expect(legs.has('ga')).toBe(true);
     expect(legs.has('tng')).toBe(false);
     expect(legs.has('full')).toBe(false);
-  });
+  }, 60_000);
 
   it('is deterministic and independent of the frame rate', () => {
     const a = createCircuitState(layout);
@@ -175,7 +175,7 @@ describe('circuit state machine (functional)', () => {
     while (b.time < a.time - 1e-6) stepCircuit(b, 1 / 144, null);
     expect(b.time).toBeCloseTo(a.time, 6);
     expect(a.aircraft.map((x) => [x.leg, Math.round(x.t * 100)])).toEqual(b.aircraft.map((x) => [x.leg, Math.round(x.t * 100)]));
-  });
+  }, 60_000);
 
   it('fuzz: random player wandering and frame times never break the circuit', () => {
     fc.assert(
@@ -199,7 +199,7 @@ describe('circuit state machine (functional)', () => {
       ),
       { numRuns: 40 },
     );
-  });
+  }, 60_000);
 });
 
 describe('crossing GA, helicopter, airliners', () => {

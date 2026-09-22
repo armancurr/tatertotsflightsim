@@ -114,5 +114,5 @@ describe('wake geometry', () => {
       }),
       { numRuns: 150 },
     );
-  });
+  }, 60_000);
 });

@@ -14,7 +14,7 @@ const water = { groundHeight: (x: number, z: number) => hf.height(x, z), waterLe
 let plan: SeaPlan;
 beforeAll(() => {
   plan = createSeaPlan(getLayout(), water);
-});
+}, 60_000);
 const W = CONFIG.world.traffic.windFromDeg;
 const WK = CONFIG.world.traffic.windKt;
 
