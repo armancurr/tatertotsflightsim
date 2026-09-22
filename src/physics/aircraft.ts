@@ -345,7 +345,11 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // ── Systems: flaps, gear (squat switch), engine ──
   const notches = ac.flaps.notchesDeg;
   const flapsDeg = moveToward(state.flapsDeg, notches[c.flapsNotch], ac.flaps.rateDegPerSec * dt);
-  const gearTarget = c.gearDown || (ac.gear.squatSwitch && state.onGround) ? 1 : 0;
+  // Squat switch + interlock: the gear only starts up once the aircraft has been continuously airborne
+  // for gear.retractDelay s, so a handle raised during the takeoff roll or a skipped bounce can't
+  // fold the gear under a settling aircraft (play-test bug #2).
+  const weightOnWheels = state.onGround || state.airborneTime < ac.gear.retractDelay;
+  const gearTarget = c.gearDown || (ac.gear.squatSwitch && weightOnWheels && state.gearPos >= 0.999) ? 1 : 0;
   const gearPos = moveToward(state.gearPos, gearTarget, dt / ac.gear.transitTime);
   const engine = stepEngine(state.engine, c, dt, rho, Math.max(0, ad.u), iasKt, cfg);
 

@@ -163,9 +163,17 @@ export function computeAero(
   // Low-speed guard: aero fades to zero below ~1 m/s so nothing blows up at rest.
   const fade = smoothstep(0.2, 1.2, V);
   const qbar = 0.5 * density * V * V * fade;
-  const CL = liftCoefficient(alpha, flapsDeg, cfg);
-  const CD = dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg);
   const sf = stallFactor(alpha, flapsDeg, cfg);
+  // Ground effect on the wing (McCormick): within ~a span of the surface the ground blocks the
+  // downwash, so induced drag falls by φ = (16h/b)²/(1+(16h/b)²) and the lift slope rises a little.
+  // Attached flow only (fades out as the wing stalls).
+  const h16 = wingHeightM > 0 ? (16 * wingHeightM) / b : 0;
+  const phi = Number.isFinite(h16) ? (h16 * h16) / (1 + h16 * h16) : 1;
+  const ge = (1 - phi) * (1 - sf);
+  const CL0 = liftCoefficient(alpha, flapsDeg, cfg);
+  const CL = CL0 * (1 + a.groundEffectLift * ge);
+  const aspect = (b * b) / S;
+  const CD = dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg) - ge * ((CL0 * CL0) / (Math.PI * ac.oswald * aspect));
   const f = flapFraction(flapsDeg, cfg);
 
   // Propeller slipstream adds dynamic pressure over the tail (momentum theory Δp = T/A).

@@ -86,3 +86,26 @@ high; startup hitch ~1.7 s (perf.min 0.6 fps, 3 long frames); short 0.7 s pull a
 (it rotated later ~70–80 kt); initial zoom climb 1,300–1,600 fpm while trading speed.
 
 Everything remaining is in RESUME.md.
+
+## 2026-09-22 — Wave 3 launched; play-test bug #2 (orchestrator)
+
+- Infrastructure: `src/game/systems/*.ts` auto-discovered plug-ins replace `extras.ts` (no shared
+  wiring file for 10 parallel branches); per-system CPU timings in `window.sim.perf.systems`;
+  `window.sim.teleport/setTimeOfDay/debug/render`; URL `?spawn=x,z,aglFt,hdg,kt&cam=&tod=&pause=1&no=`;
+  Vite watch-ignores anchored to the checkout root so worktree dev servers hot-reload.
+- Wave 3: 10 Opus agents in worktrees (aircraft, airport, buildings, roads+cars, traffic, terrain,
+  water, sky, trees, ux) — briefs in the session scratchpad `briefs/common3.md`.
+- **Play-test bug #2** (flying the real app in Chrome): a 1.5 s ↓ at Vr lifted off, the elevator
+  snapped back to neutral in 0.3 s, the nose fell toward the 76-kt trim, the aircraft settled back
+  on the runway; G pressed during that hop retracted the gear → "Gear-up landing" crash.
+  Causes: (1) keyboard elevator return 3.5/s — nothing like a pilot easing off back pressure;
+  (2) no wing ground effect on lift/drag (only on pitch moment); (3) squat switch released the gear
+  the instant the wheels unloaded. Probing showed the physics itself is right (neutral trim = hands-off
+  Vy climb at full power: 76 kt, 675 fpm, 8.8° pitch; phugoid damps ~37 %/cycle like a real 172).
+  Fixes (test-first): `controls.pitchReturnRate` 0.8/s (yoke relaxes over ~1.25 s; reversal still
+  fast); McCormick wing ground effect (induced drag × φ, lift +25 %·(1−φ), attached flow);
+  `aircraft.gear.retractDelay` 1.5 s continuous airborne before the gear retracts. Regression:
+  `tests/functional/keyboard-takeoff.test.ts` flies the real input path with a human-like pulse pilot
+  (rotate, hold ~9° to 70 kt, hands off → climbs to > 500 ft at ~77 kt; gear up 0.3 s after liftoff
+  → no belly landing). Note: at full power the aircraft drifts left hands-off (P-factor/torque),
+  like a real 172 — pilots hold right rudder/aileron.

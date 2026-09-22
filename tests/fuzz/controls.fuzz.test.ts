@@ -107,11 +107,15 @@ describe('control system under random input', () => {
     }), fcParams(100));
   });
 
-  it('releasing everything returns yoke, rudder and toe brakes exactly to 0 within 1 s', () => {
+  it('releasing everything returns ailerons, rudder and toe brakes to 0 within 1 s and the elevator within 3 s', () => {
     fc.assert(fc.property(sequenceArb, fc.constantFrom(1 / 30, 1 / 60, 1 / 144), (seq, dt) => {
       let { state } = run(seq);
-      for (let t = 0; t < 1; t += dt) state = updateControls(state, released(), dt).state;
-      const c = state.controls;
+      let t = 0;
+      for (; t < 1; t += dt) state = updateControls(state, released(), dt).state;
+      let c = state.controls;
+      expect([c.aileron, c.rudder, c.brake]).toEqual([0, 0, 0]);
+      for (; t < 3; t += dt) state = updateControls(state, released(), dt).state;
+      c = state.controls;
       expect([c.elevator, c.aileron, c.rudder, c.brake]).toEqual([0, 0, 0, 0]);
       // Latched controls (throttle, trim, flaps, gear, parking brake) are NOT touched by releasing the keys.
       expect(controlsViolation(c)).toBeNull();

@@ -147,6 +147,8 @@ export const CONFIG = {
        * h = wing height above the surface.
        */
       cmGroundEffect: 0.08,
+      /** Wing ground effect: fractional lift increase at the ground (scaled by McCormick's 1 − φ, attached flow). */
+      groundEffectLift: 0.25,
       groundEffectScale: 0.25,
       /** P-factor/torque: yaw moment coefficient (nose left) per unit (thrust/weight · alpha), for alpha > 0 (rigged neutral in cruise). */
       pFactor: 0.08,
@@ -198,6 +200,8 @@ export const CONFIG = {
       transitTime: 5,
       /** Max gear extended speed, knots. */
       vleKt: 140,
+      /** Seconds continuously airborne before the squat-switch interlock lets the gear retract. */
+      retractDelay: 1.5,
       /** Squat switch: the gear will not retract while the aircraft sits on its wheels. */
       squatSwitch: true,
     },
@@ -392,8 +396,10 @@ export const CONFIG = {
     pitchRate: 2.2,
     rollRate: 2.8,
     yawRate: 2.5,
-    /** Units/second the yoke returns to centre when released. */
+    /** Units/second the yoke returns to centre when released (ailerons, rudder; also any reversal). */
     returnRate: 3.5,
+    /** Units/second the ELEVATOR relaxes toward neutral when released — slow, like a pilot easing off back pressure. */
+    pitchReturnRate: 0.8,
     /** Exponential smoothing time constant applied after the rate limit, seconds. */
     smoothingTau: 0.06,
     /** Keyboard throttle change, fraction per second. */

@@ -125,11 +125,28 @@ describe('yoke and rudder keys', () => {
     expect(peak).toBeLessThan(0.3);
     expect(after.state.controls.aileron).toBe(0);
   });
-  it('returns to centre after release at the return rate (full → exactly 0 within 0.6 s)', () => {
+  it('ailerons and rudder return to centre after release at the return rate (full → exactly 0 within 0.6 s)', () => {
+    for (const [key, pick] of [
+      ['ArrowRight', (s: ControlState) => s.controls.aileron],
+      ['KeyD', (s: ControlState) => s.controls.rudder],
+    ] as const) {
+      const held = run(createControlState(), 1, { held: [key] });
+      expect(pick(run(held, 0.15, {}))).toBeGreaterThan(0.2);
+      expect(pick(run(held, 0.35, {}))).toBeLessThan(0.1);
+      expect(pick(run(held, 0.6, {}))).toBe(0);
+    }
+  });
+  it('the elevator eases off gradually after release, like a pilot relaxing back pressure (play-test bug #2)', () => {
+    // A keyboard pilot rotates with a ~1 s hold of ↓; if the yoke snapped back to neutral the nose
+    // would drop and the aircraft settle back onto the runway before reaching climb speed.
     const held = run(createControlState(), 1, { held: ['ArrowDown'] });
-    expect(run(held, 0.15, {}).controls.elevator).toBeGreaterThan(0.2);
-    expect(run(held, 0.35, {}).controls.elevator).toBeLessThan(0.1);
-    expect(run(held, 0.6, {}).controls.elevator).toBe(0);
+    expect(held.controls.elevator).toBeGreaterThan(0.97);
+    // controls.pitchReturnRate (0.8/s): full back pressure relaxes over ~1.25 s instead of snapping in 0.3 s.
+    expect(run(held, 0.3, {}).controls.elevator).toBeGreaterThan(0.6);
+    expect(run(held, 0.8, {}).controls.elevator).toBeGreaterThan(0.25);
+    expect(run(held, 3, {}).controls.elevator).toBe(0);
+    // Pushing the opposite key still reverses it quickly.
+    expect(run(held, 0.4, { held: ['ArrowUp'] }).controls.elevator).toBeLessThan(0.1);
   });
   it('is never jerky: the per-frame change stays small while holding and releasing', () => {
     const a = trace(createControlState(), 0.8, { held: ['ArrowRight'] }, (s) => s.controls.aileron);
@@ -272,8 +289,10 @@ describe('mouse yoke', () => {
   it('returns to centre when the pointer leaves the canvas', () => {
     const s = run(yokeOn(), 0.5, { mouse: { inside: true, x: 0.5, y: 0.5 } });
     expect(s.controls.elevator).toBeGreaterThan(0.5);
+    // Aileron snaps back; the elevator eases off like a released yoke (controls.pitchReturnRate).
     const out = run(s, 0.6, { mouse: { inside: false, x: 0.5, y: 0.5 } });
-    expect(out.controls.elevator).toBe(0);
+    expect(out.controls.aileron).toBe(0);
+    expect(run(s, 3, { mouse: { inside: false, x: 0.5, y: 0.5 } }).controls.elevator).toBe(0);
   });
   it('keyboard input for an axis overrides the mouse while held', () => {
     const s = run(yokeOn(), 0.8, { held: ['ArrowUp'], mouse: { inside: true, x: 0.5, y: 0.5 } });

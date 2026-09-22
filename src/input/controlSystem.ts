@@ -178,6 +178,8 @@ interface AxisInput {
   /** Direct analogue target (gamepad / mouse), or null. */
   analog: number | null;
   rate: number;
+  /** Passive return-to-centre rate when no key is held (units/s); defaults to controls.returnRate. */
+  returnRate?: number;
 }
 
 function stepAxis(raw: number, smoothed: number, inp: AxisInput, dt: number, cfg: Config): { raw: number; value: number } {
@@ -190,7 +192,7 @@ function stepAxis(raw: number, smoothed: number, inp: AxisInput, dt: number, cfg
   } else if (inp.analog !== null) {
     r = inp.analog;
   } else {
-    r = moveToward(r, 0, c.returnRate * dt);
+    r = moveToward(r, 0, (inp.returnRate ?? c.returnRate) * dt);
   }
   r = clamp(r, -1, 1);
   let v = expApproach(smoothed, r, c.smoothingTau, dt);
@@ -259,6 +261,8 @@ export function updateControls(
     key: keyAxis(keys.pitchDown, keys.pitchUp),
     analog: gpAxis(gp?.pitch) ?? mouseElev,
     rate: c.pitchRate,
+    // The yoke eases off gradually (a pilot relaxing back pressure), so a keyboard rotation holds.
+    returnRate: c.pitchReturnRate,
   }, t, cfg);
   const ail = stepAxis(state.raw.aileron, prev.aileron, {
     key: keyAxis(keys.rollLeft, keys.rollRight),
