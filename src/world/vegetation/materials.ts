@@ -3,21 +3,28 @@
  * onBeforeCompile, so the scene's lights, shadows, sky environment and the
  * global atmospheric fog override (ShaderChunk fog_*) all apply unchanged.
  *
- * NEAR (instanced meshes): wind sway + leaf flutter in the vertex shader,
- * per-fragment leaf-clump noise, and a dithered LOD cross-fade: fragments are
- * kept where IGN(pixel) < meshWeight(d). Instances fully past the mesh range
- * collapse to a point (no fragments).
+ * NEAR (instanced leaf-card meshes): alpha-tested foliage atlas with
+ * alpha-to-coverage (MSAA-soft edges), wind sway + leaf flutter in the vertex
+ * shader, bent foliage normals that are NOT flipped on back faces (crowns
+ * shade as volumes), per-fragment leaf-clump noise, translucency (sunlit
+ * leaves glow when back-lit — computed inside three's per-light loop so it
+ * uses the real sun colour and its shadow), and a dithered LOD cross-fade:
+ * fragments are kept where IGN(pixel) < meshWeight(d). Instances fully past
+ * the mesh range collapse to a point (no fragments).
  *
  * IMPOSTOR (one draw per chunk, all species): camera-facing, world-up-aligned
- * billboards reading a baked atlas (4 view elevations × 4 species) with an
- * albedo and a tangent-space normal texture, so they are lit like the meshes.
- * They keep the complementary dither (IGN ≥ meshWeight), thin out with
- * distance by stratified rank (the survivors grow to keep the canopy closed)
- * and fade to nothing toward the view distance. Formulas mirror lod.ts.
+ * billboards reading a baked atlas (6 view elevations × 7 species) with an
+ * albedo and a tangent-space normal texture (+ leaf mask in its alpha), so
+ * they are lit — and back-lit — like the meshes. They keep the complementary
+ * dither (IGN ≥ meshWeight), thin out with distance by stratified rank (the
+ * survivors grow to keep the canopy closed) and fade to nothing toward the
+ * view distance. Formulas mirror lod.ts.
  */
 import * as THREE from 'three';
 import type { LodParams } from './lod';
 import { SPECIES_R0 } from './species';
+import type { FoliageTextures } from './textures';
+import { SPECIES_COUNT } from './placement';
 
 export interface VegUniforms {
   uVegTime: THREE.IUniform<number>;
@@ -30,9 +37,12 @@ export interface VegUniforms {
   uVegThinExp: THREE.IUniform<number>;
   uVegCap: THREE.IUniform<number>;
   uVegCompMax: THREE.IUniform<number>;
+  uVegTransl: THREE.IUniform<number>;
+  uVegSunDir: THREE.IUniform<THREE.Vector3>;
+  uVegSunColor: THREE.IUniform<THREE.Color>;
 }
 
-export function createVegUniforms(lod: LodParams): VegUniforms {
+export function createVegUniforms(lod: LodParams, translucency = 1): VegUniforms {
   return {
     uVegTime: { value: 0 },
     uVegWind: { value: new THREE.Vector2(1, 0.3) },
@@ -44,6 +54,9 @@ export function createVegUniforms(lod: LodParams): VegUniforms {
     uVegThinExp: { value: lod.thinExponent },
     uVegCap: { value: 1 },
     uVegCompMax: { value: lod.thinCompensationMax },
+    uVegTransl: { value: translucency },
+    uVegSunDir: { value: new THREE.Vector3(0, 1, 0) },
+    uVegSunColor: { value: new THREE.Color(1, 1, 1) },
   };
 }
 
@@ -52,22 +65,43 @@ export const CROWN_CENTER = 0.47;
 
 /**
  * Per-instance tint (multiplier on the foliage colour) from the tint hash:
- * brightness ±18 %, hue between cool blue-green and warm yellow-green.
- * `tintGlsl` is the identical GLSL.
+ * brightness ±18 %, hue between cool blue-green and warm yellow-green; willows
+ * silvered; a few broadleaves/birches/poplars already turning (late
+ * summer, ~2 %). `tintGlsl` is the identical GLSL.
  */
 export function tintColor(t: number, species: number, out: THREE.Color): THREE.Color {
   const f = (((t * 7.31) % 1) + 1) % 1;
   const b = 0.82 + 0.36 * f;
-  const hue = species === 0 ? 0.35 : 1;
-  const w = (t - 0.5) * hue;
-  out.setRGB((1 + 0.1 * w) * b, (1 + 0.03 * w) * b, (1 - 0.22 * w) * b);
+  const conifer = species <= 1;
+  const w = (t - 0.5) * (conifer ? 0.35 : 1);
+  let r = (1 + 0.1 * w) * b;
+  let g = (1 + 0.03 * w) * b;
+  let bl = (1 - 0.22 * w) * b;
+  if (species === 5) {
+    r *= 1.05;
+    g *= 1.0;
+    bl *= 1.55;
+  }
+  if (t > 0.982 && (species === 2 || species === 3 || species === 4)) {
+    const k = (t - 0.982) / 0.018; // turning: olive-yellow → golden
+    r *= 1.45 + 0.4 * k;
+    g *= 1.12 - 0.08 * k;
+    bl *= 0.6;
+  }
+  out.setRGB(r, g, bl);
   return out;
 }
 const tintGlsl = /* glsl */ `
 vec3 vegTint(float t, float sp) {
   float b = 0.82 + 0.36 * fract(fract(t * 7.31) + 1.0);
-  float w = (t - 0.5) * (sp < 0.5 ? 0.35 : 1.0);
-  return vec3(1.0 + 0.1 * w, 1.0 + 0.03 * w, 1.0 - 0.22 * w) * b;
+  float w = (t - 0.5) * (sp < 1.5 ? 0.35 : 1.0);
+  vec3 c = vec3(1.0 + 0.1 * w, 1.0 + 0.03 * w, 1.0 - 0.22 * w) * b;
+  if (abs(sp - 5.0) < 0.5) c *= vec3(1.05, 1.0, 1.55);
+  if (t > 0.982 && sp > 1.5 && sp < 4.5) {
+    float k = (t - 0.982) / 0.018;
+    c *= vec3(1.45 + 0.4 * k, 1.12 - 0.08 * k, 0.6);
+  }
+  return c;
 }
 `;
 
@@ -90,32 +124,52 @@ float vegNoise3(vec3 x) {
 }
 `;
 
+/**
+ * Translucency of a thin leaf lit from behind (view space): a forward-scatter
+ * lobe toward the viewer plus diffuse transmission, tinted toward warm
+ * yellow-green (light through chlorophyll).
+ */
+const translGlsl = /* glsl */ `
+vec3 vegTranslucency(vec3 L, vec3 V, vec3 N, vec3 lightColor, vec3 albedo, float amount) {
+  float fwd = pow(clamp(dot(V, -L), 0.0, 1.0), 4.0);
+  float trans = clamp(dot(-N, L), 0.0, 1.0);
+  vec3 tint = albedo * vec3(1.25, 1.35, 0.55);
+  return lightColor * tint * (0.9 * fwd + 0.35 * trans) * amount;
+}
+`;
+
+const DIR_LOOP_CALL = 'RE_Direct( directLight, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight );';
+
+/** three's lights_fragment_begin with our translucency added after every direct light. */
+function withTranslucency(amount: string): string {
+  const src = THREE.ShaderChunk.lights_fragment_begin;
+  if (!src.includes(DIR_LOOP_CALL)) return '#include <lights_fragment_begin>';
+  return src.split(DIR_LOOP_CALL).join(
+    `${DIR_LOOP_CALL}
+    reflectedLight.directDiffuse += vegTranslucency(directLight.direction, geometryViewDir, geometryNormal, directLight.color, material.diffuseColor.rgb, ${amount});`,
+  );
+}
+
 function uniformDecls(u: VegUniforms): string {
   return Object.keys(u)
     .map((k) => {
       const v = (u as unknown as Record<string, THREE.IUniform>)[k].value;
-      return `uniform ${v instanceof THREE.Vector2 ? 'vec2' : 'float'} ${k};`;
+      const t = v instanceof THREE.Vector2 ? 'vec2' : v instanceof THREE.Vector3 || v instanceof THREE.Color ? 'vec3' : 'float';
+      return `uniform ${t} ${k};`;
     })
     .join('\n');
 }
 
-/** Material for the near instanced meshes of one species. */
-export function createNearMaterial(u: VegUniforms): THREE.MeshStandardMaterial {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0, fog: true });
-  m.name = 'vegetation-near';
-  m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, u);
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-${uniformDecls(u)}
-varying float vVegFade;
-varying vec3 vVegPos;`,
-      )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
+/** Wind sway (whole tree, ∝ height²) + flutter (leaves only). Needs `transformed`, `vegBase`, `vegLeaf`. */
+const windGlsl = /* glsl */ `
+  float vegPh = dot(vegBase.xz, vec2(0.0131, 0.0173));
+  float vegHf = max(transformed.y, 0.0);
+  float vegGust = sin(uVegTime * 1.13 + vegPh) * 0.65 + sin(uVegTime * 2.37 + vegPh * 1.9) * 0.35;
+  transformed.xz += uVegWind * vegGust * vegHf * vegHf * 0.03;
+  transformed += objectNormal * sin(uVegTime * 7.3 + dot(position, vec3(17.0, 11.0, 13.0)) + vegPh * 3.0) * 0.01 * vegHf * vegLeaf;
+`;
+
+const vegBaseGlsl = /* glsl */ `
 #ifdef USE_INSTANCING
   vec3 vegBase = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
   float vegH = length(instanceMatrix[1].xyz);
@@ -124,12 +178,41 @@ varying vec3 vVegPos;`,
   float vegH = 1.0;
 #endif
   float vegD = distance(cameraPosition, vegBase + vec3(0.0, ${CROWN_CENTER} * vegH, 0.0));
+`;
+
+/** Material for the near instanced meshes (all species share it). */
+export function createNearMaterial(u: VegUniforms, tex: FoliageTextures): THREE.MeshStandardMaterial {
+  const m = new THREE.MeshStandardMaterial({
+    map: tex.map,
+    vertexColors: true,
+    roughness: 0.82,
+    metalness: 0,
+    alphaTest: 0.45,
+    alphaToCoverage: true,
+    side: THREE.DoubleSide,
+    fog: true,
+  });
+  m.name = 'vegetation-near';
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, u);
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+${uniformDecls(u)}
+attribute float leaf;
+varying float vVegFade;
+varying float vVegLeaf;
+varying vec3 vVegPos;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+${vegBaseGlsl}
   vVegFade = 1.0 - smoothstep(uVegMeshDist - uVegLodBand, uVegMeshDist, vegD);
-  float vegPh = dot(vegBase.xz, vec2(0.0131, 0.0173));
-  float vegHf = max(transformed.y, 0.0);
-  float vegGust = sin(uVegTime * 1.13 + vegPh) * 0.65 + sin(uVegTime * 2.37 + vegPh * 1.9) * 0.35;
-  transformed.xz += uVegWind * vegGust * vegHf * vegHf * 0.035;
-  transformed += objectNormal * sin(uVegTime * 7.3 + dot(position, vec3(17.0, 11.0, 13.0)) + vegPh * 3.0) * 0.012 * vegHf;
+  float vegLeaf = leaf;
+  vVegLeaf = leaf;
+${windGlsl}
   if (vVegFade <= 0.0) transformed = vec3(0.0);
 #ifdef USE_INSTANCING
   vVegPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
@@ -141,10 +224,13 @@ varying vec3 vVegPos;`,
       .replace(
         '#include <common>',
         `#include <common>
+uniform float uVegTransl;
 varying float vVegFade;
+varying float vVegLeaf;
 varying vec3 vVegPos;
 ${commonGlsl}
-${noiseGlsl}`,
+${noiseGlsl}
+${translGlsl}`,
       )
       .replace(
         '#include <clipping_planes_fragment>',
@@ -152,18 +238,62 @@ ${noiseGlsl}`,
   if (vVegFade < 0.999 && vegIGN(gl_FragCoord.xy) >= vVegFade) discard;`,
       )
       .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+  // keep leaf coverage as the texture minifies (alpha-tested foliage otherwise thins out)
+  vec2 vegDuv = fwidth(vMapUv) * 1024.0;
+  diffuseColor.a = min(1.0, diffuseColor.a * (1.0 + 0.35 * max(log2(max(vegDuv.x, vegDuv.y)), 0.0)));`,
+      )
+      .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
-  float vegN = vegNoise3(vVegPos * 1.3) * 0.6 + vegNoise3(vVegPos * 3.7) * 0.4;
-  diffuseColor.rgb *= 0.72 + 0.5 * vegN;`,
+  float vegN = vegNoise3(vVegPos * 0.9) * 0.6 + vegNoise3(vVegPos * 2.7) * 0.4;
+  diffuseColor.rgb *= mix(1.0, 0.8 + 0.4 * vegN, vVegLeaf);`,
+      )
+      .replace(
+        '#include <normal_fragment_begin>',
+        // leaves: never flip the bent normal on back faces (volumetric crown shading)
+        `#include <normal_fragment_begin>
+#ifdef DOUBLE_SIDED
+  if (vVegLeaf > 0.5) { normal = normalize(vNormal); nonPerturbedNormal = normal; }
+#endif`,
+      )
+      .replace('#include <lights_fragment_begin>', withTranslucency('uVegTransl * vVegLeaf'));
+  };
+  m.customProgramCacheKey = () => 'vegetation-near-v2';
+  return m;
+}
+
+/** Shadow-map depth material for the near meshes: same wind, same alpha test, same LOD collapse. */
+export function createNearDepthMaterial(u: VegUniforms, tex: FoliageTextures): THREE.MeshDepthMaterial {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex.map, alphaTest: 0.45, side: THREE.DoubleSide });
+  m.name = 'vegetation-near-depth';
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, u);
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+${uniformDecls(u)}
+attribute float leaf;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+  vec3 objectNormal = normal;
+${vegBaseGlsl}
+  float vegLeaf = leaf;
+${windGlsl}
+  if (vegD >= uVegMeshDist) transformed = vec3(0.0);`,
       );
   };
-  m.customProgramCacheKey = () => 'vegetation-near-v1';
+  m.customProgramCacheKey = () => 'vegetation-near-depth-v2';
   return m;
 }
 
 export interface ImpostorAtlasTextures {
   albedo: THREE.Texture;
+  /** Tangent-space normal (rgb) + leaf mask (a). */
   normal: THREE.Texture;
   /** Tiles per row (view elevations) and rows (species). */
   cols: number;
@@ -172,8 +302,9 @@ export interface ImpostorAtlasTextures {
   size: THREE.Vector2;
 }
 
-/** Elevation step between atlas columns (radians): 0°, 30°, 60°, 90°. */
-export const ELEVATION_STEP = Math.PI / 6;
+/** Number of view elevations baked (columns) and the step between them (radians): 0°, 18°, … 90°. */
+export const ELEVATION_COLS = 6;
+export const ELEVATION_STEP = Math.PI / 2 / (ELEVATION_COLS - 1);
 /** Frustum margin of the baked tiles (quad half-extent / tree half-extent). */
 export const TILE_MARGIN = 1.12;
 /** Vertical half extent of a tree (height 1, crown radius r) seen at elevation e, around the crown centre. */
@@ -184,7 +315,7 @@ export function createImpostorMaterial(u: VegUniforms, atlas: ImpostorAtlasTextu
   const m = new THREE.MeshStandardMaterial({
     map: atlas.albedo,
     normalMap: atlas.normal,
-    roughness: 0.9,
+    roughness: 0.85,
     metalness: 0,
     alphaTest: 0.5,
     alphaToCoverage: true,
@@ -194,9 +325,9 @@ export function createImpostorMaterial(u: VegUniforms, atlas: ImpostorAtlasTextu
   m.name = 'vegetation-impostor';
   const grid = { value: new THREE.Vector2(atlas.cols, atlas.rows) };
   const atlasSize = { value: atlas.size };
-  const r0 = { value: new THREE.Vector4(...SPECIES_R0) };
+  const r0 = SPECIES_R0.slice(0, SPECIES_COUNT);
   m.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, u, { uVegGrid: grid, uVegAtlasSize: atlasSize, uVegR0: r0 });
+    Object.assign(shader.uniforms, u, { uVegGrid: grid, uVegAtlasSize: atlasSize });
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -270,13 +401,16 @@ ${tintGlsl}`,
         `#include <common>
 uniform vec2 uVegGrid;
 uniform vec2 uVegAtlasSize;
+uniform float uVegTransl;
 varying vec2 vImpUv0;
 varying vec2 vImpUv1;
 varying vec4 vImpTile;
 varying float vImpF;
 varying float vImpFade;
 varying vec3 vImpTint;
+float vImpLeaf;
 ${commonGlsl}
+${translGlsl}
 vec2 impClamp(vec2 uv, vec2 tile) {
   vec2 lo = (tile + 0.004) / uVegGrid;
   vec2 hi = (tile + 0.996) / uVegGrid;
@@ -303,10 +437,13 @@ vec2 impClamp(vec2 uv, vec2 tile) {
 #endif`,
       )
       .replace(
-        'texture2D( normalMap, vNormalMapUv )',
-        'mix(texture2D(normalMap, impUv0), texture2D(normalMap, impUv1), vImpF)',
-      );
+        '#include <normal_fragment_maps>',
+        `vec4 impNrm = mix(texture2D(normalMap, impUv0), texture2D(normalMap, impUv1), vImpF);
+  vImpLeaf = impNrm.a;
+` + THREE.ShaderChunk.normal_fragment_maps.replace('texture2D( normalMap, vNormalMapUv )', 'impNrm'),
+      )
+      .replace('#include <lights_fragment_begin>', withTranslucency('uVegTransl * vImpLeaf'));
   };
-  m.customProgramCacheKey = () => 'vegetation-impostor-v1';
+  m.customProgramCacheKey = () => `vegetation-impostor-v2-${r0.length}`;
   return m;
 }

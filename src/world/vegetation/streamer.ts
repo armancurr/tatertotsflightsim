@@ -1,33 +1,51 @@
 /**
  * Chunk streaming for trees. PURE (no three.js): owns which chunks exist
- * around the camera, generates their placement cells incrementally within a
- * per-frame budget (cell count and wall-clock time), and packs a finished
- * chunk into a pooled buffer:
+ * around the camera, gets their trees generated and packs a finished chunk
+ * into a pooled buffer (see pack.ts for the layout).
  *
- *   - instance layout (`I_STRIDE` floats): x, y, z, height, crown radius,
- *     code = species + rotation/2π (fraction), tint, rank — the exact layout
- *     the impostor shader reads, so the pooled array is uploaded as is;
- *   - trees sorted by rank bin (counting sort), so "draw the trees with
- *     rank < k" is a prefix: `countForKeep(k)`;
- *   - a per-cell index (cellStart/cellItems) for fast near-mesh gathering.
+ * Two ways to generate:
+ *   - inline (`generateCell`): cells are generated on the calling thread,
+ *     incrementally within a per-frame budget (cell count and wall-clock time);
+ *   - async (`source`): whole chunks are requested from an `AsyncChunkSource`
+ *     (the Web Worker pool in the app) nearest first and delivered packed; the
+ *     main thread only copies them into pooled buffers.
+ *
+ * LOD levels: `levelFor(dist3)` says which rank prefix a chunk needs (1 = every
+ * tree; far chunks draw only rank < k, so only those are generated). A chunk
+ * whose need grows is regenerated at the higher level while the old data keeps
+ * drawing; the new data is a superset, so nothing pops.
  *
  * Buffers come from an injected pool (acquire/release) — the renderer's pool
  * pairs each array with its GPU mesh — and go back to it on eviction.
  */
 import { rectDistance } from './lod';
-import { TREE_STRIDE, T_X, T_Y, T_Z, T_H, T_R, T_SPECIES, T_ROT, T_TINT, T_RANK, type TreeCell } from './placement';
+import { packCells, I_STRIDE, RANK_BINS, type PackedChunk } from './pack';
+import type { TreeCell } from './placement';
 import type { PoolHandle } from './pool';
 
-export const I_STRIDE = 8;
-export const I_X = 0;
-export const I_Y = 1;
-export const I_Z = 2;
-export const I_H = 3;
-export const I_R = 4;
-export const I_CODE = 5;
-export const I_TINT = 6;
-export const I_RANK = 7;
-export const RANK_BINS = 256;
+export { I_STRIDE, I_X, I_Y, I_Z, I_H, I_R, I_CODE, I_TINT, I_RANK, RANK_BINS } from './pack';
+
+export interface ChunkJob {
+  key: number;
+  kx: number;
+  kz: number;
+  /** Generate candidates with rank < rankMax. */
+  rankMax: number;
+  /** Lower = sooner. */
+  priority: number;
+}
+
+/** Asynchronous chunk generation (the vegetation Web Workers, or a test double). */
+export interface AsyncChunkSource {
+  /** Queues a job (replaces a queued job with the same key). */
+  request(job: ChunkJob): void;
+  /** Drops a queued job (a running one is delivered and ignored). */
+  cancel(key: number): void;
+  /** Hands over every finished job. */
+  drain(cb: (key: number, p: PackedChunk) => void): void;
+  /** Jobs queued + running. */
+  pending(): number;
+}
 
 export interface StreamerOptions<S> {
   chunkSize: number;
@@ -42,7 +60,12 @@ export interface StreamerOptions<S> {
   urgentBudgetMs: number;
   /** Chunks closer than this must be ready; until then the urgent budget applies. Default 0 (own chunk). */
   urgentRadius?: number;
-  generateCell(cx: number, cz: number): TreeCell;
+  /** Inline generation of one cell (rank < rankMax). Needed unless `source` is given. */
+  generateCell?(cx: number, cz: number, rankMax: number): TreeCell;
+  /** Asynchronous whole-chunk generation (takes precedence over generateCell). */
+  source?: AsyncChunkSource;
+  /** Rank prefix needed at a 3D distance (quantised by the streamer). Default: always 1 (every tree). */
+  levelFor?(dist3: number): number;
   acquire(n: number): PoolHandle<S> | null;
   release(h: PoolHandle<S>): void;
   arrayOf(s: S): Float32Array;
@@ -51,7 +74,17 @@ export interface StreamerOptions<S> {
   onEvict?: (c: StreamChunk<S>) => void;
 }
 
+/** Quantises a needed keep fraction to a generation level: 1, 1/2, 1/4, 1/8 (0 = none). */
+export function quantizeLevel(keep: number): number {
+  if (!(keep > 0)) return 0;
+  if (keep > 0.5) return 1;
+  if (keep > 0.25) return 0.5;
+  if (keep > 0.125) return 0.25;
+  return 0.125;
+}
+
 export class StreamChunk<S> {
+  /** Has instance data (at `level`). */
   ready = false;
   count = 0;
   slot: PoolHandle<S> | null = null;
@@ -63,13 +96,20 @@ export class StreamChunk<S> {
   maxY = 0;
   maxH = 0;
   maxR = 0;
-  /** Nearest horizontal distance from the camera (updated every frame). */
+  /** Rank prefix held (0 = nothing yet; 1 = every tree). */
+  level = 0;
+  /** Rank prefix needed now. */
+  want = 0;
+  /** Nearest horizontal / 3D distance from the camera (updated every frame). */
   dist = 0;
+  dist3 = 0;
   /** Renderer-owned per-chunk state. */
   user: unknown = null;
   /** @internal generation state */
   cells: TreeCell[] = [];
   nextCell = 0;
+  genLevel = 0;
+  requested = 0;
 
   constructor(
     readonly kx: number,
@@ -99,22 +139,31 @@ export class StreamChunk<S> {
 }
 
 const OFF = 1 << 20;
-const chunkKey = (kx: number, kz: number): number => (kx + OFF) * 2097152 + (kz + OFF);
+export const chunkKey = (kx: number, kz: number): number => (kx + OFF) * 2097152 + (kz + OFF);
 
 export class ChunkStreamer<S> {
   readonly chunks = new Map<number, StreamChunk<S>>();
   onReady?: (c: StreamChunk<S>) => void;
   onEvict?: (c: StreamChunk<S>) => void;
   private readonly o: StreamerOptions<S>;
-  private readonly cellsPerSide: number;
+  readonly cellsPerSide: number;
   private readonly keepMargin: number;
   private readonly work: StreamChunk<S>[] = [];
   private readonly now: () => number;
-  private readonly result = { generated: 0, urgent: false, readied: 0, evicted: 0 };
-  private binCount = new Uint32Array(RANK_BINS + 1);
-  private cellOf = new Uint16Array(0);
+  private readonly result = { generated: 0, urgent: false, readied: 0, evicted: 0, requested: 0 };
+  private readonly byDist = (a: StreamChunk<S>, b: StreamChunk<S>): number => a.dist3 - b.dist3;
+  private readonly onDelivered = (key: number, p: PackedChunk): void => {
+    const c = this.chunks.get(key);
+    if (!c) return;
+    if (c.requested === p.rankMax) c.requested = 0;
+    if (p.rankMax <= c.level) return; // stale (we already hold as much)
+    this.install(c, p);
+    this.result.readied++;
+    this.onReady?.(c);
+  };
 
   constructor(opts: StreamerOptions<S>) {
+    if (!opts.source && !opts.generateCell) throw new Error('ChunkStreamer: generateCell or source required');
     this.o = opts;
     this.cellsPerSide = Math.round(opts.chunkSize / opts.cellSize);
     this.keepMargin = opts.keepMargin ?? opts.chunkSize * 0.5;
@@ -129,15 +178,19 @@ export class ChunkStreamer<S> {
     return this.chunks.get(chunkKey(Math.floor(x / s), Math.floor(z / s)));
   }
 
-  /** Cells still to generate for chunks currently tracked. */
+  /** Cells still to generate for chunks currently tracked (whole chunks count fully in async mode). */
   pendingCells(): number {
     let n = 0;
     const per = this.cellsPerSide * this.cellsPerSide;
-    for (const c of this.chunks.values()) if (!c.ready) n += per - c.nextCell;
+    for (const c of this.chunks.values()) if (c.level < c.want) n += this.o.source ? per : per - (c.genLevel === c.want ? c.nextCell : 0);
     return n;
   }
 
-  update(x: number, z: number): { generated: number; urgent: boolean; readied: number; evicted: number } {
+  /**
+   * Per frame. (x, z) = camera; `y` = camera height and `groundY` = a ground
+   * height estimate for chunks not generated yet (both only matter with levels).
+   */
+  update(x: number, z: number, y = 0, groundY = y): { generated: number; urgent: boolean; readied: number; evicted: number; requested: number } {
     const o = this.o;
     const t0 = this.now();
     const size = o.chunkSize;
@@ -146,6 +199,7 @@ export class ChunkStreamer<S> {
     res.generated = 0;
     res.readied = 0;
     res.evicted = 0;
+    res.requested = 0;
 
     // 1. Track every chunk in range.
     const k0x = Math.floor((x - R) / size);
@@ -160,7 +214,10 @@ export class ChunkStreamer<S> {
         if (d <= R) this.chunks.set(key, new StreamChunk<S>(kx, kz, key, kx * size, kz * size, size, this.cellsPerSide));
       }
 
-    // 2. Distances, eviction, work list.
+    // 2. Finished async jobs.
+    o.source?.drain(this.onDelivered);
+
+    // 3. Distances, levels, eviction, work list.
     const work = this.work;
     work.length = 0;
     let urgent = false;
@@ -171,28 +228,56 @@ export class ChunkStreamer<S> {
         this.evict(c);
         continue;
       }
-      if (!c.ready) {
+      let dy: number;
+      if (c.ready && c.count > 0) {
+        const top = c.maxY + c.maxH;
+        dy = y > top ? y - top : y < c.minY ? c.minY - y : 0;
+      } else {
+        const top = groundY + 400; // conservative guess for ground not generated yet
+        dy = y > top ? y - top : 0;
+      }
+      c.dist3 = Math.sqrt(c.dist * c.dist + dy * dy);
+      const need = o.levelFor ? quantizeLevel(o.levelFor(c.dist3)) : 1;
+      if (need > c.want) c.want = need;
+      if (c.level < c.want) {
         work.push(c);
-        if (c.dist <= urgentR) urgent = true;
+        if (c.dist <= urgentR && !c.ready) urgent = true;
       }
     }
     res.urgent = urgent;
-    work.sort((a, b) => a.dist - b.dist);
+    work.sort(this.byDist);
 
-    // 3. Generate within the budget (always make some progress).
+    // 4a. Async: request what is missing, nearest first.
+    if (o.source) {
+      for (const c of work) {
+        if (c.requested >= c.want) continue;
+        c.requested = c.want;
+        o.source.request({ key: c.key, kx: c.kx, kz: c.kz, rankMax: c.want, priority: c.dist3 });
+        res.requested++;
+      }
+      return res;
+    }
+
+    // 4b. Inline: generate within the budget (always make some progress).
     const cap = urgent ? (o.urgentCellsPerFrame ?? o.maxCellsPerFrame * 4) : o.maxCellsPerFrame;
     const budget = urgent ? o.urgentBudgetMs : o.frameBudgetMs;
     const per = this.cellsPerSide * this.cellsPerSide;
     outer: for (const c of work) {
+      if (c.genLevel !== c.want) {
+        // (re)start at the level needed now
+        c.genLevel = c.want;
+        c.cells = [];
+        c.nextCell = 0;
+      }
       while (c.nextCell < per) {
         if (res.generated >= cap || (res.generated > 0 && this.now() - t0 >= budget)) break outer;
         const i = c.nextCell % this.cellsPerSide;
         const j = Math.floor(c.nextCell / this.cellsPerSide);
-        c.cells.push(o.generateCell(c.kx * this.cellsPerSide + i, c.kz * this.cellsPerSide + j));
+        c.cells.push(o.generateCell!(c.kx * this.cellsPerSide + i, c.kz * this.cellsPerSide + j, c.genLevel));
         c.nextCell++;
         res.generated++;
       }
-      this.finalize(c);
+      this.finalizeInline(c);
       res.readied++;
       this.onReady?.(c);
     }
@@ -201,6 +286,7 @@ export class ChunkStreamer<S> {
 
   private evict(c: StreamChunk<S>): void {
     this.chunks.delete(c.key);
+    if (c.requested > 0) this.o.source?.cancel(c.key);
     if (c.slot) {
       this.o.release(c.slot);
       c.slot = null;
@@ -211,85 +297,75 @@ export class ChunkStreamer<S> {
   }
 
   /** Packs the generated cells into a pooled, rank-sorted instance buffer. */
-  private finalize(c: StreamChunk<S>): void {
+  private finalizeInline(c: StreamChunk<S>): void {
     let total = 0;
     for (const cell of c.cells) total += cell.count;
-    c.ready = true;
-    c.count = 0;
+    const level = c.genLevel;
+    c.genLevel = 0;
+    c.nextCell = 0;
     if (total === 0) {
+      this.clearData(c, level);
       c.cells = [];
-      c.rankCdf.fill(0);
       return;
     }
     const slot = this.o.acquire(total);
     if (!slot) {
       c.cells = [];
+      c.level = level; // cannot hold it: don't retry forever
+      c.ready = true;
+      return;
+    }
+    const p = packCells(c.cells, this.cellsPerSide, this.o.arrayOf(slot.value), level);
+    c.cells = [];
+    this.adopt(c, p, slot);
+  }
+
+  /** Installs a delivered (async) chunk: copies it into a pooled buffer. */
+  private install(c: StreamChunk<S>, p: PackedChunk): void {
+    if (p.count === 0) {
+      this.clearData(c, p.rankMax);
+      return;
+    }
+    const slot = this.o.acquire(p.count);
+    if (!slot) {
+      c.level = p.rankMax;
+      c.ready = true;
       return;
     }
     const arr = this.o.arrayOf(slot.value);
-    const n = Math.min(total, slot.capacity);
+    const n = Math.min(p.count, Math.floor(arr.length / I_STRIDE));
+    arr.set(p.data.subarray(0, n * I_STRIDE));
+    if (n < p.count) for (let b = 0; b <= RANK_BINS; b++) p.rankCdf[b] = Math.min(p.rankCdf[b], n);
+    p.count = n;
+    this.adopt(c, p, slot);
+  }
 
-    // Counting sort by rank bin.
-    const bins = this.binCount;
-    bins.fill(0);
-    for (const cell of c.cells)
-      for (let t = 0; t < cell.count; t++) {
-        const b = Math.min(RANK_BINS - 1, Math.floor(cell.data[t * TREE_STRIDE + T_RANK] * RANK_BINS));
-        bins[b + 1]++;
-      }
-    for (let b = 1; b <= RANK_BINS; b++) bins[b] += bins[b - 1];
-    c.rankCdf.set(bins);
-    if (this.cellOf.length < total) this.cellOf = new Uint16Array(Math.max(total, this.cellOf.length * 2));
-    const cellOf = this.cellOf;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    let maxH = 0;
-    let maxR = 0;
-    for (let ci = 0; ci < c.cells.length; ci++) {
-      const cell = c.cells[ci];
-      const d = cell.data;
-      for (let t = 0; t < cell.count; t++) {
-        const s = t * TREE_STRIDE;
-        const b = Math.min(RANK_BINS - 1, Math.floor(d[s + T_RANK] * RANK_BINS));
-        const pos = bins[b]++;
-        if (pos >= n) continue;
-        const w = pos * I_STRIDE;
-        arr[w + I_X] = d[s + T_X];
-        arr[w + I_Y] = d[s + T_Y];
-        arr[w + I_Z] = d[s + T_Z];
-        arr[w + I_H] = d[s + T_H];
-        arr[w + I_R] = d[s + T_R];
-        arr[w + I_CODE] = d[s + T_SPECIES] + (d[s + T_ROT] / (Math.PI * 2)) * 0.999;
-        arr[w + I_TINT] = d[s + T_TINT];
-        arr[w + I_RANK] = d[s + T_RANK];
-        cellOf[pos] = ci;
-        const y = d[s + T_Y];
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-        if (d[s + T_H] > maxH) maxH = d[s + T_H];
-        if (d[s + T_R] > maxR) maxR = d[s + T_R];
-      }
-    }
-    if (n < total) for (let b = 0; b <= RANK_BINS; b++) c.rankCdf[b] = Math.min(c.rankCdf[b], n);
-
-    // Per-cell index.
-    const cells = this.cellsPerSide * this.cellsPerSide;
-    const start = c.cellStart;
-    start.fill(0);
-    for (let i = 0; i < n; i++) start[cellOf[i] + 1]++;
-    for (let ci = 1; ci <= cells; ci++) start[ci] += start[ci - 1];
-    const items = n < 65536 ? new Uint16Array(n) : new Uint32Array(n);
-    const fill = start.slice(0, cells);
-    for (let i = 0; i < n; i++) items[fill[cellOf[i]]++] = i;
-
-    c.cellItems = items;
-    c.count = n;
+  private adopt(c: StreamChunk<S>, p: PackedChunk, slot: PoolHandle<S>): void {
+    if (c.slot) this.o.release(c.slot);
     c.slot = slot;
-    c.minY = minY;
-    c.maxY = maxY;
-    c.maxH = maxH;
-    c.maxR = maxR;
-    c.cells = [];
+    c.count = p.count;
+    c.rankCdf.set(p.rankCdf);
+    c.cellStart = p.cellStart;
+    c.cellItems = p.cellItems;
+    c.minY = p.minY;
+    c.maxY = p.maxY;
+    c.maxH = p.maxH;
+    c.maxR = p.maxR;
+    c.level = p.rankMax;
+    c.ready = true;
+  }
+
+  private clearData(c: StreamChunk<S>, level: number): void {
+    if (c.slot) {
+      this.o.release(c.slot);
+      c.slot = null;
+    }
+    c.count = 0;
+    c.rankCdf.fill(0);
+    c.cellStart.fill(0);
+    c.cellItems = new Uint16Array(0);
+    c.level = level;
+    c.ready = true;
   }
 
   /** Releases every chunk's buffer back to the pool. */

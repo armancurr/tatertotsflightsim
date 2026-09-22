@@ -1,52 +1,72 @@
 /**
- * Procedural low-poly meshes for the four tree species (a few hundred
- * triangles each), built deterministically at startup:
+ * Procedural tree meshes for the seven species, built deterministically at
+ * startup from alpha-tested leaf cards (textures.ts) on a branch skeleton:
  *
- *   conifer   – spruce/fir: 9 drooping, jagged branch tiers on a short trunk
- *   deciduous – oak/maple: 5 lumpy, noise-displaced leaf clumps + trunk/limbs
- *   poplar    – Lombardy poplar: a tall column of stacked clumps
- *   bush      – a low mound of clumps
+ *   spruce    – spruce/fir: whorls of drooping needle-spray branches with
+ *               upturned tips on a straight trunk, a dark inner cone
+ *   pine      – Scots pine: long bare orange-brown trunk, a few flat, clumpy
+ *               needle pads on top
+ *   broadleaf – oak/beech/maple: thick trunk and limbs, 8 clumpy lobes of leaf
+ *               sprays around shadowed cores
+ *   birch     – white trunk, narrow airy crown of small pendulous sprays
+ *   poplar    – Lombardy poplar: a tall column of upward-pointing sprays
+ *   willow    – short leaning trunk, a dome of small sprays and a curtain of
+ *               hanging strands
+ *   bush      – a low mound of sprays
  *
  * Geometry is NORMALISED: height 1 (y 0..1, trunk sunk slightly below 0) and
  * crown radius 1 (x, z), inside `canopyProfile` — the same envelope the
  * physics uses — so an instance scaled by (crownRadius, height, crownRadius)
- * is exactly the obstacle. Normals are "spherised" toward the crown shape for
- * soft foliage lighting, and computed for the typical proportions
- * (`SPECIES_R0` = crown radius / height) so they are right after instancing.
- * Vertex colours are linear RGB with baked ambient occlusion.
+ * is exactly the obstacle. Leaf-card normals are bent outward from the crown
+ * centre for soft, volumetric foliage lighting (the material doesn't flip them
+ * on back faces). Attributes: position, normal, uv (atlas), color (linear RGB
+ * species colour × baked ambient occlusion), leaf (1 foliage, 0 bark).
  */
 import * as THREE from 'three';
-import { hash2i } from '../noise';
-import { CONIFER, DECIDUOUS, POPLAR, ENVELOPE } from './placement';
+import { mulberry32 } from '../noise';
+import { SPRUCE, PINE, BROADLEAF, BIRCH, POPLAR, WILLOW, BUSH, ENVELOPE, SPECIES_COUNT } from './placement';
+import { REGION, type UvRect } from './textures';
 
 /** Typical crown radius / height per species (matches placement's mean ratios). */
-export const SPECIES_R0 = [0.22, 0.43, 0.145, 0.925] as const;
+export const SPECIES_R0 = [0.2, 0.24, 0.43, 0.26, 0.135, 0.575, 0.925] as const;
 
-/** Foliage base colours (linear RGB) per species, and trunk colours. */
-const FOLIAGE: [number, number, number][] = [
-  [0.028, 0.06, 0.03],
-  [0.062, 0.118, 0.03],
-  [0.07, 0.125, 0.034],
-  [0.068, 0.112, 0.036],
+type RGB = [number, number, number];
+/** Foliage vertex colours (linear; × the atlas texel ≈ real leaf albedo). */
+const FOLIAGE: RGB[] = [
+  [0.085, 0.11, 0.08], // spruce: dark green
+  [0.13, 0.14, 0.11], // pine: grey-green
+  [0.15, 0.2, 0.14], // broadleaf
+  [0.18, 0.24, 0.17], // birch: light yellow-green
+  [0.1, 0.17, 0.14], // poplar: deep green
+  [0.16, 0.2, 0.17], // willow (silvered per instance)
+  [0.13, 0.17, 0.15], // bush
 ];
-const TRUNK: [number, number, number][] = [
-  [0.075, 0.05, 0.034],
-  [0.07, 0.058, 0.045],
-  [0.08, 0.07, 0.055],
-  [0.06, 0.05, 0.035],
+/** Bark vertex colours (× the bark texel). */
+const BARK: RGB[] = [
+  [0.3, 0.24, 0.2],
+  [0.55, 0.3, 0.17], // pine: orange upper trunk
+  [0.34, 0.3, 0.26],
+  [0.95, 0.95, 0.93], // birch (white texture)
+  [0.36, 0.33, 0.28],
+  [0.32, 0.28, 0.22],
+  [0.3, 0.26, 0.2],
 ];
 
 class Builder {
   pos: number[] = [];
   nrm: number[] = [];
   col: number[] = [];
+  uv: number[] = [];
+  leaf: number[] = [];
   idx: number[] = [];
 
-  vert(x: number, y: number, z: number, nx: number, ny: number, nz: number, r: number, g: number, b: number): number {
+  vert(x: number, y: number, z: number, nx: number, ny: number, nz: number, c: RGB, k: number, u: number, v: number, leaf: number): number {
     const l = Math.hypot(nx, ny, nz) || 1;
     this.pos.push(x, y, z);
     this.nrm.push(nx / l, ny / l, nz / l);
-    this.col.push(clamp01(r), clamp01(g), clamp01(b));
+    this.col.push(clamp01(c[0] * k), clamp01(c[1] * k), clamp01(c[2] * k));
+    this.uv.push(u, v);
+    this.leaf.push(leaf);
     return this.pos.length / 3 - 1;
   }
 
@@ -54,15 +74,42 @@ class Builder {
     this.idx.push(a, b, c);
   }
 
-  /** Canonical (height 1, crown radius R0) → normalised (crown radius 1). */
-  build(R0: number): THREE.BufferGeometry {
+  /** Canonical (height 1, crown radius R0) → normalised (crown radius 1), clamped inside the envelope. */
+  build(R0: number, species: number): THREE.BufferGeometry {
     const n = this.pos.length / 3;
     const p = new Float32Array(this.pos.length);
     const nn = new Float32Array(this.nrm.length);
+    const env = ENVELOPE[species];
     for (let i = 0; i < n; i++) {
-      p[i * 3] = this.pos[i * 3] / R0;
-      p[i * 3 + 1] = this.pos[i * 3 + 1];
-      p[i * 3 + 2] = this.pos[i * 3 + 2] / R0;
+      let x = this.pos[i * 3] / R0;
+      let y = this.pos[i * 3 + 1];
+      let z = this.pos[i * 3 + 2] / R0;
+      // keep every vertex inside the physics envelope (fringe cards are pulled in a little)
+      const rho = Math.hypot(x, z);
+      if (species === SPRUCE) {
+        if (y > 0.999) y = 0.999;
+        const maxRho = Math.min(0.995, (1 - y) / 0.9);
+        if (rho > maxRho) {
+          x *= maxRho / rho;
+          z *= maxRho / rho;
+        }
+      } else {
+        const dy = (y - env.center) / env.half;
+        if (dy > 0) {
+          const e = Math.hypot(rho, dy);
+          if (e > 0.995) {
+            x *= 0.995 / e;
+            z *= 0.995 / e;
+            y = env.center + (dy * 0.995 * env.half) / e;
+          }
+        } else if (rho > 0.995) {
+          x *= 0.995 / rho;
+          z *= 0.995 / rho;
+        }
+      }
+      p[i * 3] = x;
+      p[i * 3 + 1] = y;
+      p[i * 3 + 2] = z;
       // normals transform with the inverse transpose of diag(1/R0, 1, 1/R0)
       const nx = this.nrm[i * 3] * R0;
       const ny = this.nrm[i * 3 + 1];
@@ -76,6 +123,8 @@ class Builder {
     g.setAttribute('position', new THREE.BufferAttribute(p, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nn, 3));
     g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.col), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(this.uv), 2));
+    g.setAttribute('leaf', new THREE.BufferAttribute(new Float32Array(this.leaf), 1));
     g.setIndex(n < 65536 ? new THREE.BufferAttribute(new Uint16Array(this.idx), 1) : new THREE.BufferAttribute(new Uint32Array(this.idx), 1));
     g.computeBoundingBox();
     g.computeBoundingSphere();
@@ -89,252 +138,432 @@ const smooth = (e0: number, e1: number, x: number): number => {
   return t * t * (3 - 2 * t);
 };
 
-/** Smooth 3D value noise in [-1, 1] (deterministic). */
-function vnoise3(x: number, y: number, z: number, seed: number): number {
-  const ix = Math.floor(x);
-  const iy = Math.floor(y);
-  const iz = Math.floor(z);
-  const fx = x - ix;
-  const fy = y - iy;
-  const fz = z - iz;
-  const ux = fx * fx * (3 - 2 * fx);
-  const uy = fy * fy * (3 - 2 * fy);
-  const uz = fz * fz * (3 - 2 * fz);
-  const h = (a: number, b: number, c: number): number => hash2i(a + c * 7919, b - c * 104729, seed) * 2 - 1;
-  const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-  const x00 = lerp(h(ix, iy, iz), h(ix + 1, iy, iz), ux);
-  const x10 = lerp(h(ix, iy + 1, iz), h(ix + 1, iy + 1, iz), ux);
-  const x01 = lerp(h(ix, iy, iz + 1), h(ix + 1, iy, iz + 1), ux);
-  const x11 = lerp(h(ix, iy + 1, iz + 1), h(ix + 1, iy + 1, iz + 1), ux);
-  return lerp(lerp(x00, x10, uy), lerp(x01, x11, uy), uz);
+type V3 = [number, number, number];
+const norm = (v: V3): V3 => {
+  const l = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / l, v[1] / l, v[2] / l];
+};
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+/** Random unit vector (uniform on the sphere). */
+function randDir(rnd: () => number): V3 {
+  const z = rnd() * 2 - 1;
+  const a = rnd() * Math.PI * 2;
+  const r = Math.sqrt(1 - z * z);
+  return [r * Math.cos(a), z, r * Math.sin(a)];
 }
 
-/** Unit icosphere subdivided once: 42 vertices, 80 faces (indexed). */
-function icosphere(): { v: number[][]; f: number[][] } {
+interface Crown {
+  /** Crown centre (canonical) and radii for normal bending / AO. */
+  cx: number;
+  cy: number;
+  cz: number;
+  rx: number;
+  ry: number;
+}
+
+/**
+ * A leaf card: centre c, facing `nrm`, with `up` hint, size w × h, atlas region
+ * `reg`, flipped horizontally if `flip`. The shading normal is bent toward the
+ * crown-outward direction; AO darkens cards deep inside the crown and low down.
+ */
+function card(b: Builder, c: V3, nrm: V3, up: V3, w: number, h: number, reg: UvRect, col: RGB, crown: Crown, bend: number, flip: boolean, aoBias = 1): void {
+  const n = norm(nrm);
+  let r = cross(up, n);
+  if (Math.hypot(r[0], r[1], r[2]) < 1e-4) r = cross([1, 0, 0], n);
+  r = norm(r);
+  const u = norm(cross(n, r));
+  const corners: [number, number][] = [
+    [-0.5, -0.5],
+    [0.5, -0.5],
+    [0.5, 0.5],
+    [-0.5, 0.5],
+  ];
+  const ids: number[] = [];
+  for (const [a, bb] of corners) {
+    const x = c[0] + r[0] * a * w + u[0] * bb * h;
+    const y = c[1] + r[1] * a * w + u[1] * bb * h;
+    const z = c[2] + r[2] * a * w + u[2] * bb * h;
+    // crown-outward direction (ellipsoid gradient) for the bent normal
+    const ox = (x - crown.cx) / (crown.rx * crown.rx);
+    const oy = (y - crown.cy) / (crown.ry * crown.ry);
+    const oz = (z - crown.cz) / (crown.rx * crown.rx);
+    const o = norm([ox, oy + 0.15 / crown.ry, oz]);
+    const nx = n[0] * (1 - bend) + o[0] * bend;
+    const ny = n[1] * (1 - bend) + o[1] * bend;
+    const nz = n[2] * (1 - bend) + o[2] * bend;
+    // ambient occlusion: depth inside the crown ellipsoid and height within it
+    const depth = Math.hypot((x - crown.cx) / crown.rx, (y - crown.cy) / crown.ry, (z - crown.cz) / crown.rx);
+    const hgt = clamp01(((y - crown.cy) / crown.ry + 1) / 2);
+    const ao = (0.42 + 0.58 * smooth(0.25, 1.0, depth)) * (0.74 + 0.26 * hgt) * aoBias;
+    const uu = reg.u0 + (reg.u1 - reg.u0) * ((flip ? -a : a) + 0.5);
+    const vv = reg.v0 + (reg.v1 - reg.v0) * (bb + 0.5);
+    ids.push(b.vert(x, y, z, nx, ny, nz, col, ao, uu, vv, 1));
+  }
+  b.tri(ids[0], ids[1], ids[2]);
+  b.tri(ids[0], ids[2], ids[3]);
+}
+
+/** UV inside the opaque canopy-interior region for a direction (spherical mapping). */
+function coreUv(d: V3): [number, number] {
+  const R = REGION.CANOPY;
+  const u = Math.atan2(d[2], d[0]) / (Math.PI * 2) + 0.5;
+  const v = d[1] * 0.5 + 0.5;
+  return [R.u0 + (R.u1 - R.u0) * (0.04 + 0.92 * u), R.v0 + (R.v1 - R.v0) * (0.04 + 0.92 * v)];
+}
+const CORE_UV = coreUv([0, 0, 1]);
+
+/** A low-poly core (icosahedron) of opaque shadowed foliage filling a lobe's interior. */
+function core(b: Builder, c: V3, rx: number, ry: number, col: RGB, k: number): void {
   const t = (1 + Math.sqrt(5)) / 2;
-  const v: number[][] = [
+  const v: V3[] = [
     [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
     [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
     [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
-  ].map((p) => {
-    const l = Math.hypot(p[0], p[1], p[2]);
-    return [p[0] / l, p[1] / l, p[2] / l];
-  });
-  const f0 = [
+  ].map((p) => norm(p as V3));
+  const f = [
     [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
     [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
     [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
     [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
   ];
-  const cache = new Map<string, number>();
-  const mid = (a: number, b: number): number => {
-    const k = a < b ? `${a}_${b}` : `${b}_${a}`;
-    let i = cache.get(k);
-    if (i === undefined) {
-      const p = [v[a][0] + v[b][0], v[a][1] + v[b][1], v[a][2] + v[b][2]];
-      const l = Math.hypot(p[0], p[1], p[2]);
-      v.push([p[0] / l, p[1] / l, p[2] / l]);
-      i = v.length - 1;
-      cache.set(k, i);
-    }
-    return i;
-  };
-  const f: number[][] = [];
-  for (const [a, b, c] of f0) {
-    const ab = mid(a, b);
-    const bc = mid(b, c);
-    const ca = mid(c, a);
-    f.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]);
-  }
-  return { v, f };
-}
-const ICO = icosphere();
-
-/**
- * A lumpy leaf clump: a noise-displaced icosphere placed in the crown's unit
- * ellipsoid space (u, v, w) and mapped to canonical space by
- * x = u·R0, y = yc + v·half, z = w·R0. Clamped inside the envelope.
- */
-function addClump(
-  b: Builder,
-  species: number,
-  R0: number,
-  cu: number,
-  cv: number,
-  cw: number,
-  radius: number,
-  seed: number,
-  minV = -1,
-  radiusV = radius * 0.92,
-): void {
-  const { center: yc, half } = ENVELOPE[species];
-  const base = FOLIAGE[species];
-  const ids: number[] = [];
-  for (const d of ICO.v) {
-    const n1 = vnoise3(d[0] * 1.9 + seed * 3.1, d[1] * 1.9, d[2] * 1.9, seed);
-    const n2 = vnoise3(d[0] * 4.3, d[1] * 4.3 + seed, d[2] * 4.3, seed + 77);
-    const k = 1 + 0.2 * n1 + 0.09 * n2;
-    let u = cu + d[0] * k * radius;
-    let v = cv + d[1] * k * radiusV;
-    let w = cw + d[2] * k * radius;
-    if (v < minV) v = minV + (v - minV) * 0.15;
-    const m = Math.hypot(u, v, w);
-    if (m > 0.985) {
-      u *= 0.985 / m;
-      v *= 0.985 / m;
-      w *= 0.985 / m;
-    }
-    const x = u * R0;
-    const y = yc + v * half;
-    const z = w * R0;
-    // blob normal and crown normal in canonical space (ellipsoid gradients)
-    const bx = d[0] / (radius * R0);
-    const by = d[1] / (radiusV * half);
-    const bz = d[2] / (radius * R0);
-    const bl = Math.hypot(bx, by, bz);
-    const cx = u / R0;
-    const cy = v / half;
-    const cz = w / R0;
-    const cl = Math.hypot(cx, cy, cz) || 1;
-    const nx = (0.45 * bx) / bl + (0.55 * cx) / cl;
-    const ny = (0.45 * by) / bl + (0.55 * cy) / cl + 0.08;
-    const nz = (0.45 * bz) / bl + (0.55 * cz) / cl;
-    // ambient occlusion: deep inside the crown and underneath is darker
-    const depth = Math.hypot(u, v, w);
-    const ao = (0.38 + 0.62 * smooth(0.3, 0.95, depth)) * (0.72 + 0.28 * clamp01((v + 1) / 2)) * (0.88 + 0.16 * n2);
-    const warm = 1 + 0.12 * n1;
-    ids.push(b.vert(x, y, z, nx, ny, nz, base[0] * ao * warm, base[1] * ao, base[2] * ao * (2 - warm)));
-  }
-  for (const f of ICO.f) b.tri(ids[f[0]], ids[f[1]], ids[f[2]]);
+  const ids = v.map((d) => {
+    const [uu, vv] = coreUv(d);
+    return b.vert(c[0] + d[0] * rx, c[1] + d[1] * ry, c[2] + d[2] * rx, d[0], d[1] + 0.3, d[2], col, k * (0.75 + 0.25 * (d[1] * 0.5 + 0.5)), uu, vv, 1);
+  });
+  for (const [a, bb, cc] of f) b.tri(ids[a], ids[bb], ids[cc]);
 }
 
-/** Tapered open cylinder (trunk / limb) between two points. */
-function addLimb(
-  b: Builder,
-  x0: number,
-  y0: number,
-  z0: number,
-  x1: number,
-  y1: number,
-  z1: number,
-  r0: number,
-  r1: number,
-  sides: number,
-  c: [number, number, number],
-): void {
-  const ax = new THREE.Vector3(x1 - x0, y1 - y0, z1 - z0).normalize();
-  const t = Math.abs(ax.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-  const u = new THREE.Vector3().crossVectors(ax, t).normalize();
-  const v = new THREE.Vector3().crossVectors(ax, u).normalize();
+/** Tapered open cylinder (trunk / limb) between two points, bark-textured. */
+function limb(b: Builder, p0: V3, p1: V3, r0: number, r1: number, sides: number, c: RGB, reg: UvRect, k0 = 0.7, k1 = 1): void {
+  const ax = norm([p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]]);
+  const t: V3 = Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  const u = norm(cross(ax, t));
+  const v = norm(cross(ax, u));
+  const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]);
+  const vv1 = reg.v0 + (reg.v1 - reg.v0) * Math.min(1, len * 2.2);
   const bottom: number[] = [];
   const top: number[] = [];
-  for (let i = 0; i < sides; i++) {
+  for (let i = 0; i <= sides; i++) {
     const a = (i / sides) * Math.PI * 2;
-    const nx = u.x * Math.cos(a) + v.x * Math.sin(a);
-    const ny = u.y * Math.cos(a) + v.y * Math.sin(a);
-    const nz = u.z * Math.cos(a) + v.z * Math.sin(a);
-    const shade = 0.85 + 0.15 * Math.cos(a * 3);
-    bottom.push(b.vert(x0 + nx * r0, y0 + ny * r0, z0 + nz * r0, nx, ny, nz, c[0] * 0.8 * shade, c[1] * 0.8 * shade, c[2] * 0.8 * shade));
-    top.push(b.vert(x1 + nx * r1, y1 + ny * r1, z1 + nz * r1, nx, ny, nz, c[0] * shade, c[1] * shade, c[2] * shade));
+    const nx = u[0] * Math.cos(a) + v[0] * Math.sin(a);
+    const ny = u[1] * Math.cos(a) + v[1] * Math.sin(a);
+    const nz = u[2] * Math.cos(a) + v[2] * Math.sin(a);
+    const uu = reg.u0 + (reg.u1 - reg.u0) * (i / sides);
+    bottom.push(b.vert(p0[0] + nx * r0, p0[1] + ny * r0, p0[2] + nz * r0, nx, ny, nz, c, k0, uu, reg.v0, 0));
+    top.push(b.vert(p1[0] + nx * r1, p1[1] + ny * r1, p1[2] + nz * r1, nx, ny, nz, c, k1, uu, vv1, 0));
   }
   for (let i = 0; i < sides; i++) {
-    const j = (i + 1) % sides;
-    b.tri(bottom[i], bottom[j], top[j]);
-    b.tri(bottom[i], top[j], top[i]);
+    b.tri(bottom[i], bottom[i + 1], top[i + 1]);
+    b.tri(bottom[i], top[i + 1], top[i]);
   }
 }
 
-function buildConifer(): THREE.BufferGeometry {
-  const R0 = SPECIES_R0[CONIFER];
-  const b = new Builder();
-  addLimb(b, 0, -0.06, 0, 0, 0.3, 0, 0.02, 0.012, 5, TRUNK[CONIFER]);
-  const env = (y: number): number => R0 * Math.min(1, (1 - y) / 0.9); // cone envelope radius at height y
-  const base = FOLIAGE[CONIFER];
-  const N = 9;
-  for (let t = 0; t < N; t++) {
-    const f = t / (N - 1);
-    const yb = 0.08 + 0.8 * Math.pow(t / N, 0.95);
-    const tierH = 0.2 - 0.08 * f;
-    const yApex = t === N - 1 ? 1 : Math.min(0.995, yb + tierH);
-    const K = t >= N - 2 ? 7 : 9;
-    const twist = hash2i(t, 1, 5) * Math.PI * 2;
-    const tierScale = 0.9 + 0.1 * hash2i(t, 2, 5);
-    const droop = 0.025 + 0.02 * (1 - f);
-    const light = 0.62 + 0.5 * f; // upper tiers catch more light
-    const rim: { x: number; y: number; z: number; nx: number; nz: number; tip: boolean }[] = [];
-    for (let k = 0; k < 2 * K; k++) {
-      const a = twist + (k / (2 * K)) * Math.PI * 2 + (hash2i(t, k, 9) - 0.5) * 0.25;
-      const tip = k % 2 === 0;
-      const y = tip ? yb - droop * (0.7 + 0.6 * hash2i(t, k, 11)) : yb + 0.03;
-      const r = tip ? env(y) * 0.97 * tierScale * (0.8 + 0.2 * hash2i(t, k, 13)) : env(yb) * 0.6 * tierScale;
-      rim.push({ x: Math.cos(a) * r, y, z: Math.sin(a) * r, nx: Math.cos(a), nz: Math.sin(a), tip });
-    }
-    const inner = b.vert(0, yb + 0.05, 0, 0, -1, 0, base[0] * 0.3, base[1] * 0.3, base[2] * 0.3);
-    for (let k = 0; k < 2 * K; k++) {
-      const p = rim[k];
-      const q = rim[(k + 1) % (2 * K)];
-      const ma = Math.atan2(p.nz + q.nz, p.nx + q.nx);
-      const tipBoost = (tip: boolean): number => (tip ? 1.35 : 0.7);
-      // upper surface: apex duplicated per segment so each wedge has its own outward normal
-      const apex = b.vert(0, yApex, 0, Math.cos(ma) * 0.45, 1, Math.sin(ma) * 0.45, base[0] * light * 0.8, base[1] * light * 0.8, base[2] * light * 0.8);
-      const pa = b.vert(p.x, p.y, p.z, p.nx, p.tip ? 0.55 : 0.9, p.nz, base[0] * light * tipBoost(p.tip) * 1.1, base[1] * light * tipBoost(p.tip), base[2] * light * tipBoost(p.tip));
-      const qa = b.vert(q.x, q.y, q.z, q.nx, q.tip ? 0.55 : 0.9, q.nz, base[0] * light * tipBoost(q.tip) * 1.1, base[1] * light * tipBoost(q.tip), base[2] * light * tipBoost(q.tip));
-      b.tri(apex, qa, pa);
-      // underside (dark, faces down/out)
-      const pu = b.vert(p.x, p.y, p.z, p.nx, -0.6, p.nz, base[0] * 0.42, base[1] * 0.42, base[2] * 0.42);
-      const qu = b.vert(q.x, q.y, q.z, q.nx, -0.6, q.nz, base[0] * 0.42, base[1] * 0.42, base[2] * 0.42);
-      b.tri(inner, pu, qu);
-    }
+/** Leaf cards scattered over a lobe (ellipsoid), facing outward. */
+function lobe(
+  b: Builder,
+  rnd: () => number,
+  c: V3,
+  rx: number,
+  ry: number,
+  cards: number,
+  size: number,
+  reg: UvRect,
+  col: RGB,
+  crown: Crown,
+  opts: { outward?: V3; hang?: number; upright?: number; shell?: number } = {},
+): void {
+  const out = opts.outward ? norm(opts.outward) : null;
+  for (let i = 0; i < cards; i++) {
+    let d = randDir(rnd);
+    if (out && d[0] * out[0] + d[1] * out[1] + d[2] * out[2] < -0.35) d = [-d[0], -d[1], -d[2]];
+    const s = (opts.shell ?? 0.55) + (1 - (opts.shell ?? 0.55)) * Math.sqrt(rnd());
+    const p: V3 = [c[0] + d[0] * rx * s, c[1] + d[1] * ry * s, c[2] + d[2] * rx * s];
+    // card faces outward, tilted randomly; "up" is mostly world-up (or down for hanging sprays)
+    const tilt = randDir(rnd);
+    const n: V3 = norm([d[0] + tilt[0] * 0.5, d[1] + tilt[1] * 0.5 + 0.25, d[2] + tilt[2] * 0.5]);
+    const hang = opts.hang ?? 0;
+    const upr = opts.upright ?? 0;
+    const up: V3 = norm([Math.cos(rnd() * 6.283) * (1 - upr), rnd() < hang ? -1 : 0.4 + upr, Math.sin(rnd() * 6.283) * (1 - upr)]);
+    const sz = size * (0.8 + 0.4 * rnd());
+    card(b, p, n, up, sz, sz, reg, col, crown, 0.62, rnd() < 0.5);
   }
-  return b.build(R0);
 }
 
-function buildDeciduous(): THREE.BufferGeometry {
-  const R0 = SPECIES_R0[DECIDUOUS];
-  const b = new Builder();
-  const tc = TRUNK[DECIDUOUS];
-  addLimb(b, 0, -0.06, 0, 0.01, 0.46, 0, 0.034, 0.02, 6, tc);
-  addLimb(b, 0.005, 0.34, 0, 0.16, 0.6, 0.05, 0.016, 0.008, 4, tc);
-  addLimb(b, 0.005, 0.38, 0, -0.1, 0.62, -0.12, 0.015, 0.008, 4, tc);
-  addClump(b, DECIDUOUS, R0, 0.02, 0.42, -0.03, 0.54, 1);
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + 0.4 + (hash2i(i, 3, 21) - 0.5) * 0.6;
-    const dist = 0.43 + 0.06 * hash2i(i, 4, 21);
-    const v = -0.2 + 0.32 * hash2i(i, 5, 21);
-    const r = 0.47 + 0.07 * hash2i(i, 6, 21);
-    addClump(b, DECIDUOUS, R0, Math.cos(a) * dist, v, Math.sin(a) * dist, r, 10 + i);
+/**
+ * A drooping skirt of needle sprays around the trunk: `seg` segments, each a
+ * two-step strip from the trunk (inner) out to the tips (outer), textured with
+ * one spray so the ragged spray outline makes natural branch tips and gaps.
+ */
+function skirt(b: Builder, rnd: () => number, yb: number, L: number, droop: number, seg: number, col: RGB, light: number, crown: Crown, twist: number): void {
+  const reg = REGION.NEEDLE;
+  const vm = (reg.v0 + reg.v1) / 2;
+  const ring: { a: number; L: number; d: number }[] = [];
+  for (let k = 0; k <= seg; k++) {
+    const kk = k % seg;
+    ring.push({ a: twist + (k / seg) * Math.PI * 2, L: L * (0.85 + 0.25 * hashJ(kk, 1, rnd)), d: droop * (0.75 + 0.5 * hashJ(kk, 2, rnd)) });
   }
-  return b.build(R0);
+  for (let k = 0; k < seg; k++) {
+    const p = ring[k];
+    const q = ring[k + 1];
+    const ids: number[] = [];
+    for (const [e, f] of [[p, 0], [q, 1]] as [typeof p, number][]) {
+      const dx = Math.cos(e.a);
+      const dz = Math.sin(e.a);
+      const u = f === 0 ? reg.u0 : reg.u1;
+      const r0 = e.L * 0.08;
+      const r1 = e.L * 0.58;
+      const r2 = e.L;
+      const y0 = yb + 0.012;
+      const y1 = yb - e.d * 0.7;
+      const y2 = yb - e.d * 0.72 + e.L * 0.05; // tips curl up again
+      const shade = (t: number): number => light * (0.55 + 0.5 * t);
+      const bendN = (t: number): V3 => {
+        const o = norm([dx * (crown.rx > 0 ? 1 : 0), 0.9 - 0.3 * t, dz]);
+        return o;
+      };
+      const n0 = bendN(0);
+      const n1 = bendN(0.6);
+      const n2 = bendN(1);
+      ids.push(
+        b.vert(dx * r0, y0, dz * r0, n0[0], n0[1], n0[2], col, shade(0), u, reg.v0, 1),
+        b.vert(dx * r1, y1, dz * r1, n1[0], n1[1], n1[2], col, shade(0.6), u, vm, 1),
+        b.vert(dx * r2, y2, dz * r2, n2[0], n2[1], n2[2], col, shade(1), u, reg.v1, 1),
+      );
+    }
+    const [a0, a1, a2, b0, b1, b2] = ids;
+    b.tri(a0, b0, b1);
+    b.tri(a0, b1, a1);
+    b.tri(a1, b1, b2);
+    b.tri(a1, b2, a2);
+  }
+}
+
+/** Deterministic per-(k, j) jitter drawn once from the builder's PRNG stream. */
+const jitterCache = new Map<string, number>();
+function hashJ(k: number, j: number, rnd: () => number): number {
+  const key = `${k}_${j}_${jitterSeq}`;
+  let v = jitterCache.get(key);
+  if (v === undefined) {
+    v = rnd();
+    jitterCache.set(key, v);
+  }
+  return v;
+}
+let jitterSeq = 0;
+
+function buildSpruce(): THREE.BufferGeometry {
+  const sp = SPRUCE;
+  const R0 = SPECIES_R0[sp];
+  const b = new Builder();
+  const rnd = mulberry32(101);
+  jitterCache.clear();
+  const fol = FOLIAGE[sp];
+  limb(b, [0, -0.05, 0], [0, 0.3, 0], 0.014, 0.01, 6, BARK[sp], REGION.BARK);
+  limb(b, [0, 0.3, 0], [0, 0.97, 0], 0.01, 0.003, 5, BARK[sp], REGION.BARK, 0.5, 0.6);
+  const env = (y: number): number => R0 * Math.min(1, (1 - y) / 0.9);
+  const crown: Crown = { cx: 0, cy: 0.42, cz: 0, rx: R0, ry: 0.55 };
+  // a narrow dark core of dense needles hides the trunk and the sky behind it
+  const coneSides = 6;
+  const apex = b.vert(0, 0.9, 0, 0, 1, 0, fol, 0.5, CORE_UV[0], REGION.CANOPY.v1 - 0.01, 1);
+  const ring: number[] = [];
+  for (let i = 0; i <= coneSides; i++) {
+    const a = (i / coneSides) * Math.PI * 2;
+    const [uu] = coreUv([Math.cos(a), 0, Math.sin(a)]);
+    ring.push(b.vert(Math.cos(a) * R0 * 0.3, 0.12, Math.sin(a) * R0 * 0.3, Math.cos(a), 0.4, Math.sin(a), fol, 0.45, uu, REGION.CANOPY.v0 + 0.01, 1));
+  }
+  for (let i = 0; i < coneSides; i++) b.tri(apex, ring[i + 1], ring[i]);
+  const tiers = 15;
+  for (let t = 0; t < tiers; t++) {
+    jitterSeq = t;
+    const f = t / (tiers - 1);
+    const yb = 0.13 + 0.82 * Math.pow(f, 0.92);
+    const L = env(yb - 0.05) * 1.02;
+    const droop = L * (0.5 + 0.3 * (1 - f)) * (1 / R0) * 0.2;
+    const seg = t > tiers - 4 ? 5 : 8;
+    const tw = rnd() * 6.283;
+    skirt(b, rnd, yb, L, droop, seg, fol, 0.62 + 0.45 * f, crown, tw);
+    // an inner, shorter skirt offset by half a segment fills the gaps near the trunk
+    jitterSeq = 100 + t;
+    if (t < tiers - 2) skirt(b, rnd, yb - 0.025, L * 0.62, droop * 0.7, 5, fol, 0.45 + 0.35 * f, crown, tw + Math.PI / seg);
+  }
+  // leader: two crossed vertical sprays at the tip
+  for (let k = 0; k < 2; k++) {
+    const a = (k * Math.PI) / 2;
+    card(b, [0, 0.93, 0], [Math.cos(a), 0, Math.sin(a)], [0, 1, 0], R0 * 0.35, 0.13, REGION.NEEDLE, fol, crown, 0.3, false, 1.1);
+  }
+  return b.build(R0, sp);
+}
+
+function buildPine(): THREE.BufferGeometry {
+  const sp = PINE;
+  const R0 = SPECIES_R0[sp];
+  const b = new Builder();
+  const rnd = mulberry32(202);
+  const fol = FOLIAGE[sp];
+  const bark = BARK[sp];
+  const lower: RGB = [0.32, 0.26, 0.22];
+  // slightly sinuous trunk: grey-brown below, orange above
+  const pts: V3[] = [[0, -0.05, 0], [0.012, 0.3, 0.004], [-0.006, 0.58, 0.01], [0.01, 0.84, -0.004]];
+  const radii = [0.02, 0.016, 0.012, 0.006];
+  for (let i = 0; i < 3; i++) limb(b, pts[i], pts[i + 1], radii[i], radii[i + 1], 6, i === 0 ? lower : bark, REGION.BARK, 0.75, 0.95);
+  const crown: Crown = { cx: 0, cy: 0.78, cz: 0, rx: R0, ry: 0.2 };
+  const pads = 7;
+  for (let i = 0; i < pads; i++) {
+    const a = (i / pads) * Math.PI * 2 + rnd() * 0.6;
+    const top = i === 0;
+    const rr = top ? 0 : R0 * (0.35 + 0.35 * rnd());
+    const y = top ? 0.94 : 0.64 + 0.2 * rnd();
+    const c: V3 = [Math.cos(a) * rr, y, Math.sin(a) * rr];
+    const src = Math.min(3, Math.floor(((y - 0.55) / 0.35) * 3) + 1);
+    const from = pts[Math.max(1, Math.min(3, src))];
+    if (!top) limb(b, [from[0], Math.min(y - 0.04, from[1] + 0.02), from[2]], [c[0] * 0.8, y - 0.02, c[2] * 0.8], 0.006, 0.003, 4, bark, REGION.BARK, 0.7, 0.8);
+    const prx = R0 * (top ? 0.45 : 0.38 + 0.12 * rnd());
+    core(b, [c[0], y - 0.01, c[2]], prx * 0.62, 0.045, fol, 0.5);
+    const cards = 14;
+    for (let k = 0; k < cards; k++) {
+      const ang = rnd() * 6.283;
+      const rad = prx * Math.sqrt(rnd()) * 0.8;
+      const p: V3 = [c[0] + Math.cos(ang) * rad, y + (rnd() - 0.3) * 0.05, c[2] + Math.sin(ang) * rad];
+      const n: V3 = norm([Math.cos(ang) * 0.5 + (rnd() - 0.5) * 0.5, 1, Math.sin(ang) * 0.5 + (rnd() - 0.5) * 0.5]);
+      const up: V3 = [Math.cos(ang), 0, Math.sin(ang)];
+      const sz = prx * (0.85 + 0.4 * rnd());
+      if (k % 3 === 2) {
+        // an upright tuft seen from the side
+        card(b, [p[0], p[1] + sz * 0.2, p[2]], [Math.cos(ang + 1.57), 0.15, Math.sin(ang + 1.57)], [0, 1, 0], sz, sz * 0.7, REGION.NEEDLE, fol, crown, 0.5, rnd() < 0.5);
+      } else card(b, p, n, up, sz, sz * 1.2, REGION.NEEDLE, fol, crown, 0.45, rnd() < 0.5);
+    }
+  }
+  return b.build(R0, sp);
+}
+
+function buildBroadleaf(): THREE.BufferGeometry {
+  const sp = BROADLEAF;
+  const R0 = SPECIES_R0[sp];
+  const b = new Builder();
+  const rnd = mulberry32(303);
+  const fol = FOLIAGE[sp];
+  const bark = BARK[sp];
+  const yc = 0.61;
+  const crown: Crown = { cx: 0, cy: yc, cz: 0, rx: R0, ry: 0.38 };
+  limb(b, [0, -0.05, 0], [0.01, 0.42, 0], 0.03, 0.02, 8, bark, REGION.BARK);
+  const lobes: { c: V3; rx: number; ry: number }[] = [{ c: [0, yc + 0.15, 0], rx: R0 * 0.52, ry: 0.2 }];
+  const N = 7;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
+    const d = R0 * (0.5 + 0.1 * rnd());
+    lobes.push({ c: [Math.cos(a) * d, yc - 0.14 + 0.24 * rnd(), Math.sin(a) * d], rx: R0 * (0.44 + 0.08 * rnd()), ry: 0.17 + 0.05 * rnd() });
+  }
+  for (const l of lobes) {
+    limb(b, [0.01, 0.36 + 0.04 * rnd(), 0], [l.c[0] * 0.75, l.c[1] - 0.04, l.c[2] * 0.75], 0.013, 0.005, 5, bark, REGION.BARK, 0.6, 0.75);
+    core(b, l.c, l.rx * 0.74, l.ry * 0.74, fol, 0.55);
+    lobe(b, rnd, l.c, l.rx, l.ry, 17, R0 * 0.44, REGION.LEAF, fol, crown, { outward: [l.c[0], l.c[1] - yc + 0.05, l.c[2]], shell: 0.7 });
+  }
+  return b.build(R0, sp);
+}
+
+function buildBirch(): THREE.BufferGeometry {
+  const sp = BIRCH;
+  const R0 = SPECIES_R0[sp];
+  const b = new Builder();
+  const rnd = mulberry32(404);
+  const fol = FOLIAGE[sp];
+  const bark = BARK[sp];
+  const lean = 0.015;
+  limb(b, [0, -0.05, 0], [lean, 0.5, 0], 0.014, 0.01, 6, bark, REGION.BIRCHBARK, 0.85, 1);
+  limb(b, [lean, 0.5, 0], [lean * 1.5, 0.9, 0.005], 0.01, 0.004, 5, bark, REGION.BIRCHBARK, 0.85, 1);
+  const crown: Crown = { cx: 0, cy: 0.62, cz: 0, rx: R0, ry: 0.36 };
+  const N = 7;
+  for (let i = 0; i < N; i++) {
+    const f = i / (N - 1);
+    const a = i * 2.39996 + rnd() * 0.4;
+    const y = 0.36 + 0.55 * f;
+    const d = R0 * (0.45 - 0.2 * f) * (0.8 + 0.4 * rnd());
+    const c: V3 = [Math.cos(a) * d + lean, y, Math.sin(a) * d];
+    limb(b, [lean * 1.2, y - 0.08, 0], [c[0] * 0.8, y, c[2] * 0.8], 0.004, 0.002, 3, bark, REGION.BIRCHBARK, 0.7, 0.8);
+    lobe(b, rnd, c, R0 * (0.52 - 0.15 * f), 0.14, 16, R0 * 0.5, REGION.SMALL, fol, crown, { outward: [c[0], 0, c[2]], hang: 0.55, shell: 0.35 });
+  }
+  return b.build(R0, sp);
 }
 
 function buildPoplar(): THREE.BufferGeometry {
-  const R0 = SPECIES_R0[POPLAR];
+  const sp = POPLAR;
+  const R0 = SPECIES_R0[sp];
   const b = new Builder();
-  addLimb(b, 0, -0.06, 0, 0, 0.3, 0, 0.1 * R0, 0.06 * R0, 5, TRUNK[POPLAR]);
-  // [v centre, horizontal radius, vertical radius, offset] in unit crown space (round clumps in metres)
-  const stack = [
-    [-0.62, 0.78, 0.3, 0.08],
-    [-0.28, 0.9, 0.32, -0.07],
-    [0.08, 0.86, 0.32, 0.06],
-    [0.42, 0.72, 0.3, -0.04],
-    [0.72, 0.46, 0.26, 0.02],
-  ];
-  stack.forEach(([v, ru, rv, off], i) => addClump(b, POPLAR, R0, off, v, -off * 0.5, ru, 30 + i, -1, rv));
-  return b.build(R0);
+  const rnd = mulberry32(505);
+  const fol = FOLIAGE[sp];
+  limb(b, [0, -0.05, 0], [0, 0.6, 0], 0.012, 0.006, 6, BARK[sp], REGION.BARK);
+  const crown: Crown = { cx: 0, cy: 0.55, cz: 0, rx: R0, ry: 0.45 };
+  const N = 8;
+  for (let i = 0; i < N; i++) {
+    const f = i / (N - 1);
+    const y = 0.16 + 0.76 * f;
+    const w = Math.sin(Math.PI * (0.12 + 0.8 * Math.pow(f, 0.85))) * 0.9 + 0.1;
+    const c: V3 = [(rnd() - 0.5) * R0 * 0.2, y, (rnd() - 0.5) * R0 * 0.2];
+    const rx = R0 * 0.8 * w;
+    core(b, c, rx * 0.6, 0.07, fol, 0.7);
+    lobe(b, rnd, c, rx, 0.1, 15, R0 * 0.8, REGION.LEAF, fol, crown, { upright: 0.7, shell: 0.55 });
+  }
+  return b.build(R0, sp);
+}
+
+function buildWillow(): THREE.BufferGeometry {
+  const sp = WILLOW;
+  const R0 = SPECIES_R0[sp];
+  const b = new Builder();
+  const rnd = mulberry32(606);
+  const fol = FOLIAGE[sp];
+  const bark = BARK[sp];
+  limb(b, [0, -0.05, 0], [0.04, 0.4, 0.01], 0.05, 0.035, 8, bark, REGION.BARK);
+  const crown: Crown = { cx: 0, cy: 0.62, cz: 0, rx: R0, ry: 0.36 };
+  const N = 6;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + rnd() * 0.5;
+    const d = i === 0 ? 0 : R0 * (0.45 + 0.1 * rnd());
+    const c: V3 = [Math.cos(a) * d, 0.72 + 0.1 * rnd(), Math.sin(a) * d];
+    limb(b, [0.04, 0.38, 0.01], [c[0] * 0.7, c[1] - 0.06, c[2] * 0.7], 0.018, 0.008, 5, bark, REGION.BARK, 0.6, 0.7);
+    core(b, c, R0 * 0.32, 0.11, fol, 0.55);
+    lobe(b, rnd, c, R0 * 0.42, 0.14, 14, R0 * 0.42, REGION.SMALL, fol, crown, { outward: [c[0], 0.3, c[2]], hang: 0.4 });
+  }
+  // the curtain of hanging strands around the dome
+  const strands = 26;
+  for (let i = 0; i < strands; i++) {
+    const a = (i / strands) * Math.PI * 2 + (rnd() - 0.5) * 0.2;
+    const rr = R0 * (0.62 + 0.3 * rnd());
+    const top = 0.84 - 0.2 * (rr / R0 - 0.6) + 0.04 * rnd();
+    const bottom = 0.16 + 0.22 * rnd();
+    const h = top - bottom;
+    const c: V3 = [Math.cos(a) * rr, (top + bottom) / 2, Math.sin(a) * rr];
+    card(b, c, [Math.cos(a), 0.1, Math.sin(a)], [0, 1, 0], R0 * 0.3, h, REGION.STRAND, fol, crown, 0.55, rnd() < 0.5, 0.95);
+  }
+  return b.build(R0, sp);
 }
 
 function buildBush(): THREE.BufferGeometry {
-  const R0 = SPECIES_R0[3];
+  const sp = BUSH;
+  const R0 = SPECIES_R0[sp];
   const b = new Builder();
-  addClump(b, 3, R0, 0, 0.46, 0, 0.6, 40, -0.52);
+  const rnd = mulberry32(707);
+  const fol = FOLIAGE[sp];
+  const crown: Crown = { cx: 0, cy: 0.4, cz: 0, rx: R0, ry: 0.55 };
   for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI * 2 + 0.3;
-    addClump(b, 3, R0, Math.cos(a) * 0.45, -0.02 + 0.12 * hash2i(i, 1, 41), Math.sin(a) * 0.45, 0.5, 41 + i, -0.52);
+    const a = (i / 3) * Math.PI * 2;
+    limb(b, [0, -0.05, 0], [Math.cos(a) * R0 * 0.3, 0.45, Math.sin(a) * R0 * 0.3], 0.03, 0.012, 4, BARK[sp], REGION.BARK, 0.5, 0.6);
   }
-  return b.build(R0);
+  const lobes: { c: V3; rx: number; ry: number }[] = [{ c: [0, 0.6, 0], rx: R0 * 0.55, ry: 0.4 }];
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.4 + (rnd() - 0.5) * 0.4;
+    lobes.push({ c: [Math.cos(a) * R0 * 0.45, 0.3 + 0.12 * rnd(), Math.sin(a) * R0 * 0.45], rx: R0 * 0.45, ry: 0.3 });
+  }
+  for (const l of lobes) {
+    core(b, l.c, l.rx * 0.7, l.ry * 0.7, fol, 0.55);
+    lobe(b, rnd, l.c, l.rx, l.ry, 12, R0 * 0.45, REGION.LEAF, fol, crown, { outward: [l.c[0], l.c[1] - 0.2, l.c[2]], shell: 0.65 });
+  }
+  return b.build(R0, sp);
 }
 
-const builders = [buildConifer, buildDeciduous, buildPoplar, buildBush];
+const builders = [buildSpruce, buildPine, buildBroadleaf, buildBirch, buildPoplar, buildWillow, buildBush];
+if (builders.length !== SPECIES_COUNT) throw new Error('species builders out of sync');
 
 /** The normalised mesh of a species (a new geometry each call). */
 export function buildSpeciesGeometry(species: number): THREE.BufferGeometry {

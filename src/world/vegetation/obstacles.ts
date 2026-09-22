@@ -19,6 +19,7 @@ import {
   type HeightFn,
   type PlacementParams,
   type TreeCell,
+  type VegWorld,
 } from './placement';
 
 export interface ObstacleFieldOptions {
@@ -26,8 +27,12 @@ export interface ObstacleFieldOptions {
   heightAt: HeightFn;
   seed?: number;
   params?: PlacementParams;
+  /** The full placement world (takes precedence over densityAt/heightAt). */
+  world?: VegWorld;
   /** LRU capacity in cells. */
   cacheCells?: number;
+  /** Optional source of already generated cells (the renderer's chunks); null = generate. */
+  provider?: (cx: number, cz: number) => TreeCell | null;
 }
 
 export interface ObstacleField {
@@ -61,7 +66,7 @@ export function createObstacleField(opts: ObstacleFieldOptions): ObstacleField {
       cache.set(k, c);
       return c;
     }
-    c = treesInCell(cx, cz, opts.densityAt, opts.heightAt, seed, params);
+    c = opts.provider?.(cx, cz) ?? (opts.world ? treesInCell(cx, cz, opts.world, seed, params) : treesInCell(cx, cz, opts.densityAt, opts.heightAt, seed, params));
     cache.set(k, c);
     if (cache.size > capacity) cache.delete(cache.keys().next().value as number);
     return c;
