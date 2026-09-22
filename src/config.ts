@@ -726,6 +726,15 @@ export const CONFIG = {
     stallHornHz: 1780,
     stallHornQ: 4.5,
     stallHornMinKt: 12,
+    /**
+     * Landing-gear warning horn (172RG): an electronic intermittent tone through the cabin speaker —
+     * lower and beeping, unmistakably different from the continuous reed stall horn.
+     */
+    gearHornHz: 620,
+    gearHornRateHz: 2.4,
+    /** Fraction of each beep period the tone is on. */
+    gearHornDuty: 0.52,
+    gearHornVolume: 0.3,
     /** Touchdown chirp/thump: faint at touchdownMinFpm, full at touchdownFullFpm (magnitudes). */
     touchdownMinFpm: 40,
     touchdownFullFpm: 700,
@@ -775,6 +784,23 @@ export const CONFIG = {
     startHintSeconds: 12,
     /** STALL annunciator blink rate, Hz. */
     stallBlinkHz: 2.5,
+    /**
+     * Landing-gear warning, as on the real 172RG: with the gear not down and locked in flight, the
+     * horn sounds (and the red GEAR annunciator flashes) when the throttle is pulled back below
+     * throttleBelowPct or the flaps reach flapsAtOrAboveDeg. With the handle UP on the ground the
+     * squat switch holds the gear down and the horn sounds (amber GEAR — SQUAT SWITCH).
+     * VLO = max speed with the gear in transit (VLE, gear down, is config.aircraft.gear.vleKt).
+     */
+    gearWarning: { throttleBelowPct: 15, flapsAtOrAboveDeg: 20, vloKt: 140, blinkHz: 2 },
+    /** Gauges drawn smaller than this (CSS px) use a simplified face: fewer, larger numerals, no small print. */
+    simpleFaceBelowPx: 112,
+    /**
+     * Start-up loading veil (src/ui/veil.ts). It is "ready" after smoothFrames consecutive frames
+     * shorter than smoothFrameMs (or maxWarmupS after the first frame, whatever happens), then fades
+     * out by itself autoDismissS later — or at once on the first key/click (which also unlocks audio).
+     * `?veil=0` skips it. Whatever happens (the app failed to start…) it lifts after maxTotalS.
+     */
+    veil: { autoDismissS: 1.5, fadeS: 0.8, smoothFrameMs: 34, smoothFrames: 24, maxWarmupS: 6, maxTotalS: 40 },
   },
 
   // ─── Effects: particles, camera shake, speed FOV (owned by src/fx) ─────────

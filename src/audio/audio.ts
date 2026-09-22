@@ -26,7 +26,7 @@ import {
   engineMix, exhaustCenterHz, firingFrequency, masterGain, rollingCutoffHz, rollingGain, stallHornOn, touchdownIntensity,
   viewCutoffHz, whistleGain, windCenterHz, windGain,
 } from './mapping';
-import { engineCycleWaveform, fourierSeries, hornWaveform, mulberry32, noiseSamples, propWaveform, pulseWaveform, type NoiseKind } from './waves';
+import { beepWaveform, engineCycleWaveform, fourierSeries, gateWaveform, hornWaveform, mulberry32, noiseSamples, propWaveform, pulseWaveform, type NoiseKind } from './waves';
 import { playCatch, playCrackle, playCrash, playGearClunk, playTouchdown, type OneShotKit } from './oneshots';
 
 const A = CONFIG.audio;
@@ -93,6 +93,7 @@ interface Graph {
   rollLP: Knob;
   scrub: Knob;
   horn: Knob;
+  gearHorn: Knob;
   gear: Knob;
   flap: Knob;
   fire: Knob;
@@ -276,6 +277,16 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   const horn = gain(0);
   chain(hornOsc, hornBP, hornNasal, horn, cabin);
 
+  // ── Gear warning horn: electronic tone through a small cabin speaker, beeped by a soft-edged gate ──
+  const ghOsc = osc(wave(beepWaveform(1024), 14), A.gearHornHz);
+  const ghSpeaker = filter('bandpass', A.gearHornHz * 1.6, 0.6);
+  const ghBody = filter('peaking', A.gearHornHz, 2, 4);
+  const ghGate = gain(0.5);
+  // The gate wave (DC removed, normalised to ±1) swings the gate gain 0 ↔ 1 at the beep rate.
+  chain(osc(wave(gateWaveform(1024, A.gearHornDuty), 32), A.gearHornRateHz), gain(0.5)).connect(ghGate.gain);
+  const gearHorn = gain(0);
+  chain(ghOsc, ghSpeaker, ghBody, ghGate, gearHorn, cabin);
+
   // ── Motors ────────────────────────────────────────────────────────────────
   const gearOsc = osc('sawtooth', 118);
   const gearBP = filter('bandpass', 430, 1.3);
@@ -330,6 +341,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
     rollLP: k(rollLP.frequency, 1e-3),
     scrub: k(scrub.gain),
     horn: k(horn.gain),
+    gearHorn: k(gearHorn.gain),
     gear: k(gear.gain),
     flap: k(flap.gain),
     fire: k(fire.gain),
@@ -355,7 +367,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   let crashAge = 0;
   const L: AudioLevels = {
     master: 0, engineVolume: A.engineVolume, exhaust: 0, prop: 0, mechanical: 0, starter: 0, cycleHz: 0, firingHz: 0,
-    bladeHz: 0, doppler: 1, wind: 0, whistle: 0, rolling: 0, scrub: 0, horn: 0, gear: 0, flap: 0, fire: 0,
+    bladeHz: 0, doppler: 1, wind: 0, whistle: 0, rolling: 0, scrub: 0, horn: 0, gearHorn: 0, gear: 0, flap: 0, fire: 0,
     viewCutoff: A.exteriorCutoffHz, distance: 1, cabin: A.exteriorCabinGain, oneShots: 0, lastTouchdown: 0, errors: 0,
   };
 
@@ -458,6 +470,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     // Horn / motors
     L.horn = stallHornOn(!!a.stallWarning, ias, crashed) ? A.stallHornVolume : 0;
     g.horn.set(L.horn, t, 0.025);
+    L.gearHorn = a.gearWarning === true && !crashed ? A.gearHornVolume : 0;
+    g.gearHorn.set(L.gearHorn, t, 0.02);
     L.gear = a.gearMoving && !crashed ? A.motorVolume : 0;
     L.flap = a.flapsMoving && !crashed ? A.motorVolume : 0;
     g.gear.set(L.gear, t, 0.08);

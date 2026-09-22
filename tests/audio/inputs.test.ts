@@ -93,6 +93,16 @@ describe('createAudioInputTracker', () => {
     expect(track({ ...base, state: state({}, { alpha: 0.05 }), stallWarning: true }).stallWarning).toBe(true);
     expect(track({ ...base, state: state({ onGround: true }, { alpha: stallRad, ias: 3 }) }).stallWarning).toBe(false);
   });
+  it('gear warning: from the caller when given, else computed from the gear, throttle, flaps and squat switch', () => {
+    const track = createAudioInputTracker();
+    const base = { cameraMode: 'cockpit' as const, paused: false, dt: DT };
+    expect(track({ ...base, state: state({ gearPos: 0 }), controls: controls({ throttle: 0.05, gearDown: false }) }).gearWarning).toBe(true);
+    expect(track({ ...base, state: state({ gearPos: 0 }), controls: controls({ throttle: 0.6, gearDown: false }) }).gearWarning).toBe(false);
+    expect(track({ ...base, state: state({ gearPos: 1 }), controls: controls({ throttle: 0.05 }) }).gearWarning).toBe(false);
+    const ground = state({ gearPos: 1, onGround: true, phase: 'ground' });
+    expect(track({ ...base, state: ground, controls: controls({ throttle: 0, gearDown: false }) }).gearWarning).toBe(true);
+    expect(track({ ...base, state: state({ gearPos: 0 }), controls: controls({ throttle: 0.05, gearDown: false }), gearWarning: false }).gearWarning).toBe(false);
+  });
   it('crash maps to crashed + impact speed', () => {
     const track = createAudioInputTracker();
     const a = track({

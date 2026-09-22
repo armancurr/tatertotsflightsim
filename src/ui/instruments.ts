@@ -12,11 +12,22 @@
 import { CONFIG, M_TO_FT, MS_TO_FPM, MS_TO_KT, RAD_TO_DEG, DEG_TO_RAD, type Config } from '../config';
 import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings } from '../types';
 import { stallAlphaRad, simStateLabel } from '../physics';
+import { gearWarning } from './gearWarning';
 
 /** Readings plus the few extras the panel drawers use (still assignable to InstrumentReadings). */
 export interface HudReadings extends InstrumentReadings {
   /** Position of the gear lever (the command), which leads the gear while it is in transit. */
   gearHandleDown: boolean;
+  /** Weight on wheels (the squat switch). */
+  onGround: boolean;
+  /** The intermittent gear warning horn is sounding (see gearWarning.ts). */
+  gearHorn: boolean;
+  /** Red GEAR: airborne with the gear not down and locked at low power or landing flaps. */
+  gearUnsafe: boolean;
+  /** Amber GEAR — SQUAT SWITCH: handle UP on the ground. */
+  gearSquat: boolean;
+  /** Gear speed limit exceeded (VLE down, VLO in transit). */
+  gearOverspeed: boolean;
 }
 
 /** Smoothing state of the needles. Create with createInstrumentModel(); mutated by updateInstruments(). */
@@ -181,6 +192,13 @@ export function updateInstruments(
   const airborne = state.phase === 'airborne';
   const stallWarning =
     airborne && (state.stalled || alpha >= stallAlphaRad(flapsDeg, cfg) - cfg.aircraft.stall.warningMarginDeg * DEG_TO_RAD);
+  const throttlePct = clamp(fin(controls.throttle) * 100, 0, 100);
+  const onGround = state.onGround === true;
+  const gearHandleDown = controls.gearDown !== false;
+  const gw = gearWarning(
+    { onGround, crashed: state.phase === 'crashed', gear, handleDown: gearHandleDown, throttlePct, flapsDeg, iasKt: iasT },
+    cfg,
+  );
 
   return {
     airspeedKt: m.ias,
@@ -192,13 +210,13 @@ export function updateInstruments(
     rollDeg: wrap180(fin(d.rollDeg)),
     slipSkid: clamp(m.ball, -1, 1),
     turnRateDegPerSec: m.turn,
-    throttlePct: clamp(fin(controls.throttle) * 100, 0, 100),
+    throttlePct,
     rpm: m.rpm,
     engineStatus: engineStatusOf(state.engine),
     flapsDeg,
     flapsTargetDeg: notches[notch],
     gear,
-    gearLight: gear === 'down' ? 'green' : gear === 'transit' ? 'red' : 'off',
+    gearLight: gw.lights,
     brakes: fin(controls.brake) > h.brakeLampThreshold,
     parkingBrake: controls.parkingBrake === true,
     trimPct: clamp(fin(controls.elevatorTrim) * 100, -100, 100),
@@ -208,6 +226,11 @@ export function updateInstruments(
     gLoad: clamp(fin(d.loadFactor, 1), -h.maxG, h.maxG),
     groundSpeedKt: clamp(fin(d.groundSpeed) * MS_TO_KT, 0, 1000),
     state: simStateLabel(state),
-    gearHandleDown: controls.gearDown !== false,
+    gearHandleDown,
+    onGround,
+    gearHorn: gw.horn,
+    gearUnsafe: gw.gearUnsafe,
+    gearSquat: gw.squatSwitch,
+    gearOverspeed: gw.overspeed,
   };
 }

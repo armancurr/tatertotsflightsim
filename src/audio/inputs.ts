@@ -6,6 +6,8 @@
 import { CONFIG, MS_TO_KT } from '../config';
 import type { AircraftState, CameraMode, Controls, SurfaceType, Vec3 } from '../types';
 import type { AudioInputs } from './types';
+import { gearWarning as gearWarningOf } from '../ui/gearWarning';
+import { gearStateFromPos } from '../ui/instruments';
 
 export interface AudioInputSource {
   state: AircraftState;
@@ -20,6 +22,8 @@ export interface AudioInputSource {
   stallWarning?: boolean;
   /** Camera world position, for exterior distance attenuation and Doppler. */
   cameraPosition?: Vec3;
+  /** Gear warning horn from the instruments (HudReadings.gearHorn); default: computed from the state and controls. */
+  gearWarning?: boolean;
 }
 
 const f = (v: number, d = 0) => (Number.isFinite(v) ? v : d);
@@ -44,7 +48,7 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
   const out: AudioInputs = {
     rpm: 0, power: 0, engineRunning: false, starting: false, airspeedKt: 0, onGround: true, groundSpeedKt: 0,
     stallWarning: false, gearMoving: false, flapsMoving: false, touchdownFpm: null, crashed: false,
-    cameraMode: 'chase', paused: false, brake: 0, surface: 'runway',
+    cameraMode: 'chase', paused: false, brake: 0, surface: 'runway', gearWarning: false,
   };
 
   return (s) => {
@@ -120,6 +124,15 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
 
     first = false;
     const crashed = st.phase === 'crashed';
+    const gearHorn =
+      s.gearWarning ??
+      gearWarningOf(
+        {
+          onGround: !!st.onGround, crashed, gear: gearStateFromPos(gp), handleDown: s.controls.gearDown !== false,
+          throttlePct: f(s.controls.throttle) * 100, flapsDeg: fd, iasKt,
+        },
+        cfg,
+      ).horn;
     out.rpm = Math.min(1e5, Math.max(0, f(st.engine.rpm)));
     out.power = Math.max(0, Math.min(1, f(st.engine.power)));
     out.engineRunning = !!st.engine.running;
@@ -139,6 +152,7 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
     out.listenerDistanceM = listenerDistanceM;
     out.closingSpeedMs = closingSpeedMs;
     out.crashSpeedKt = crashed && st.crash ? f(st.crash.speedKt, iasKt) : undefined;
+    out.gearWarning = !!gearHorn && !crashed;
     return out;
   };
 }

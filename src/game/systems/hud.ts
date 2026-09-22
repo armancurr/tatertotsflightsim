@@ -1,6 +1,7 @@
 /** Instruments, HUD overlay and the live cockpit panel (owned by src/ui). */
 import { createHud, type PanelDrawerFn } from '../../ui/hud';
 import { createInstrumentModel, updateInstruments, type HudReadings } from '../../ui/instruments';
+import { veilActive } from '../../ui/veil';
 import type { SystemModule } from './types';
 
 const mod: SystemModule = {
@@ -11,6 +12,7 @@ const mod: SystemModule = {
     const ac = ctx.aircraft;
     const hud = createHud(ctx.hudRoot, { aircraft: ac.setPanelDrawer ? (ac as { setPanelDrawer(fn: PanelDrawerFn): void }) : undefined });
     let readings: HudReadings | null = null;
+    let muted = false;
     return {
       readings(state, controls, dt) {
         readings = updateInstruments(model, state, controls, dt);
@@ -21,12 +23,16 @@ const mod: SystemModule = {
         hud.update(r, {
           cameraMode: f.cameraMode, paused: f.paused, fps: f.fps.fps, timeOfDay: ctx.atmosphere.timeOfDayName,
           state: f.state, controls: f.controls, mouseYoke: f.controlState.mouseYoke,
+          landingLight: f.controlState.landingLight, veil: veilActive(),
         }, f.dt);
       },
       onAction(a) {
         if (a === 'help') hud.toggleHelp();
         else if (a === 'toggleHud') hud.toggleVisible();
-        else if (a === 'mute') hud.flash('Sound toggled (M)', 'info', 1.5);
+        else if (a === 'mute') {
+          muted = !muted;
+          hud.flash(muted ? 'Sound off (M)' : 'Sound on (M)', 'info', 1.5);
+        }
       },
       onResize: () => hud.resize(),
       dispose: () => hud.dispose(),
