@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import { placeBuildings, buildingRect, roofTopAt, type Building } from '../../../src/world/towns/placement';
 import { buildRoadNetwork, type RoadNetwork } from '../../../src/world/roads/network';
@@ -8,6 +8,9 @@ import { createStandInHeight } from '../../../src/world/towns/standin';
 import { CONFIG } from '../../../src/config';
 import type { WorldLayout } from '../../../src/world/layout';
 import { LAYOUT, HEIGHT, syntheticLayout } from './fixtures';
+
+// whole-world placements are CPU-heavy: generous timeouts so the suite stays green under parallel load
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 const NET = buildRoadNetwork(LAYOUT, HEIGHT);
 const B = placeBuildings(LAYOUT, NET, HEIGHT);
@@ -150,6 +153,35 @@ describe('building placement', () => {
     expect(new Set(houses.map((h) => h.archetype))).toEqual(new Set(['gable', 'hip']));
   });
 
+  it('records the plinth (extra wall height on sloping ground) of every building', () => {
+    for (const b of B) {
+      expect(b.plinth).toBeGreaterThanOrEqual(0.3 - 1e-9);
+      expect(b.plinth).toBeLessThan(b.wallHeight);
+    }
+  });
+
+  it('gives some downtown towers a setback upper tier, within the footprint', () => {
+    const tiered = B.filter((b) => (b.tierHeight ?? 0) > 0);
+    expect(tiered.length).toBeGreaterThan(5);
+    for (const b of tiered) {
+      expect(b.use === 'tower' || b.use === 'office').toBe(true);
+      expect(b.archetype).toBe('flat');
+      expect(b.tierHeight!).toBeGreaterThan(b.plinth! + 8);
+      expect(b.tierHeight!).toBeLessThan(b.wallHeight - 6);
+      expect(b.tierInset!).toBeGreaterThan(1.5);
+      expect(Math.min(b.width, b.depth) - 2 * b.tierInset!).toBeGreaterThan(8);
+    }
+  });
+
+  it('builds grain bins (squat, cone roof) as well as tall domed silos on the farms', () => {
+    const silos = B.filter((b) => b.use === 'silo');
+    const bins = silos.filter((b) => b.ridge < 0.5);
+    const domed = silos.filter((b) => b.ridge >= 0.5);
+    expect(bins.length).toBeGreaterThan(silos.length * 0.15);
+    expect(domed.length).toBeGreaterThan(silos.length * 0.3);
+    for (const b of bins) expect(b.width).toBeGreaterThan(b.wallHeight - b.plinth! - 1);
+  });
+
   it('keeps every building clear of roads, water, the airport and each other, on the ground and facing its street', () => {
     checkInvariants(LAYOUT, NET, B, HEIGHT);
   });
@@ -214,6 +246,20 @@ describe('roofTopAt', () => {
     expect(roofTopAt(silo, silo.x + 2.9, silo.z + 2.9)).toBe(-Infinity); // outside the circle, inside the square
     const spire = mk({ archetype: 'hip', ridge: 0, width: 6, depth: 6, wallHeight: 18, roofHeight: 14 });
     expect(roofTopAt(spire, spire.x, spire.z)).toBeCloseTo(spire.y + 32);
+  });
+  it('grain bins (silo, ridge 0) have a cone roof', () => {
+    const bin = mk({ archetype: 'silo', width: 10, depth: 10, roofHeight: 2.5, ridge: 0 });
+    expect(roofTopAt(bin, bin.x, bin.z)).toBeCloseTo(bin.y + 8.5);
+    const f = frontVector(bin.headingDeg);
+    expect(roofTopAt(bin, bin.x + f.x * 2.5, bin.z + f.z * 2.5)).toBeCloseTo(bin.y + 6 + 2.5 * 0.5);
+  });
+  it('a tiered tower is full height over its inset top and at the tier over the terrace', () => {
+    const t = mk({ archetype: 'flat', width: 30, depth: 24, wallHeight: 80, roofHeight: 1.5, tierHeight: 50, tierInset: 4 });
+    expect(roofTopAt(t, t.x, t.z)).toBeCloseTo(t.y + 81.5);
+    const f = frontVector(t.headingDeg);
+    // 2 m in from the front wall: on the terrace
+    expect(roofTopAt(t, t.x + f.x * 10, t.z + f.z * 10)).toBeCloseTo(t.y + 51.5);
+    expect(roofTopAt(t, t.x + f.x * 7.5, t.z + f.z * 7.5)).toBeCloseTo(t.y + 81.5);
   });
   it('fuzz: inside the footprint the top lies between the wall top and the roof top', () => {
     const arch = fc.constantFrom('gable', 'hip', 'flat', 'gambrel', 'silo') as fc.Arbitrary<Building['archetype']>;

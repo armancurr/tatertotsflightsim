@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import * as THREE from 'three';
 import { selectLod, boxCount, groupByChunk, chunkBounds, distanceToBox, LOD_NEAR, LOD_BOX, LOD_HIDDEN } from '../../../src/world/towns/lod';
@@ -7,6 +7,9 @@ import { getRoadNetwork } from '../../../src/world/roads/network';
 import { rectCorners } from '../../../src/world/towns/geom';
 import { CONFIG } from '../../../src/config';
 import { LAYOUT, HEIGHT } from './fixtures';
+
+// whole-world placements are CPU-heavy: generous timeouts so the suite stays green under parallel load
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 const cfg = CONFIG.world.towns;
 
