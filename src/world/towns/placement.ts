@@ -57,7 +57,7 @@ export interface Building {
   wallHeight: number;
   /** Roof rise above the walls (parapet height for flat roofs, dome for silos), m. */
   roofHeight: number;
-  /** Hip roofs: ridge length as a fraction of the building length along it (0 = pyramid). */
+  /** Hip roofs: ridge length as a fraction of the building length along it (0 = pyramid). Silos: 1 = dome, 0 = cone (grain bin). */
   ridge: number;
   /** 0 = ridge parallel to the front (width axis), 1 = ridge front-to-back (gable end to the street). */
   ridgeAxis: 0 | 1;
@@ -73,6 +73,14 @@ export interface Building {
   /** Settlement index (−1 = countryside) and farm index (−1 = not a farm building). */
   town: number;
   farm: number;
+  /** Height of the base below the ground floor (the extra wall on sloping ground), m. Set by the placement. */
+  plinth?: number;
+  /**
+   * Flat-roofed towers with a setback: the full footprint rises to `tierHeight` above `y` (plus the
+   * parapet), the upper tier — the footprint inset by `tierInset` on every side — to the full height.
+   */
+  tierHeight?: number;
+  tierInset?: number;
 }
 
 export interface PlacementOptions {
@@ -113,11 +121,17 @@ export function roofTopAt(b: Building, x: number, z: number): number {
   if (b.archetype === 'silo') {
     const r2 = (u * u + v * v) / (hw * hw);
     if (r2 > 1) return -Infinity;
-    return b.y + b.wallHeight + b.roofHeight * Math.sqrt(1 - r2);
+    return b.y + b.wallHeight + b.roofHeight * (b.ridge < 0.5 ? 1 - Math.sqrt(r2) : Math.sqrt(1 - r2));
   }
   const au = Math.abs(u);
   const av = Math.abs(v);
   if (au > hw || av > hd) return -Infinity;
+  const tier = b.tierHeight ?? 0;
+  if (b.archetype === 'flat' && tier > 0) {
+    const ins = b.tierInset ?? 0;
+    const onTop = au <= hw - ins && av <= hd - ins;
+    return b.y + (onTop ? b.wallHeight : tier) + b.roofHeight;
+  }
   let frac = 1;
   if (b.archetype !== 'flat') {
     const p = b.ridgeAxis === 0 ? au : av; // along the ridge
@@ -196,6 +210,9 @@ interface Proto {
   gap: number;
   /** Minimum clearance to any other building, m. */
   clear: number;
+  /** Setback tier (flat towers): height above the base and inset, m. */
+  tierHeight?: number;
+  tierInset?: number;
 }
 
 const pitched = (rnd: () => number, w: number, d: number, hip: boolean, pitchDeg: number, ridgeAxis: 0 | 1): { roofHeight: number; ridge: number; ridgeAxis: 0 | 1 } => {
@@ -302,12 +319,18 @@ function officeProto(rnd: () => number, minH: number, maxH: number, use: Buildin
   const h = minH + (maxH - minH) * rnd();
   const glass = rnd() < (tower ? 0.7 : 0.45);
   const fh = glass ? 3.8 : 3.2;
+  const floors = Math.max(2, Math.round(h / fh));
+  // setback: the upper floors of some towers (and a few tall offices) step in
+  const tiered = floors >= 10 && rnd() < (tower ? 0.5 : 0.3);
+  const tierFloors = Math.round(floors * (0.45 + 0.3 * rnd()));
+  const inset = Math.min(2.5 + rnd() * 3, (Math.min(w, d) - 10) / 2);
   return {
     use,
     archetype: 'flat',
     width: w,
     depth: d,
-    wallHeight: Math.max(2, Math.round(h / fh)) * fh + 0.8,
+    wallHeight: floors * fh + 0.8,
+    ...(tiered && inset > 1.6 && floors - tierFloors >= 3 ? { tierHeight: tierFloors * fh + 0.4, tierInset: inset } : {}),
     roofHeight: 1.2 + rnd() * 1.2,
     ridge: 1,
     ridgeAxis: 0,
@@ -400,6 +423,7 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
     rand,
     town,
     farm,
+    ...(p.tierHeight ? { tierHeight: p.tierHeight, tierInset: p.tierInset } : {}),
   });
 
   /** Faces the building toward its nearest road segment. False if no road within reach. */
@@ -432,7 +456,9 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
       }
     if (!Number.isFinite(lo) || hi - lo > 1.5 + 0.12 * Math.max(b.width, b.depth)) return null;
     b.y = lo - 0.3;
-    b.wallHeight += hi - lo + 0.3;
+    b.plinth = hi - lo + 0.3;
+    b.wallHeight += b.plinth;
+    if (b.tierHeight) b.tierHeight += b.plinth;
     return r;
   };
 
@@ -448,13 +474,14 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
   /** Adds all parts or none (parts are built not to overlap each other). */
   const tryAddGroup = (parts: { b: Building; clear: number }[]): boolean => {
     const rects: Rect[] = [];
-    const saved = parts.map((p) => ({ y: p.b.y, wh: p.b.wallHeight }));
+    const saved = parts.map((p) => ({ y: p.b.y, wh: p.b.wallHeight, pl: p.b.plinth }));
     for (const p of parts) {
       const r = fits(p.b, p.clear, 1.2);
       if (!r) {
         parts.forEach((pp, i) => {
           pp.b.y = saved[i].y;
           pp.b.wallHeight = saved[i].wh;
+          pp.b.plinth = saved[i].pl;
         });
         return false;
       }
@@ -669,8 +696,9 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
         continue;
       // silos beside the barn, on the far side from the house
       const n = 1 + Math.floor(rnd() * 3);
-      const diam = 4.5 + rnd() * 2.5;
-      const silo = siloProto(rnd, diam);
+      const bins = rnd() < 0.4;
+      const silo = siloProto(rnd, 4.5 + rnd() * 2.5, bins);
+      const diam = silo.width;
       for (let k = 0; k < n; k++) {
         const sp = at(bu - m * (barn.width / 2 + 2.5 + diam / 2 + k * (diam + 1.2)), bv + barn.depth / 2 - diam / 2 - 1);
         tryAdd(toBuilding({ ...silo, wallHeight: silo.wallHeight * (1 - 0.12 * k) }, sp.x, sp.z, f.headingDeg, rnd(), -1, fi), 0.8);
@@ -733,7 +761,30 @@ function barnProto(rnd: () => number): Proto {
   };
 }
 
-function siloProto(rnd: () => number, diam: number): Proto {
+const WALL_BIN = [0xc3c8cb, 0xb4babd, 0xcfd2d0];
+
+function siloProto(rnd: () => number, diam: number, bin: boolean): Proto {
+  if (bin) {
+    // a corrugated galvanised grain bin: squat, wide, cone roof
+    const d = diam * 1.6;
+    return {
+      use: 'silo',
+      archetype: 'silo',
+      width: d,
+      depth: d,
+      wallHeight: 5 + rnd() * 2.8,
+      roofHeight: d * (0.2 + rnd() * 0.06),
+      ridge: 0,
+      ridgeAxis: 0,
+      wallColor: pick(rnd, WALL_BIN),
+      roofColor: pick(rnd, [0xb7bcc0, 0xa9aeb0]),
+      floorHeight: 0,
+      style: STYLE.silo,
+      setback: 0,
+      gap: 1,
+      clear: 0.8,
+    };
+  }
   return {
     use: 'silo',
     archetype: 'silo',

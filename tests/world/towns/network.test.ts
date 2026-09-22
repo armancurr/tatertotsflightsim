@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import { buildRoadNetwork, type NetRoad } from '../../../src/world/roads/network';
 import { createConstraints } from '../../../src/world/towns/constraints';
@@ -6,6 +6,9 @@ import { CONFIG } from '../../../src/config';
 import { LAYOUT, HEIGHT, syntheticLayout } from './fixtures';
 import { createStandInHeight } from '../../../src/world/towns/standin';
 import { pointSegmentDistance } from '../../../src/world/towns/geom';
+
+// whole-world placements are CPU-heavy: generous timeouts so the suite stays green under parallel load
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 const NET = buildRoadNetwork(LAYOUT, HEIGHT);
 const C = createConstraints(LAYOUT);

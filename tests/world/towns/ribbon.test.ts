@@ -1,10 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import { planRibbons, buildRun, mergeRuns, ribbonColumns, TRIM_MARGIN, type RibbonRun, type RibbonData } from '../../../src/world/roads/ribbon';
 import { getRoadNetwork, KIND_RANK } from '../../../src/world/roads/network';
 import { pointSegmentDistance } from '../../../src/world/towns/geom';
 import { CONFIG } from '../../../src/config';
 import { LAYOUT, HEIGHT } from './fixtures';
+
+// whole-world placements are CPU-heavy: generous timeouts so the suite stays green under parallel load
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 const rc = CONFIG.world.towns.roads;
 const NET = getRoadNetwork(LAYOUT, HEIGHT);
