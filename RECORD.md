@@ -109,3 +109,20 @@ Everything remaining is in RESUME.md.
   (rotate, hold ~9° to 70 kt, hands off → climbs to > 500 ft at ~77 kt; gear up 0.3 s after liftoff
   → no belly landing). Note: at full power the aircraft drifts left hands-off (P-factor/torque),
   like a real 172 — pilots hold right rudder/aileron.
+
+## 2026-09-22 — Full-flight play test #1 on main (orchestrator, keyboard-only QA pilot)
+
+`scripts/qa-pilot.js` (new): injected into the page, flies ONLY by dispatching keydown/keyup (the
+same input path as a person), reading `window.sim` like instruments, pulse-tapping keys.
+Flight (live app, 1520×870, M2 Max): take-off roll → Vr 55 kt → positive climb 71 kt / 61 ft →
+gear up → 765 fpm at 78 kt → level 2,500 ft AGL → left turn 90° at 30° bank (7.4°/s, ±1 ft) →
+right turn 90° → power-off stall at 51 KIAS clean (nose broke 19°→7°, −713 fpm) → recovery at
+75 kt, −160 ft → teleport near the mountains → dive into a forested slope: crash "Hit an obstacle"
+(trees) with fireball/smoke → R reset to runway 36 → Shift+R approach from 4 km/800 ft → glide
+path + centreline tracking → touchdown on the runway 1.4 m left of centre at 62 kt (rated HARD,
+−859 fpm: the QA pilot flares late) → braked to a stop 356 m past the threshold.
+Perf over 36,707 frames: avg 59.9 fps, 1 % low 47, min 35, 2 long frames. Console: no errors.
+Findings → agents: cockpit prop ring / door post / panel gear text (aircraft, ux); intact aircraft
+after a crash → wreck state (aircraft); cartoonish flames (ux); cobblestone town-ground texture
+(terrain). Open question: approach trim solves to 53 % nose-down with flaps 20 at 72 kt and pitch
+−3…−4° on the glide path — plausible with the flap model but unusual for a 172; revisit.
