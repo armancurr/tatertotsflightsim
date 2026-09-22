@@ -94,6 +94,47 @@ export function superSectionPoint(s: SectionParams, t: number, out: { x: number;
   return out;
 }
 
+const ARC_SAMPLES = 256;
+const _cum = new Float64Array(ARC_SAMPLES + 1);
+const _ap = { x: 0, y: 0 };
+
+/**
+ * Arc-length parameterisation of a section: converts ring parameters t (0 top,
+ * 0.25 left, 0.5 belly, 0.75 right — as fractions of the half-perimeter on each
+ * side) into the angle parameter of superSectionPoint. Evenly spaced t then gives
+ * evenly spaced points (and texels) all round, flat cabin sides included.
+ */
+export function arcToAngle(s: SectionParams, ts: ArrayLike<number>, out: Float64Array | number[]): void {
+  superSectionPoint(s, 0, _ap);
+  let px = _ap.x;
+  let py = _ap.y;
+  _cum[0] = 0;
+  for (let i = 1; i <= ARC_SAMPLES; i++) {
+    superSectionPoint(s, (0.5 * i) / ARC_SAMPLES, _ap);
+    _cum[i] = _cum[i - 1] + Math.hypot(_ap.x - px, _ap.y - py);
+    px = _ap.x;
+    py = _ap.y;
+  }
+  const total = _cum[ARC_SAMPLES];
+  for (let k = 0; k < ts.length; k++) {
+    let t = ts[k] % 1;
+    if (t < 0) t += 1;
+    const mirrored = t > 0.5;
+    const target = (mirrored ? 1 - t : t) * 2 * total;
+    let lo = 0;
+    let hi = ARC_SAMPLES;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (_cum[mid] > target) hi = mid;
+      else lo = mid;
+    }
+    const seg = _cum[hi] - _cum[lo];
+    const f = seg > 0 ? (target - _cum[lo]) / seg : 0;
+    const a = (0.5 * (lo + f)) / ARC_SAMPLES;
+    out[k] = mirrored ? 1 - a : a;
+  }
+}
+
 /** Nose bowl front face z (the loft starts here; the spinner sits just ahead). */
 export const FUSE_Z0 = -1.985;
 /** Tailcone end (the rudder hinge region). */
@@ -102,31 +143,31 @@ export const FUSE_Z1 = 5.5;
 export const WINDSHIELD_BASE_Z = -1.25;
 
 const topCurve = monotoneCurve([
-  [FUSE_Z0, 0.228],
-  [-1.8, 0.258],
-  [-1.5, 0.283],
-  [WINDSHIELD_BASE_Z, 0.3],
-  [-1.0, 0.5],
-  [-0.8, 0.67],
-  [-0.63, 0.815],
-  [-0.5, 0.905],
-  [-0.36, 0.945],
-  [-0.1, 0.955],
+  [FUSE_Z0, 0.236],
+  [-1.8, 0.249],
+  [-1.5, 0.258],
+  [WINDSHIELD_BASE_Z, 0.262],
+  [-1.0, 0.49],
+  [-0.8, 0.69],
+  [-0.66, 0.83],
+  [-0.56, 0.925],
+  [-0.47, 0.95],
+  [-0.1, 0.956],
   [0.6, 0.955],
   [1.08, 0.94],
   [1.25, 0.9],
   [1.6, 0.775],
   [1.95, 0.66],
   [2.2, 0.608],
-  [2.8, 0.535],
-  [3.8, 0.445],
-  [4.8, 0.355],
-  [FUSE_Z1, 0.3],
+  [2.8, 0.53],
+  [3.8, 0.425],
+  [4.8, 0.3],
+  [FUSE_Z1, 0.235],
 ]);
 const bottomCurve = monotoneCurve([
-  [FUSE_Z0, -0.3],
-  [-1.8, -0.375],
-  [-1.5, -0.44],
+  [FUSE_Z0, -0.335],
+  [-1.8, -0.4],
+  [-1.5, -0.452],
   [-1.2, -0.49],
   [-0.9, -0.535],
   [-0.3, -0.545],
@@ -139,8 +180,8 @@ const bottomCurve = monotoneCurve([
   [FUSE_Z1, -0.055],
 ]);
 const halfWidthCurve = monotoneCurve([
-  [FUSE_Z0, 0.35],
-  [-1.85, 0.405],
+  [FUSE_Z0, 0.37],
+  [-1.85, 0.415],
   [-1.6, 0.448],
   [-1.25, 0.49],
   [-0.9, 0.532],
@@ -162,16 +203,17 @@ const widthYCurve = monotoneCurve([
   [-0.5, 0.14],
   [1.1, 0.15],
   [2.1, 0.16],
-  [3.8, 0.13],
-  [FUSE_Z1, 0.12],
+  [3.8, 0.12],
+  [FUSE_Z1, 0.09],
 ]);
 const nTopCurve = monotoneCurve([
   [FUSE_Z0, 2.3],
   [-1.25, 2.6],
-  [-0.9, 3.0],
-  [-0.3, 3.5],
-  [1.1, 3.3],
-  [2.1, 2.6],
+  [-0.9, 3.3],
+  [-0.55, 4.6],
+  [0.9, 4.8],
+  [1.3, 3.8],
+  [2.1, 2.7],
   [3.0, 2.3],
   [FUSE_Z1, 2.2],
 ]);
@@ -222,7 +264,7 @@ export function fuselageStations(quality: 'high' | 'low'): number[] {
 // ─── Windows & door lines (side projection z,y) ──────────────────────────────
 
 /** A-pillar (windshield side edge) in side view: from the lower corner up to the wing root. */
-export const PILLAR = { z0: -1.16, y0: 0.2, z1: -0.53, y1: 0.915 };
+export const PILLAR = { z0: -1.16, y0: 0.2, z1: -0.55, y1: 0.87 };
 export function pillarY(z: number): number {
   return PILLAR.y0 + ((z - PILLAR.z0) * (PILLAR.y1 - PILLAR.y0)) / (PILLAR.z1 - PILLAR.z0);
 }
@@ -234,15 +276,15 @@ export function windshieldBaseZ(ax: number): number {
 
 /** Side window outlines in (z, y), convex, clockwise-agnostic; corner radius applied by the painter. */
 export const DOOR_WINDOW: ReadonlyArray<readonly [number, number]> = [
-  [-0.9, 0.36],
-  [-0.44, 0.875],
-  [0.27, 0.875],
+  [-0.92, 0.36],
+  [-0.455, 0.87],
+  [0.27, 0.87],
   [0.27, 0.36],
 ];
 export const REAR_SIDE_WINDOW: ReadonlyArray<readonly [number, number]> = [
   [0.4, 0.37],
-  [0.4, 0.875],
-  [1.02, 0.875],
+  [0.4, 0.87],
+  [1.02, 0.87],
   [1.5, 0.6],
   [1.5, 0.43],
 ];
@@ -254,9 +296,9 @@ export function rearWindowLowerY(z: number): number {
 /** Cabin door outline (panel line) in (z, y). */
 export const DOOR_OUTLINE: ReadonlyArray<readonly [number, number]> = [
   [-0.97, -0.33],
-  [-0.97, 0.26],
-  [-0.47, 0.93],
-  [0.34, 0.93],
+  [-0.99, 0.26],
+  [-0.5, 0.925],
+  [0.34, 0.925],
   [0.34, -0.33],
 ];
 
@@ -351,8 +393,8 @@ export const HTAIL = {
 
 export const VTAIL = {
   /** Fin leading edge from the dorsal fillet up to the tip (z,y). */
-  leRoot: { z: 4.55, y: 0.52 },
-  leTop: { z: 5.3, y: 1.4 },
+  leRoot: { z: 4.6, y: 0.8 },
+  leTop: { z: 5.22, y: 1.37 },
   /** Dorsal fillet starts here on the tailcone top. */
   dorsalStart: 2.15,
   /** Rudder hinge line (bottom → top) and trailing edge (bottom → top). */

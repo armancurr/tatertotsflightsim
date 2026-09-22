@@ -19,18 +19,21 @@ function worldPos(ac: Aircraft, name: string): THREE.Vector3 {
   return o.getWorldPosition(new THREE.Vector3());
 }
 
-/** World-space bounding box of every visible mesh under `obj` (skipping glow sprites flagged noBounds). */
-function meshBounds(obj: THREE.Object3D): THREE.Box3 {
+/** Exact world-space bounds of every visible mesh vertex under `obj` (optionally skipping a subtree). */
+function meshBounds(obj: THREE.Object3D, skip?: THREE.Object3D): THREE.Box3 {
   obj.updateMatrixWorld(true);
   const box = new THREE.Box3();
-  const tmp = new THREE.Box3();
-  obj.traverseVisible((o) => {
+  const v = new THREE.Vector3();
+  const visit = (o: THREE.Object3D) => {
+    if (!o.visible || o === skip) return;
     const m = o as THREE.Mesh;
-    if (!m.isMesh || o.userData.noBounds) return;
-    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-    tmp.copy(m.geometry.boundingBox!).applyMatrix4(m.matrixWorld);
-    box.union(tmp);
-  });
+    if (m.isMesh && !o.userData.noBounds) {
+      const p = m.geometry.getAttribute('position');
+      for (let i = 0; i < p.count; i++) box.expandByPoint(v.fromBufferAttribute(p, i).applyMatrix4(m.matrixWorld));
+    }
+    for (const c of o.children) visit(c);
+  };
+  visit(obj);
   return box;
 }
 
@@ -135,7 +138,8 @@ describe('aircraft model anchors match config geometry', () => {
     ac.root.position.set(0, 0, 0);
     ac.root.quaternion.identity();
     apply(ac, state({ gearPos: 0 }));
-    const b = meshBounds(ac.root);
+    // The propeller legitimately reaches below the belly; everything else must be tucked in.
+    const b = meshBounds(ac.root, ac.root.getObjectByName(PART.propHub));
     expect(b.min.y).toBeGreaterThan(-0.62);
     for (const part of [PART.axleNose, PART.axleLeft, PART.axleRight]) {
       const a = worldPos(ac, part);

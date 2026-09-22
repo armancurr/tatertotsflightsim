@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { loftGeometry } from './loft';
-import { FUSE_Z0, FUSE_Z1, fuselageSection, fuselageStations, superSectionPoint, type SectionParams } from './shape';
+import { FUSE_Z0, FUSE_Z1, arcToAngle, fuselageSection, fuselageStations, superSectionPoint, type SectionParams } from './shape';
 
 export const CABIN_Z0 = -1.24;
 export const CABIN_Z1 = 2.06;
@@ -19,35 +19,45 @@ const _s: SectionParams = { top: 0, bottom: 0, halfWidth: 0, widthY: 0, nTop: 2,
 const _p = { x: 0, y: 0 };
 const _q = { x: 0, y: 0 };
 
-/** Surface point at (t, z) pushed `inset` metres inward along the section normal. */
-export function fuselagePoint(t: number, z: number, inset: number, out: { x: number; y: number }) {
-  fuselageSection(z, _s);
-  superSectionPoint(_s, t, out);
+/** Point at angle parameter a on the current section `_s`, pushed `inset` metres inward along the normal. */
+function insetPoint(a: number, inset: number, out: { x: number; y: number }) {
+  superSectionPoint(_s, a, out);
   if (inset !== 0) {
     const e = 1e-3;
-    superSectionPoint(_s, t - e, _p);
-    superSectionPoint(_s, t + e, _q);
+    superSectionPoint(_s, a - e, _p);
+    superSectionPoint(_s, a + e, _q);
     const tx = _q.x - _p.x;
     const ty = _q.y - _p.y;
     const l = Math.hypot(tx, ty) || 1;
     // Outward normal of a CCW ring (seen from +z) = tangent rotated −90°.
-    const nx = ty / l;
-    const ny = -tx / l;
-    out.x -= nx * inset;
-    out.y -= ny * inset;
+    out.x -= (ty / l) * inset;
+    out.y -= (-tx / l) * inset;
   }
   return out;
 }
 
-function ring(z: number, n: number, inset: number, t0 = 0, t1 = 1, closed = true, scale = 1): number[] {
-  const out: number[] = [];
-  const count = closed ? n : n + 1;
-  const pt = { x: 0, y: 0 };
+const _t = [0];
+const _a = [0];
+/** Surface point at ring parameter t (arc-length) and station z, `inset` metres inside the skin. */
+export function fuselagePoint(t: number, z: number, inset: number, out: { x: number; y: number }) {
   fuselageSection(z, _s);
+  _t[0] = t;
+  arcToAngle(_s, _t, _a);
+  return insetPoint(_a[0], inset, out);
+}
+
+function ring(z: number, n: number, inset: number, t0 = 0, t1 = 1, closed = true, scale = 1): number[] {
+  const count = closed ? n : n + 1;
+  const ts = new Float64Array(count);
+  for (let j = 0; j < count; j++) ts[j] = t0 + ((t1 - t0) * j) / n;
+  const angles = new Float64Array(count);
+  fuselageSection(z, _s);
+  arcToAngle(_s, ts, angles);
   const cy = (_s.top + _s.bottom) / 2;
+  const out: number[] = [];
+  const pt = { x: 0, y: 0 };
   for (let j = 0; j < count; j++) {
-    const t = t0 + ((t1 - t0) * j) / n;
-    fuselagePoint(t, z, inset, pt);
+    insetPoint(angles[j], inset, pt);
     out.push(pt.x * scale, cy + (pt.y - cy) * scale, z);
   }
   return out;
@@ -66,8 +76,8 @@ export function buildFuselage(quality: 'high' | 'low'): FuselageGeometry {
   const zs = fuselageStations(quality);
 
   // Outer skin: two lip rings round the nose bowl, the body, capped at both ends.
-  const lipA = ring(FUSE_Z0 - 0.02, N, 0, 0, 1, true, 0.82);
-  const lipB = ring(FUSE_Z0 - 0.011, N, 0, 0, 1, true, 0.94);
+  const lipA = ring(FUSE_Z0 - 0.02, N, 0, 0, 1, true, 0.88);
+  const lipB = ring(FUSE_Z0 - 0.011, N, 0, 0, 1, true, 0.96);
   const rings = [lipA, lipB, ...zs.map((z) => ring(z, N, 0))];
   const vOf = (z: number) => Math.max(0, (z - FUSE_Z0) / (FUSE_Z1 - FUSE_Z0));
   const v = [0, 0, ...zs.map(vOf)];
