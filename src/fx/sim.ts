@@ -140,59 +140,64 @@ export class FxSim {
     this.flash = { x, y: y + 3, z, age: 0, strength: 0.6 + 0.4 * I };
   }
 
+  /**
+   * The fuel fireball: puffs of burning vapour thrown forward and up that grow into a rolling ball,
+   * glow yellow-white for a moment, cool through orange to sooty dark red within about a second, and
+   * leave the black mushroom behind (a smoke puff on the same path, appearing as the flame cools).
+   */
   private fireball(x: number, y: number, z: number, g: number, dx: number, dz: number, fwd: number, I: number) {
     const C = FX.crash;
     const n = Math.round(C.fireballCount * (0.5 + 0.5 * I));
+    const [tr, tg, tb] = C.smokeTint;
     for (let k = 0; k < n; k++) {
       const t = this.resetTpl();
-      // Fuel sprays forward and up, then burns as a rolling, rising ball.
       const th = this.rnd() * 6.2832;
-      const up = 0.25 + 0.75 * this.rnd();
-      const sp = C.fireballSpeed * (0.35 + 0.65 * this.rnd()) * (0.6 + 0.6 * I);
+      const up = 0.2 + 0.8 * this.rnd();
+      const sp = C.fireballSpeed * (0.3 + 0.7 * this.rnd()) * (0.6 + 0.6 * I);
       const ca = Math.sqrt(1 - up * up);
-      const along = fwd * 0.35 * this.rnd();
+      const along = fwd * 0.3 * this.rnd();
       t.x = x + this.sym(2);
-      t.y = y + this.rnd() * 2;
+      t.y = y + this.rnd() * 1.5;
       t.z = z + this.sym(2);
       t.vx = Math.cos(th) * ca * sp + dx * along;
-      t.vy = up * sp * 0.7 + 3;
+      t.vy = up * sp * 0.55 + 2.5;
       t.vz = Math.sin(th) * ca * sp + dz * along;
       t.life = this.range(C.fireballLife);
-      t.size0 = C.fireballSize[0] * (0.7 + 0.6 * this.rnd());
-      t.size1 = C.fireballSize[1] * (0.6 + 0.5 * this.rnd()) * (0.7 + 0.4 * I);
-      t.growTau = 0.45 + 0.4 * this.rnd();
-      t.drag = 1.7;
-      t.buoyancy = 10;
-      t.buoyTau = 1.4;
-      t.alpha = 0.95;
-      t.fadeIn = 0.03;
-      t.fadeOut = 0.45;
-      t.heat = 1.05 + 0.2 * this.rnd();
-      t.heatTau = t.life * (0.45 + 0.25 * this.rnd());
-      t.r = t.g = t.b = 0.035;
-      t.rotRate = this.sym(0.8);
+      t.size0 = 1.4 + 1.6 * this.rnd();
+      t.size1 = this.range(C.fireballSize) * (0.7 + 0.4 * I);
+      t.growTau = 0.3 + 0.2 * this.rnd();
+      t.drag = 2.2;
+      t.buoyancy = 8;
+      t.buoyTau = 1.2;
+      t.alpha = 0.92;
+      t.fadeIn = 0.02;
+      t.fadeOut = 0.35;
+      t.heat = 1.2 + 0.2 * this.rnd();
+      t.heatTau = t.life * (0.26 + 0.12 * this.rnd());
+      t.r = 0.03 * tr; t.g = 0.03 * tg; t.b = 0.03 * tb;
+      t.rotRate = this.sym(1.2);
       t.turbulence = 3;
       t.groundY = g;
       const vx = t.vx, vy = t.vy, vz = t.vz, px = t.x, py = t.y, pz = t.z, life = t.life, s1 = t.size1;
       this.fire.emit(t);
-      // …and the black mushroom that the fireball turns into (same path, appears as it cools).
+      // …and the black mushroom it turns into (same path, fading in as the flame cools).
       const s = this.resetTpl();
       s.x = px; s.y = py; s.z = pz; s.vx = vx; s.vy = vy; s.vz = vz;
-      s.visibleAt = life * (0.35 + 0.2 * this.rnd());
-      s.life = 8 + 5 * this.rnd();
-      s.size0 = s1 * 0.6;
-      s.size1 = s1 * (1.5 + 0.6 * this.rnd());
+      s.visibleAt = life * (0.18 + 0.15 * this.rnd());
+      s.life = 8 + 6 * this.rnd();
+      s.size0 = s1 * 0.7;
+      s.size1 = s1 * (1.6 + 0.6 * this.rnd());
       s.growTau = 3;
       s.drag = 1.2;
       s.buoyancy = 9;
       s.buoyTau = 3;
       s.alpha = 0.85;
-      s.fadeIn = 0.8;
+      s.fadeIn = 0.5;
       s.fadeOut = 0.55;
-      s.heat = 0.55;
-      s.heatTau = 0.7;
-      s.r = s.g = s.b = C.smokeAlbedo * 0.9;
-      s.lighten = 3;
+      s.heat = 0.35;
+      s.heatTau = 0.5;
+      s.r = C.smokeAlbedo * 0.8 * tr; s.g = C.smokeAlbedo * 0.8 * tg; s.b = C.smokeAlbedo * 0.8 * tb;
+      s.lighten = 2;
       s.rotRate = this.sym(0.25);
       s.turbulence = 2.5;
       s.groundY = g;
@@ -211,12 +216,12 @@ export class FxSim {
       t.vx = Math.cos(th) * Math.sqrt(1 - up * up) * sp + dx * fwd * 0.2;
       t.vy = up * sp;
       t.vz = Math.sin(th) * Math.sqrt(1 - up * up) * sp + dz * fwd * 0.2;
-      t.life = 1.5 + 2.5 * this.rnd();
-      t.size0 = t.size1 = 0.25 + 0.25 * this.rnd();
-      t.gravity = 5;
+      t.life = 1.2 + 2 * this.rnd();
+      t.size0 = t.size1 = 0.1 + 0.16 * this.rnd();
+      t.gravity = 6;
       t.drag = 0.6;
-      t.heat = 1.2;
-      t.heatTau = 1.2 + this.rnd();
+      t.heat = 1.35;
+      t.heatTau = 0.8 + 0.9 * this.rnd();
       t.r = t.g = t.b = 0.02;
       t.fadeOut = 0.3;
       t.turbulence = 4;
@@ -239,7 +244,7 @@ export class FxSim {
       t.vy = up * sp;
       t.vz = Math.sin(th) * Math.sqrt(1 - up * up) * sp + dz * fwd * 0.3 * this.rnd();
       t.life = 600;
-      t.size0 = t.size1 = 0.25 + 1.1 * this.rnd() * this.rnd();
+      t.size0 = t.size1 = 0.2 + 0.8 * this.rnd() * this.rnd();
       t.gravity = 9.81;
       t.drag = 0.15;
       t.bounce = bounce;
@@ -269,12 +274,12 @@ export class FxSim {
       t.vy = 1 + 3 * this.rnd();
       t.vz = Math.sin(th) * sp + dz * fwd * 0.3;
       t.life = 2.5 + 1.5 * this.rnd();
-      t.size0 = 2;
-      t.size1 = 7 + 6 * I;
+      t.size0 = 1.5;
+      t.size1 = 5 + 4 * I;
       t.growTau = 1;
       t.drag = 1.4;
       t.buoyancy = 0.3;
-      t.alpha = 0.5;
+      t.alpha = 0.35;
       t.fadeIn = 0.05;
       t.fadeOut = 0.7;
       const [r, gg, b] = FX.touchdown.dustAlbedo;
@@ -329,6 +334,7 @@ export class FxSim {
     const col = PAVED.has(surface) ? T.smokeAlbedo : GRASSY.has(surface) ? T.grassAlbedo : water || surface === 'snow' ? T.sprayAlbedo : T.dustAlbedo;
     const perWheel = Math.round(T.minPuffs + (T.maxPuffs - T.minPuffs) * i);
     const size = T.softSize + (T.hardSize - T.softSize) * i;
+    const alpha = T.softAlpha + (T.hardAlpha - T.softAlpha) * i;
     for (let w = 0; w < wheels.length; w++) {
       const p = wheels[w];
       if (!(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z))) continue;
@@ -341,18 +347,18 @@ export class FxSim {
         t.z = p.z + vz * tau + this.sym(0.15);
         t.visibleAt = tau;
         t.vx = vx * 0.12 + this.sym(1.2);
-        t.vy = 0.4 + 1.2 * this.rnd() * (0.5 + i);
+        t.vy = 0.3 + 0.8 * this.rnd() * (0.5 + i);
         t.vz = vz * 0.12 + this.sym(1.2);
         t.life = this.range(T.life) * (0.7 + 0.6 * i);
-        t.size0 = 0.35 + 0.3 * this.rnd();
-        t.size1 = size * (0.7 + 0.6 * this.rnd());
-        t.growTau = 0.7;
-        t.drag = 1.3;
-        t.buoyancy = water ? 0 : 0.4;
+        t.size0 = 0.25 + 0.2 * this.rnd();
+        t.size1 = size * (0.7 + 0.5 * this.rnd());
+        t.growTau = 0.45;
+        t.drag = 1.6;
+        t.buoyancy = water ? 0 : 0.3;
         t.gravity = water ? 3 : 0;
-        t.alpha = 0.35 + 0.45 * i;
-        t.fadeIn = 0.06;
-        t.fadeOut = 0.6;
+        t.alpha = alpha * (0.75 + 0.25 * this.rnd());
+        t.fadeIn = 0.04;
+        t.fadeOut = 0.7;
         const shade = 0.92 + 0.16 * this.rnd();
         t.r = col[0] * shade; t.g = col[1] * shade; t.b = col[2] * shade;
         t.lighten = 0.1;
@@ -442,9 +448,10 @@ export class FxSim {
     t.alpha = 0.9 * (0.55 + 0.45 * young) * e.intensity;
     t.fadeIn = 0.5;
     t.fadeOut = 0.55;
-    t.heat = 0.35 * young * e.intensity;
+    t.heat = 0.28 * young * e.intensity;
     t.heatTau = 0.35;
-    t.r = t.g = t.b = C.smokeAlbedo * (0.85 + 0.3 * this.rnd());
+    const shade = C.smokeAlbedo * (0.85 + 0.3 * this.rnd());
+    t.r = shade * C.smokeTint[0]; t.g = shade * C.smokeTint[1]; t.b = shade * C.smokeTint[2];
     t.lighten = C.smokeLighten;
     t.rotRate = this.sym(0.15);
     t.turbulence = 2.5;
@@ -452,34 +459,42 @@ export class FxSim {
     this.smoke.emit(t);
   }
 
+  /**
+   * One lick of the ground fire at the wreck: a small flame tongue or a burning billow that rises
+   * quickly, flickers from yellow through orange to sooty red and is gone within a second.
+   */
   private flame(e: Emitter, env: number) {
     const t = this.resetTpl();
     const a = this.rnd() * 6.2832;
     const r = 4 * Math.sqrt(this.rnd()) * (0.6 + 0.4 * e.intensity);
-    const s = (2.2 + 2.8 * this.rnd()) * (0.6 + 0.5 * e.intensity) * (0.6 + 0.4 * env);
+    const billow = this.rnd() < 0.55;
+    const s = (billow ? 1.0 + 1.3 * this.rnd() : 0.8 + 1.0 * this.rnd()) * (0.6 + 0.5 * e.intensity) * (0.6 + 0.4 * env);
     t.x = e.x + Math.cos(a) * r;
     t.z = e.z + Math.sin(a) * r;
-    t.y = e.groundY + s * 0.32;
-    t.vx = this.sym(0.4);
-    t.vy = 1.5 + 2 * this.rnd();
-    t.vz = this.sym(0.4);
-    t.life = 0.55 + 0.6 * this.rnd();
-    t.size0 = s * 0.8;
-    t.size1 = s * 1.25;
-    t.growTau = 0.5;
+    t.y = e.groundY + s * (billow ? 0.4 : 0.55);
+    t.vx = this.sym(0.5);
+    t.vy = 1.8 + 2.2 * this.rnd();
+    t.vz = this.sym(0.5);
+    t.life = billow ? 0.45 + 0.45 * this.rnd() : 0.3 + 0.35 * this.rnd();
+    t.size0 = s * 0.7;
+    t.size1 = s * (billow ? 1.5 : 1.2);
+    t.growTau = 0.4;
     t.drag = 1;
-    t.buoyancy = 5;
+    t.buoyancy = 6;
     t.buoyTau = 0.6;
-    t.alpha = 0.95;
-    t.fadeIn = 0.06;
-    t.fadeOut = 0.45;
-    t.heat = 0.95 + 0.25 * this.rnd();
-    t.heatTau = t.life * 1.6;
+    t.alpha = 0.92;
+    t.fadeIn = 0.05;
+    t.fadeOut = 0.5;
+    t.heat = 1.05 + 0.25 * this.rnd();
+    t.heatTau = t.life * (billow ? 0.5 : 0.9);
     t.r = t.g = t.b = 0.03;
-    t.tile = FLAME_TILES[Math.floor(this.rnd() * FLAME_TILES.length)];
-    t.rot = this.sym(0.25);
+    if (billow) t.rotRate = this.sym(1.5);
+    else {
+      t.tile = FLAME_TILES[Math.floor(this.rnd() * FLAME_TILES.length)];
+      t.rot = this.sym(0.3);
+    }
     t.groundY = e.groundY - s;
-    t.turbulence = 0.5;
+    t.turbulence = 0.8;
     this.fire.emit(t);
   }
 
@@ -516,7 +531,7 @@ export class FxSim {
       while (this.flameAcc[i] >= 1) {
         this.flameAcc[i] -= 1;
         const t = this.resetTpl();
-        const s = 0.8 + 0.9 * h;
+        const s = 0.5 + 0.7 * h;
         t.x = d.px[i]; t.y = d.py[i] + s * 0.3; t.z = d.pz[i];
         t.vx = d.vx[i] * 0.5; t.vy = d.vy[i] * 0.5 + 1; t.vz = d.vz[i] * 0.5;
         t.life = 0.3 + 0.3 * this.rnd();

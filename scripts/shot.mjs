@@ -7,9 +7,31 @@
  *
  * Prints the GPU renderer string, every console message, page errors, failed
  * requests and the --eval result. Exits 1 if the page threw or a request failed.
- * Uses Chromium with the Metal ANGLE backend so WebGL runs on the real GPU.
+ * Uses Google Chrome for Testing (NOT the user's Chrome) with the Metal ANGLE backend so WebGL runs on the real GPU.
  */
 import { chromium } from 'playwright';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+/**
+ * NEVER launch the user's own Google Chrome (/Applications/Google Chrome.app): while an
+ * automation instance of it runs, clicking Chrome in the Dock activates that instance instead
+ * of opening JT's normal profile. Use "Google Chrome for Testing" (a separate app bundle that
+ * Playwright keeps in ~/Library/Caches/ms-playwright), or TEST_BROWSER=/path/to/binary.
+ */
+function testBrowserPath() {
+  if (process.env.TEST_BROWSER) return process.env.TEST_BROWSER;
+  const cache = join(homedir(), 'Library/Caches/ms-playwright');
+  const dirs = existsSync(cache) ? readdirSync(cache).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1])) : [];
+  for (const d of dirs) {
+    for (const rel of ['chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+      const p = join(cache, d, rel);
+      if (existsSync(p)) return p;
+    }
+  }
+  throw new Error('No Chrome for Testing found in ~/Library/Caches/ms-playwright — set TEST_BROWSER (never the user\'s Google Chrome).');
+}
 
 const args = process.argv.slice(2);
 const url = args[0];
@@ -28,7 +50,7 @@ const evalJs = opt('eval', null);
 
 const browser = await chromium.launch({
   headless: true,
-  channel: process.env.SHOT_CHANNEL || 'chrome',
+  executablePath: testBrowserPath(),
   args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu'],
 });
 const page = await browser.newPage({ viewport: { width: w, height: h } });

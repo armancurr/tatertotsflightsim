@@ -809,13 +809,18 @@ export const CONFIG = {
     seed: 1721,
     /** Preallocated pools: smoke/dust, fire/embers (one sorted draw call together) and solid debris chunks. */
     smokeCapacity: 1400,
-    fireCapacity: 700,
+    fireCapacity: 900,
     debrisCapacity: 48,
     /** Particles fade out when the camera is closer than size × nearFade (no screen-filling sprites). */
     nearFade: 0.55,
-    /** Fire: HDR emission scale and how much a fully hot particle still occludes what is behind it (0 = pure additive). */
-    fireIntensity: 3.2,
-    fireOcclusion: 0.22,
+    /** …and fade (with the square of the excess) once one sprite would cover more than this fraction of the screen height. */
+    maxScreenCover: 0.45,
+    /**
+     * Fire: HDR emission scale of the blackbody ramp (src/fx/shading.ts), and how much the hottest
+     * flame still occludes what is behind it (0 = pure additive glow, 1 = opaque). Sooty edges are opaque.
+     */
+    fireIntensity: 2.4,
+    fireOcclusion: 0.55,
     /** A single point light flickers at the fire (lights the ground and the wreck). Always present (intensity 0 when idle) so no shader recompiles. */
     fireLight: true,
     fireLightIntensity: 2400,
@@ -823,38 +828,44 @@ export const CONFIG = {
     crash: {
       /** Below this impact speed there is no fireball (fuel tanks survive) — only dust, debris and a little smoke. */
       fireMinKt: 25,
-      fireballCount: 90,
-      fireballLife: [1.4, 3.0] as [number, number],
-      fireballSize: [3, 16] as [number, number],
-      fireballSpeed: 15,
+      /** Fuel fireball: a short-lived rolling ball of flame (puffs grow to fireballSize m) that turns into a black mushroom. */
+      fireballCount: 60,
+      fireballLife: [0.9, 1.8] as [number, number],
+      fireballSize: [5, 11] as [number, number],
+      fireballSpeed: 12,
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
-      smokeRate: 20,
+      smokeRate: 18,
       smokeLife: [10, 16] as [number, number],
-      smokeSize: [5, 34] as [number, number],
-      smokeRise: 9,
+      smokeSize: [4, 26] as [number, number],
+      smokeRise: 8,
       smokeBuoyancy: 3.2,
       smokeBuoyancyTau: 8,
       /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
       smokeDrag: 0.35,
-      /** Thick oily smoke albedo near the fire, lightening with age (×(1 + smokeLighten·t)). */
-      smokeAlbedo: 0.045,
-      smokeLighten: 4,
+      /** Thick oily smoke albedo near the fire (warm-black via smokeTint), lightening with age (×(1 + smokeLighten·t)). */
+      smokeAlbedo: 0.04,
+      smokeLighten: 2.5,
+      smokeTint: [1.1, 1.0, 0.88] as [number, number, number],
+      /** Ground fire: many small, short flame licks and billows at the wreck (flames/s at full intensity). */
       groundFireDuration: 16,
-      groundFireRate: 34,
+      groundFireRate: 55,
       debrisCount: 30,
-      emberCount: 70,
+      emberCount: 80,
     },
     touchdown: {
       /** Puffs per main wheel at a feather-light and at a hard touchdown. */
-      minPuffs: 3,
-      maxPuffs: 16,
-      life: [1.6, 3.4] as [number, number],
+      minPuffs: 2,
+      maxPuffs: 8,
+      life: [0.8, 1.8] as [number, number],
       /** Final puff diameter at a soft / hard touchdown, m. */
-      softSize: 1.8,
-      hardSize: 6,
+      softSize: 0.9,
+      hardSize: 2.6,
+      /** Peak opacity at a soft / hard touchdown. */
+      softAlpha: 0.12,
+      hardAlpha: 0.45,
       /** Tyre smoke on pavement; dust on soft ground; spray on water. */
-      smokeAlbedo: [0.72, 0.72, 0.7] as [number, number, number],
+      smokeAlbedo: [0.72, 0.73, 0.75] as [number, number, number],
       dustAlbedo: [0.46, 0.38, 0.28] as [number, number, number],
       grassAlbedo: [0.38, 0.4, 0.27] as [number, number, number],
       sprayAlbedo: [0.85, 0.88, 0.9] as [number, number, number],

@@ -1,7 +1,7 @@
 /** Crash fire/smoke/debris and touchdown smoke; camera shake (owned by src/fx). */
 import * as THREE from 'three';
 import { CONFIG, MS_TO_KT, RAD_TO_DEG } from '../../config';
-import { createEffects, cameraShakeFor } from '../../fx';
+import { createEffects, cameraShakeFor, smokeLighting } from '../../fx';
 import type { SystemModule } from './types';
 
 const mod: SystemModule = {
@@ -19,6 +19,8 @@ const mod: SystemModule = {
     const V = new THREE.Vector3();
     const Q = new THREE.Quaternion();
     const W = new THREE.Vector3();
+    const SUN = new THREE.Color();
+    const AMB = new THREE.Color();
     let crashT: number | null = null;
     let tdT = Number.NaN;
     let tdV = Number.NaN;
@@ -53,7 +55,9 @@ const mod: SystemModule = {
         crashT = s.crash ? s.crash.time : null;
         tdT = td ? td.time : Number.NaN;
         tdV = td ? td.verticalSpeedFpm : Number.NaN;
-        fx.setSun(ctx.atmosphere.sunDirection);
+        const atmo = ctx.atmosphere;
+        smokeLighting(atmo.sunLight.color, atmo.sunLight.intensity, atmo.state.skyIrradiance, atmo.state.groundRadiance, SUN, AMB);
+        fx.setSun(atmo.sunDirection, SUN, AMB);
         const w = env.wind?.(P.x, P.y, P.z, s.time);
         fx.update(f.camera, f.paused ? 0 : f.dt, w ? W.set(w.x, w.y, w.z) : undefined);
       },
