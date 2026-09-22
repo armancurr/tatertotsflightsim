@@ -1,10 +1,11 @@
 /**
- * Entry point. The full simulator lives in src/game/app.ts; until every
- * wave-1 renderer module has landed, an interim build (real physics, controls
- * and cameras with stand-in visuals) is served so the sim can be flown early.
+ * Entry point: boots the full simulator (src/game/app.ts wires physics, world,
+ * atmosphere, aircraft, cameras, HUD, audio and effects together).
  */
-import { startPrototype } from './game/prototype';
+import { startApp } from './game/app';
 
 const container = document.getElementById('app')!;
 const hudRoot = document.getElementById('hud')!;
-startPrototype(container, hudRoot);
+startApp(container, hudRoot).catch((e) => {
+  console.error('Flight Simulator failed to start', e);
+});
