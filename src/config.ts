@@ -498,6 +498,11 @@ export const CONFIG = {
       flatRadius: 1300,
       blendWidth: 900,
     },
+    /** Airport renderer (owned by src/world/airport). */
+    airportRender: {
+      /** Surface wind shown by the windsock: direction it blows FROM (deg true) and speed (kt). */
+      wind: { fromDeg: 330, speedKt: 8 },
+    },
     terrain: {
       /** Maximum mountain height above sea level, m. */
       mountainHeight: 2600,
