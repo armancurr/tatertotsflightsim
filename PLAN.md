@@ -95,7 +95,7 @@ Vite port 81xx) and commit there; the orchestrator merges each branch into `main
 | 1 (main tree) | PHYSICS ✅ · INPUT+CAMERA+LOOP ✅ · WORLD-TERRAIN ✅ · ATMOSPHERE ✅ · AIRCRAFT-MODEL ✅ | ✅ |
 | 2 (worktrees) | hud ✅ · audiofx ✅ (unverified in browser) · qatests ✅ · airport ⚠️ data layer only (interim renderer by orchestrator) · trees ✅ (unQA'd) · towns+roads ⚠️ interim renderers — all merged | ✅ merged |
 | — | **STOP POINT 2026-09-22 — see RESUME.md for the handoff prompt and prioritized remaining work** | |
-| 3 | Airport renderer, cockpit/prop polish, towns/roads geometry, vegetation QA, terrain realism, audio/fx verification, startup hitch (see RESUME.md §4–5); orchestrator flies the full flight | next |
+| 3 (worktrees, 10 agents) | aircraft (gear/prop/cockpit) · airport renderer · buildings · roads+cars · traffic (ships, boats, AI aircraft) · terrain realism · water · sky (volumetric clouds, cloud shadows) · trees+grass · ux (HUD, gear warning, loading, audio/fx) — orchestrator flies the full flight on main | ⏳ |
 | 4 | Visual QA at 1440 & 1024, docs, final regression | |
 
 Testing layers (user requirement): unit · fuzz/property (fast-check) · functional (scripted
