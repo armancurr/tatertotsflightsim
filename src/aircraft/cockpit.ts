@@ -12,6 +12,7 @@ import { loftGeometry } from './loft';
 import { merge, tint, type AircraftMaterials } from './materials';
 import { PANEL, PANEL_BOTTOM_Y } from './panel';
 import { fuselageSection, monotoneCurve, type SectionParams } from './shape';
+import { WELL, sectionHalfWidthAt } from './gearKinematics';
 
 export interface CockpitRig {
   group: THREE.Group;
@@ -88,6 +89,43 @@ function glareshield(): THREE.BufferGeometry {
   return loftGeometry(rings, { closed: false });
 }
 
+/** Flat carpet strip between x0(z) and x1(z) at height y, facing up. */
+function strip(z0: number, z1: number, x0: (z: number) => number, x1: (z: number) => number, y: number, n = 12): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    const z = z0 + ((z1 - z0) * i) / n;
+    pos.push(x0(z), y, z, x1(z), y, z);
+    if (i > 0) {
+      const a = (i - 1) * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Cabin floor at y = −0.41, kept clear of the gear wells: two footwell strips beside
+ * the nose-well hump, then the full width up to the front seats (the main-gear leg
+ * slots run under the rear seats, where the shell's own carpet shows).
+ */
+function floor(): THREE.BufferGeometry[] {
+  const y = -0.41;
+  const edge = (z: number) => sectionHalfWidthAt(y, z) - 0.045;
+  const nose = WELL.nose.halfWidth + 0.012;
+  const zMid = WELL.nose.z1 + 0.012;
+  const carpet = 0x3a3733;
+  return [
+    tint(strip(-1.2, zMid, (z) => -edge(z), () => -nose, y), carpet, 1, 0),
+    tint(strip(-1.2, zMid, () => nose, (z) => edge(z), y), carpet, 1, 0),
+    tint(strip(zMid, 0.1, (z) => -edge(z), (z) => edge(z), y), carpet, 1, 0),
+  ];
+}
+
 function yokeGeometry(): THREE.BufferGeometry {
   const handle = new THREE.CatmullRomCurve3([
     V(-0.16, 0.075, 0.02),
@@ -154,20 +192,20 @@ export function buildCockpit(
     // Panel surround and lower edge.
     tint(box(PANEL.widthM + 0.02, 0.014, 0.05, 0, PANEL.centerY - PANEL.heightM / 2 - 0.007, PANEL.z + 0.005), 0x1f2022, 0.8, 0),
     tint(box(PANEL.widthM - 0.04, 0.16, 0.012, 0, PANEL.centerY - PANEL.heightM / 2 - 0.09, PANEL.z - 0.07, new THREE.Euler(0.5, 0, 0)), 0x232426, 0.9, 0),
-    // Pedestal under the centre of the panel.
-    tint(box(0.15, PANEL_BOTTOM_Y + 0.4, 0.2, 0, (PANEL_BOTTOM_Y - 0.4) / 2, PANEL.z - 0.02), 0x242527, 0.85, 0),
-    // Floor / carpet.
-    tint(box(0.98, 0.02, 2.4, 0, -0.41, 0.0), 0x3a3733, 1.0, 0),
-    // Front seats: cushion + back + headrest-less C172 seat.
-    ...[-0.28, 0.28].flatMap((x) => [
-      tint(rbox(0.46, 0.12, 0.5, 0.04, x, -0.25, -0.32), seatCloth, 0.95, 0),
-      tint(rbox(0.46, 0.66, 0.1, 0.04, x, 0.16, 0.12, new THREE.Euler(-0.2, 0, 0)), seatCloth, 0.95, 0),
-      tint(box(0.04, 0.05, 0.4, x - 0.2, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
-      tint(box(0.04, 0.05, 0.4, x + 0.2, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
+    // Pedestal under the centre of the panel (standing on the nose-well roof).
+    tint(box(0.15, PANEL_BOTTOM_Y - WELL.nose.roofY, 0.2, 0, (PANEL_BOTTOM_Y + WELL.nose.roofY) / 2, PANEL.z - 0.02), 0x242527, 0.85, 0),
+    // Floor / carpet: footwells either side of the nose-well hump, then full width to the front seats.
+    ...floor(),
+    // Front seats: cushion + back + headrest-less C172 seat (inner edges clear of the nose well).
+    ...[-0.3, 0.3].flatMap((x) => [
+      tint(rbox(0.38, 0.12, 0.5, 0.04, x, -0.25, -0.32), seatCloth, 0.95, 0),
+      tint(rbox(0.4, 0.66, 0.1, 0.04, x, 0.16, 0.12, new THREE.Euler(-0.2, 0, 0)), seatCloth, 0.95, 0),
+      tint(box(0.03, 0.05, 0.4, x - 0.16, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
+      tint(box(0.03, 0.05, 0.4, x + 0.16, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
     ]),
-    // Rear bench.
-    tint(rbox(0.92, 0.12, 0.46, 0.04, 0, -0.26, 0.72), seatCloth, 0.95, 0),
-    tint(rbox(0.92, 0.6, 0.1, 0.04, 0, 0.12, 1.02, new THREE.Euler(-0.18, 0, 0)), seatCloth, 0.95, 0),
+    // Rear bench (sits above the main gear leg slots).
+    tint(rbox(0.9, 0.12, 0.46, 0.04, 0, -0.19, 0.72), seatCloth, 0.95, 0),
+    tint(rbox(0.9, 0.58, 0.1, 0.04, 0, 0.16, 1.02, new THREE.Euler(-0.18, 0, 0)), seatCloth, 0.95, 0),
     // Door armrests and handles.
     ...[-1, 1].flatMap((s) => [
       tint(rbox(0.06, 0.05, 0.62, 0.015, s * 0.49, 0.12, -0.05), 0x5b554d, 0.8, 0),
@@ -273,7 +311,7 @@ export function buildCockpit(
 
   // Elevator trim wheel on the pedestal.
   const trimWheel = new THREE.Group();
-  trimWheel.position.set(0.08, -0.26, PANEL.z + 0.02);
+  trimWheel.position.set(0.085, -0.09, PANEL.z + 0.02);
   const tw = new THREE.CylinderGeometry(0.075, 0.075, 0.018, 28);
   tw.rotateZ(Math.PI / 2);
   const ribs: THREE.BufferGeometry[] = [tint(tw, 0x1a1a1b, 0.7, 0)];

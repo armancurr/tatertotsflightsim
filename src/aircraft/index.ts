@@ -22,6 +22,7 @@ import { drawPlaceholderPanel, PANEL } from './panel';
 import { buildProp, PROP_PART } from './prop';
 import { FUSE_Z0, fuselageSection, type SectionParams } from './shape';
 import { buildTail } from './tail';
+import { buildWells } from './wells';
 import { createRestReadings, type AircraftVisualState, type PanelDrawer } from './types';
 import { buildWing } from './wing';
 
@@ -224,9 +225,16 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const prop = buildProp(mats, quality);
   exterior.add(prop.hub);
 
-  // Gear.
+  // Gear, and the well liners behind the belly openings.
   const gear = buildGear(mats, quality);
   exterior.add(gear.group);
+  const wellMat = createPartsMaterial('ac-wells');
+  wellMat.side = THREE.DoubleSide;
+  mats.all.push(wellMat);
+  const wells = new THREE.Mesh(buildWells(quality), wellMat);
+  wells.name = 'gearWells';
+  wells.receiveShadow = true;
+  exterior.add(wells);
 
   // Static details (one merged mesh): wing details, fuselage details, beacon pod.
   const bb = tail.beaconBase;

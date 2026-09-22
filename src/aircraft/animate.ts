@@ -84,16 +84,22 @@ function smoothstep(e0: number, e1: number, x: number): number {
 const _gear = { nose: 0, main: 0, door: 0 };
 
 /**
- * Leg and door motion for a gear position (0 = up … 1 = down). Legs travel over
- * gearPos 0.1..1 so the doors (which open in the first/last 12 %) are open
- * whenever a wheel passes through them. Returns a shared object.
+ * Door opening fraction of gearPos (the doors swing in this first slice of the
+ * cycle), and where each leg's travel starts/ends. Extending (gearPos 0 → 1):
+ * the nose doors open, then the legs come down (the nose leg a touch ahead of the
+ * mains, as the hydraulic flow divides), the doors stay open with the gear down
+ * (the 172RG's nose doors are linked open). Retracting runs the same in reverse:
+ * legs up, then the doors close behind the nose wheel.
  */
+export const GEAR_SEQUENCE = { doorEnd: 0.13, noseStart: 0.15, noseEnd: 0.9, mainStart: 0.18, mainEnd: 1 } as const;
+
+/** Leg and door motion for a gear position (0 = up … 1 = down). Returns a shared object. */
 export function gearRetraction(gearPos: number): { nose: number; main: number; door: number } {
   const g = clamp(Number.isFinite(gearPos) ? gearPos : 1, 0, 1);
-  const legs = 1 - smoothstep(0.1, 1, g);
-  _gear.nose = legs;
-  _gear.main = legs;
-  _gear.door = smoothstep(0, 0.12, g);
+  const q = GEAR_SEQUENCE;
+  _gear.nose = 1 - smoothstep(q.noseStart, q.noseEnd, g);
+  _gear.main = 1 - smoothstep(q.mainStart, q.mainEnd, g);
+  _gear.door = smoothstep(0, q.doorEnd, g);
   return _gear;
 }
 
