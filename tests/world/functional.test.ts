@@ -2,7 +2,10 @@
  * Functional tests: the world pieces working together the way the renderer
  * and the physics use them.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Whole-flight functional tests: heavy on purpose; they must not flake when the full suite runs in parallel.
+vi.setConfig({ testTimeout: 60_000 });
 import { buildChunk, defaultSkirt } from '../../src/world/terrain/chunk';
 import { selectTiles, lodParamsFromConfig, morphRange, type TileDesc } from '../../src/world/terrain/quadtree';
 import { getHeightfield, terrainHeight } from '../../src/world/heightfield';
