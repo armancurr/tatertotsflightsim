@@ -28,6 +28,8 @@ export interface AudioInputs {
   closingSpeedMs?: number;
   /** Optional: impact speed (kt) for the crash boom; defaults to airspeedKt. */
   crashSpeedKt?: number;
+  /** Optional: the landing-gear warning horn is sounding (see src/ui/gearWarning.ts). Default false. */
+  gearWarning?: boolean;
 }
 
 export interface AudioSystem {
@@ -60,6 +62,8 @@ export interface AudioLevels {
   rolling: number;
   scrub: number;
   horn: number;
+  /** Gear warning horn level (0 when silent). */
+  gearHorn: number;
   gear: number;
   flap: number;
   fire: number;

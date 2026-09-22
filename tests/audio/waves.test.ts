@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import {
-  fourierSeries, engineCycleWaveform, propWaveform, pulseWaveform, hornWaveform, noiseSamples, mulberry32,
+  fourierSeries, engineCycleWaveform, propWaveform, pulseWaveform, hornWaveform, noiseSamples, mulberry32, gateWaveform, beepWaveform,
 } from '../../src/audio/waves';
 import { rms, goertzelAmplitude, dominantFrequency } from '../../src/audio/analysis';
 
@@ -59,7 +59,7 @@ describe('engine cycle waveform (one 4-stroke cycle = 2 revolutions)', () => {
 
 describe('other waveforms', () => {
   it('prop blade pulse, AM pulse and horn are finite, normalised and non-trivial', () => {
-    for (const s of [propWaveform(512), pulseWaveform(512, 0.25), hornWaveform(512)]) {
+    for (const s of [propWaveform(512), pulseWaveform(512, 0.25), hornWaveform(512), beepWaveform(512)]) {
       expect(allFinite(s)).toBe(true);
       const peak = Math.max(...Array.from(s, Math.abs));
       expect(peak).toBeLessThanOrEqual(1 + 1e-6);
@@ -69,6 +69,31 @@ describe('other waveforms', () => {
   it('the horn waveform is buzzy (strong upper harmonics like a reed)', () => {
     const w = fourierSeries(hornWaveform(1024), 12);
     expect(harmonicEnergy(w, 2) + harmonicEnergy(w, 3)).toBeGreaterThan(harmonicEnergy(w, 1) * 0.15);
+  });
+});
+
+describe('gear horn gate', () => {
+  it('is on for about `duty` of the period and off otherwise, spanning 0..1', () => {
+    const g = gateWaveform(1000, 0.5);
+    const on = Array.from(g).filter((v) => v > 0.5).length / g.length;
+    expect(on).toBeGreaterThan(0.4);
+    expect(on).toBeLessThan(0.6);
+    expect(Math.min(...g)).toBeGreaterThanOrEqual(-1e-6);
+    expect(Math.max(...g)).toBeLessThanOrEqual(1 + 1e-6);
+    expect(Math.max(...g)).toBeGreaterThan(0.999);
+  });
+  it('fuzz: soft edges (no clicks) — the gate never jumps by more than a raised-cosine ramp allows', () => {
+    fc.assert(
+      fc.property(fc.double({ min: 0.1, max: 0.9, noNaN: true }), (duty) => {
+        const n = 2048;
+        const g = gateWaveform(n, duty);
+        let maxStep = 0;
+        for (let i = 0; i < n; i++) maxStep = Math.max(maxStep, Math.abs(g[(i + 1) % n] - g[i]));
+        // A 6 %-of-period raised-cosine edge: max step ≈ π/2 / (0.06 n).
+        expect(maxStep).toBeLessThan((Math.PI / 2) / (0.05 * n));
+        expect(allFinite(g)).toBe(true);
+      }),
+    );
   });
 });
 

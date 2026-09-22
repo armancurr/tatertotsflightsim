@@ -1,5 +1,6 @@
 /** Synthesised engine, wind, stall horn, tyres, motors, crash (owned by src/audio). */
 import { createAudio, createAudioInputTracker } from '../../audio';
+import type { HudReadings } from '../../ui/instruments';
 import type { SystemModule } from './types';
 
 const mod: SystemModule = {
@@ -19,6 +20,7 @@ const mod: SystemModule = {
             state: f.state, controls: f.controls, cameraMode: f.cameraMode, paused: f.paused, dt: f.dt,
             surface: ctx.env.surfaceAt(p.x, p.z), cameraPosition: f.camera.position,
             stallWarning: f.readings?.stallWarning,
+            gearWarning: (f.readings as HudReadings | null)?.gearHorn,
           }),
           f.dt,
         );

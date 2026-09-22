@@ -4,7 +4,7 @@
  * (NaN/±Infinity): the outputs are always finite and in range.
  */
 import { CONFIG } from '../config';
-import type { SurfaceType } from '../types';
+import type { CameraMode, SurfaceType } from '../types';
 
 export interface ShakeInputs {
   onGround: boolean;
@@ -59,4 +59,9 @@ export function speedFovOffset(airspeedKt: number): number {
   const F = CONFIG.fx.fov;
   const v = F.maxDeg * smooth(F.startKt, F.fullKt, num(airspeedKt));
   return Number.isFinite(v) ? Math.min(F.maxDeg, Math.max(0, v)) : 0;
+}
+
+/** Speed FOV offset (degrees) for a camera view: the pilot's and the chase views only (external/orbit frame the aircraft). */
+export function fovOffsetFor(mode: CameraMode, airspeedKt: number): number {
+  return mode === 'cockpit' || mode === 'chase' ? speedFovOffset(airspeedKt) : 0;
 }

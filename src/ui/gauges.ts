@@ -14,6 +14,7 @@
  */
 import { CONFIG } from '../config';
 import type { InstrumentReadings } from '../types';
+import { gearFlags } from './gearWarning';
 
 const DEG = Math.PI / 180;
 const TAU = Math.PI * 2;
@@ -45,6 +46,11 @@ const mod = (x: number, m: number): number => {
 const wrap360 = (deg: number): number => mod(fin(deg), 360);
 /** A usable drawing size: finite and positive, else 0 (the drawer then does nothing). */
 const sz = (s: number): number => (Number.isFinite(s) && s > 0 ? Math.min(s, 1e5) : 0);
+/**
+ * Small gauges (HUD at ~1024 px wide) get a simplified face: no small print, fewer and larger
+ * numerals, so everything left on the dial stays legible (≥ ~0.1 × the gauge size).
+ */
+export const isSimpleFace = (size: number): boolean => size < CONFIG.hud.simpleFaceBelowPx;
 
 // ─── Needle geometry (pure, tested) ──────────────────────────────────────────
 
@@ -410,6 +416,16 @@ function asiFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numb
   // Graduations: every 5 kt from 40, longer every 10.
   const minor: number[] = [];
   const major: number[] = [];
+  if (isSimpleFace(size)) {
+    for (let v = 40; v <= 180; v += 10) (v % 20 === 0 ? major : minor).push(asiNeedleDeg(v));
+    strokeTicks(c, cx, cy, minor, F * 0.84, F * 0.94, F * 0.035);
+    strokeTicks(c, cx, cy, major, F * 0.76, F * 0.94, F * 0.05);
+    const big: [number, string][] = [40, 80, 120, 160].map((v) => [asiNeedleDeg(v), String(v)]);
+    numerals(c, cx, cy, F * 0.54, big, F * 0.3);
+    font(c, F * 0.24, 800, UI_FONT);
+    text(c, 'KT', cx, cy - F * 0.3, MARK);
+    return;
+  }
   for (let v = 40; v <= 180; v += 5) (v % 10 === 0 ? major : minor).push(asiNeedleDeg(v));
   strokeTicks(c, cx, cy, minor, F * 0.86, F * 0.94, F * 0.022);
   strokeTicks(c, cx, cy, major, F * 0.8, F * 0.94, F * 0.032);
@@ -425,7 +441,7 @@ function asiFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numb
 export const drawAirspeed: GaugeDrawer = (ctx, cx, cy, size, r) => {
   const s = sz(size);
   if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
-  cachedFace(ctx, 'asi', cx, cy, s, asiFace);
+  cachedFace(ctx, isSimpleFace(s) ? 'asiS' : 'asi', cx, cy, s, asiFace);
   const F = (s / 2) * 0.885;
   needle(ctx, cx, cy, asiNeedleDeg(r.airspeedKt), F * 0.88, F * 0.22, F * 0.075);
   hub(ctx, cx, cy, F * 0.09);
@@ -560,11 +576,13 @@ export const drawAttitude: GaugeDrawer = (ctx, cx, cy, size, r) => {
   }
   ctx.lineWidth = F * 0.022;
   ctx.stroke();
-  font(ctx, F * 0.12, 700);
-  for (const p of [-20, -10, 10, 20]) {
-    const y = -p * g.pxPerDeg;
-    text(ctx, String(Math.abs(p)), -F * 0.37, y, MARK);
-    text(ctx, String(Math.abs(p)), F * 0.37, y, MARK);
+  if (!isSimpleFace(s)) {
+    font(ctx, F * 0.12, 700);
+    for (const p of [-20, -10, 10, 20]) {
+      const y = -p * g.pxPerDeg;
+      text(ctx, String(Math.abs(p)), -F * 0.37, y, MARK);
+      text(ctx, String(Math.abs(p)), F * 0.37, y, MARK);
+    }
   }
   ctx.restore();
   // Rim of the ball.
@@ -588,6 +606,10 @@ function altFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numb
   strokeTicks(c, cx, cy, major, F * 0.78, F * 0.95, F * 0.036);
   const labels: [number, string][] = [];
   for (let i = 0; i < 10; i++) labels.push([i * 36, String(i)]);
+  if (isSimpleFace(size)) {
+    numerals(c, cx, cy, F * 0.6, labels, F * 0.3);
+    return;
+  }
   numerals(c, cx, cy, F * 0.63, labels, F * 0.22);
   // Kollsman window at 3 o'clock.
   const kw = F * 0.3;
@@ -610,7 +632,7 @@ function altFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numb
 export const drawAltimeter: GaugeDrawer = (ctx, cx, cy, size, r) => {
   const s = sz(size);
   if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
-  cachedFace(ctx, 'alt', cx, cy, s, altFace);
+  cachedFace(ctx, isSimpleFace(s) ? 'altS' : 'alt', cx, cy, s, altFace);
   const F = (s / 2) * 0.885;
   const h = altimeterHandsDeg(r.altitudeFt);
   // 10 000-ft pointer: thin needle with a triangle at the rim.
@@ -653,15 +675,18 @@ function tcFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numbe
   // Level and standard-rate marks.
   strokeTicks(c, cx, cy, [-90, 90], F * 0.72, F * 0.94, F * 0.05);
   strokeTicks(c, cx, cy, [-110, 110], F * 0.72, F * 0.94, F * 0.05);
-  font(c, F * 0.15, 700, UI_FONT);
+  const simple = isSimpleFace(size);
+  font(c, simple ? F * 0.24 : F * 0.15, 700, UI_FONT);
   text(c, 'L', px(cx, F * 0.62, -122), py(cy, F * 0.62, -122), MARK);
   text(c, 'R', px(cx, F * 0.62, 122), py(cy, F * 0.62, 122), MARK);
-  font(c, F * 0.075, 700, UI_FONT);
-  text(c, 'TURN COORDINATOR', cx, cy - F * 0.5, MARK_DIM);
-  font(c, F * 0.1, 700, UI_FONT);
-  text(c, '2 MIN', cx, cy + F * 0.7, MARK);
-  font(c, F * 0.055, 600, UI_FONT);
-  text(c, 'NO PITCH INFORMATION', cx, cy + F * 0.82, MARK_DIM);
+  if (!simple) {
+    font(c, F * 0.075, 700, UI_FONT);
+    text(c, 'TURN COORDINATOR', cx, cy - F * 0.5, MARK_DIM);
+    font(c, F * 0.1, 700, UI_FONT);
+    text(c, '2 MIN', cx, cy + F * 0.7, MARK);
+    font(c, F * 0.055, 600, UI_FONT);
+    text(c, 'NO PITCH INFORMATION', cx, cy + F * 0.82, MARK_DIM);
+  }
   // Inclinometer tube: cream liquid behind glass, two reference wires.
   const t = tubeGeom(cx, cy, F);
   c.beginPath();
@@ -691,7 +716,7 @@ function tcFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numbe
 export const drawTurnCoordinator: GaugeDrawer = (ctx, cx, cy, size, r) => {
   const s = sz(size);
   if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
-  cachedFace(ctx, 'tc', cx, cy, s, tcFace);
+  cachedFace(ctx, isSimpleFace(s) ? 'tcS' : 'tc', cx, cy, s, tcFace);
   const F = (s / 2) * 0.885;
   // Ball.
   const t = tubeGeom(cx, cy, F);
@@ -743,15 +768,17 @@ function hiCard(c: CanvasRenderingContext2D, cx: number, cy: number, size: numbe
   const F = (size / 2) * 0.885;
   const minor: number[] = [];
   const major: number[] = [];
-  for (let d = 0; d < 360; d += 5) (d % 10 === 0 ? major : minor).push(d);
-  strokeTicks(c, cx, cy, minor, F * 0.87, F * 0.95, F * 0.02);
-  strokeTicks(c, cx, cy, major, F * 0.8, F * 0.95, F * 0.032);
+  const simple = isSimpleFace(size);
+  for (let d = 0; d < 360; d += simple ? 10 : 5) ((simple ? d % 30 === 0 : d % 10 === 0) ? major : minor).push(d);
+  strokeTicks(c, cx, cy, minor, F * 0.87, F * 0.95, simple ? F * 0.03 : F * 0.02);
+  strokeTicks(c, cx, cy, major, F * 0.8, F * 0.95, simple ? F * 0.045 : F * 0.032);
   for (let d = 0; d < 360; d += 30) {
     const card = d % 90 === 0;
     c.save();
-    c.translate(px(cx, F * 0.64, d), py(cy, F * 0.64, d));
+    c.translate(px(cx, simple ? F * 0.6 : F * 0.64, d), py(cy, simple ? F * 0.6 : F * 0.64, d));
     c.rotate(d * DEG);
-    font(c, card ? F * 0.21 : F * 0.17, card ? 800 : 600);
+    if (simple) font(c, card ? F * 0.32 : F * 0.22, card ? 800 : 700);
+    else font(c, card ? F * 0.21 : F * 0.17, card ? 800 : 600);
     text(c, compassLabel(d), 0, 0, card ? MARK : MARK);
     c.restore();
   }
@@ -816,7 +843,7 @@ export const drawHeading: GaugeDrawer = (ctx, cx, cy, size, r) => {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(headingCardRotationDeg(r.headingDeg) * DEG);
-  cachedFace(ctx, 'hiCard', 0, 0, s, hiCard);
+  cachedFace(ctx, isSimpleFace(s) ? 'hiCardS' : 'hiCard', 0, 0, s, hiCard);
   ctx.restore();
   cachedFace(ctx, 'hiFixed', cx, cy, s, hiFixed);
   drawGlass(ctx, cx, cy, s);
@@ -828,6 +855,16 @@ function vsiFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numb
   const F = drawCase(c, cx, cy, size);
   const minor: number[] = [];
   const major: number[] = [];
+  if (isSimpleFace(size)) {
+    for (let v = -2000; v <= 2000; v += 500) (v % 1000 === 0 ? major : minor).push(vsiNeedleDeg(v));
+    strokeTicks(c, cx, cy, minor, F * 0.83, F * 0.95, F * 0.035);
+    strokeTicks(c, cx, cy, major, F * 0.74, F * 0.95, F * 0.05);
+    numerals(c, cx, cy, F * 0.56, [[vsiNeedleDeg(0), '0'], [vsiNeedleDeg(1000), '10'], [vsiNeedleDeg(-1000), '10'], [90, '20']], F * 0.3);
+    font(c, F * 0.22, 800, UI_FONT);
+    text(c, 'UP', cx - F * 0.3, cy - F * 0.3, MARK);
+    text(c, 'DN', cx - F * 0.3, cy + F * 0.3, MARK);
+    return;
+  }
   for (let v = -2000; v <= 2000; v += 100) (v % 500 === 0 ? major : minor).push(vsiNeedleDeg(v));
   strokeTicks(c, cx, cy, minor, F * 0.86, F * 0.95, F * 0.022);
   strokeTicks(c, cx, cy, major, F * 0.77, F * 0.95, F * 0.036);
@@ -852,7 +889,7 @@ function vsiFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: numb
 export const drawVsi: GaugeDrawer = (ctx, cx, cy, size, r) => {
   const s = sz(size);
   if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
-  cachedFace(ctx, 'vsi', cx, cy, s, vsiFace);
+  cachedFace(ctx, isSimpleFace(s) ? 'vsiS' : 'vsi', cx, cy, s, vsiFace);
   const F = (s / 2) * 0.885;
   needle(ctx, cx, cy, vsiNeedleDeg(r.verticalSpeedFpm), F * 0.88, F * 0.22, F * 0.075);
   hub(ctx, cx, cy, F * 0.09);
@@ -871,6 +908,15 @@ function tachFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: num
   c.stroke();
   const minor: number[] = [];
   const major: number[] = [];
+  if (isSimpleFace(size)) {
+    for (let v = 0; v <= TACH_MAX; v += 500) (v % 1000 === 0 ? major : minor).push(tachNeedleDeg(v));
+    strokeTicks(c, cx, cy, minor, F * 0.84, F * 0.95, F * 0.035);
+    strokeTicks(c, cx, cy, major, F * 0.76, F * 0.95, F * 0.05);
+    numerals(c, cx, cy, F * 0.56, [0, 1000, 2000, 3000].map((v) => [tachNeedleDeg(v), String(v / 100)] as [number, string]), F * 0.3);
+    font(c, F * 0.24, 800, UI_FONT);
+    text(c, 'RPM', cx, cy + F * 0.42, MARK);
+    return;
+  }
   for (let v = 0; v <= TACH_MAX; v += 100) (v % 500 === 0 ? major : minor).push(tachNeedleDeg(v));
   strokeTicks(c, cx, cy, minor, F * 0.87, F * 0.95, F * 0.02);
   strokeTicks(c, cx, cy, major, F * 0.78, F * 0.95, F * 0.034);
@@ -901,7 +947,7 @@ function tachFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: num
 export const drawTachometer: GaugeDrawer = (ctx, cx, cy, size, r) => {
   const s = sz(size);
   if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
-  cachedFace(ctx, 'tach', cx, cy, s, tachFace);
+  cachedFace(ctx, isSimpleFace(s) ? 'tachS' : 'tach', cx, cy, s, tachFace);
   const F = (s / 2) * 0.885;
   needle(ctx, cx, cy, tachNeedleDeg(r.rpm), F * 0.86, F * 0.22, F * 0.075);
   hub(ctx, cx, cy, F * 0.09);
@@ -1355,14 +1401,18 @@ function gearPanel(c: CanvasRenderingContext2D, x: number, y: number, w: number,
   circle(c, sx, ky, kr * 0.2);
   c.fillStyle = '#555';
   c.fill();
-  // Position lights: nose above, mains below, like the three greens.
+  // Position lights: nose above, mains below — three greens down and locked, red in transit.
   const kind = r.gearLight === 'green' ? 'green' : r.gearLight === 'red' ? 'red' : 'off';
   const lx = x + w * 0.72;
   const lr = w * 0.085;
-  lamp(c, lx, y + h * 0.38, lr, kind);
-  lamp(c, lx - w * 0.14, y + h * 0.56, lr, kind);
-  lamp(c, lx + w * 0.14, y + h * 0.56, lr, kind);
-  placard(c, r.gear === 'down' ? 'DOWN' : r.gear === 'up' ? 'UP' : 'TRANSIT', lx, y + h * 0.75, w * 0.075, 'center', kind === 'red' ? '#ff8a7e' : kind === 'green' ? '#7dffa0' : '#8d8a82');
+  lamp(c, lx, y + h * 0.34, lr, kind);
+  lamp(c, lx - w * 0.14, y + h * 0.52, lr, kind);
+  lamp(c, lx + w * 0.14, y + h * 0.52, lr, kind);
+  // Gear warning light: red with the horn in flight (gear not down at low power / landing flaps),
+  // amber when the squat switch is holding the gear down against an UP handle on the ground.
+  const gw = gearFlags(r);
+  const warn: keyof typeof LAMP = gw.gearUnsafe ? 'red' : gw.squatSwitch ? 'amber' : 'off';
+  pill(c, lx - w * 0.21, y + h * 0.68, w * 0.42, h * 0.11, gw.squatSwitch && !gw.gearUnsafe ? 'SQUAT' : 'WARN', warn);
 }
 
 /** The 172's flap position indicator: a vertical slot with 0°/10°/20°/FULL marks and a pointer. */
@@ -1405,13 +1455,15 @@ function annunciators(c: CanvasRenderingContext2D, x: number, y: number, w: numb
   roundRect(c, x, y, w, h, h * 0.08);
   c.fillStyle = '#121314';
   c.fill();
+  const gw = gearFlags(r);
+  const st = r.engineStatus;
   const items: [string, keyof typeof LAMP][] = [
     ['STALL', r.stallWarning ? 'red' : 'off'],
+    ['GEAR', gw.gearUnsafe ? 'red' : gw.squatSwitch || gw.overspeed ? 'amber' : 'off'],
     ['VNE', r.overspeed ? 'red' : 'off'],
     ['BRAKE', r.brakes ? 'amber' : 'off'],
     ['PARK BRK', r.parkingBrake ? 'red' : 'off'],
-    ['STARTER', r.engineStatus === 'STARTING' ? 'amber' : 'off'],
-    [r.engineStatus === 'FAILED' ? 'ENG FAIL' : 'ENG RUN', r.engineStatus === 'FAILED' ? 'red' : r.engineStatus === 'RUNNING' ? 'green' : 'off'],
+    st === 'FAILED' ? ['ENG FAIL', 'red'] : st === 'STARTING' ? ['STARTER', 'amber'] : st === 'RUNNING' ? ['ENG RUN', 'green'] : ['ENG OFF', 'off'],
   ];
   const cols = 3;
   const pad = h * 0.08;

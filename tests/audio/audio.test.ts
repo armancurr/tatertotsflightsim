@@ -226,6 +226,27 @@ describe('warnings and systems', () => {
     run(audio, ctx, inp({ stallWarning: false, airspeedKt: 50 }), 0.05);
     expect(audio.levels().horn).toBe(0);
   });
+  it('gear warning horn follows the warning, is silent in a wreck, and is a different sound from the stall horn', async () => {
+    const { audio, ctx } = await makeAudio();
+    run(audio, ctx, inp({ gearWarning: true, cameraMode: 'cockpit' }), 0.05);
+    expect(audio.levels().gearHorn).toBeCloseTo(A.gearHornVolume, 9);
+    expect(audio.levels().horn).toBe(0);
+    run(audio, ctx, inp({ gearWarning: false }), 0.05);
+    expect(audio.levels().gearHorn).toBe(0);
+    run(audio, ctx, inp({ gearWarning: true, crashed: true }), 0.05);
+    expect(audio.levels().gearHorn).toBe(0);
+    // Distinct: lower, electronic tone vs the ~1.8 kHz reed; intermittent at a few Hz.
+    expect(A.gearHornHz).toBeLessThan(A.stallHornHz * 0.6);
+    expect(A.gearHornRateHz).toBeGreaterThanOrEqual(1.5);
+    expect(A.gearHornRateHz).toBeLessThanOrEqual(4);
+  });
+  it('the gear horn works without the optional input (old callers): silent', async () => {
+    const { audio, ctx } = await makeAudio();
+    const a = { ...RUN } as AudioInputs;
+    delete (a as Partial<AudioInputs>).gearWarning;
+    run(audio, ctx, a, 0.05);
+    expect(audio.levels().gearHorn).toBe(0);
+  });
   it('gear motor hums while moving and clunks when it locks; flap motor whines', async () => {
     const { audio, ctx } = await makeAudio();
     run(audio, ctx, inp({ gearMoving: true, flapsMoving: true }), 0.5);

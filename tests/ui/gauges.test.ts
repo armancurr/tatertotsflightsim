@@ -227,6 +227,69 @@ describe('gauge drawers', () => {
     expect(t).toMatch(/TRANSIT/);
   });
 
+  it('drawPanel: the gear lever placards say UP and DOWN once each, whatever the gear does (no duplicate state word)', () => {
+    const count = (r: Parameters<typeof drawPanel>[3], word: string) => {
+      const m = mockCtx(2048, 1024);
+      drawPanel(m.ctx, 2048, 1024, r);
+      return m.texts().filter((t) => t === word).length;
+    };
+    const down = makeReadings({ gear: 'down', gearLight: 'green' });
+    const up = makeReadings({ gear: 'up', gearLight: 'off' });
+    const transit = makeReadings({ gear: 'transit', gearLight: 'red' });
+    expect(count(down, 'DOWN')).toBe(count(up, 'DOWN'));
+    expect(count(down, 'DOWN')).toBe(count(transit, 'DOWN'));
+    expect(count(transit, 'TRANSIT')).toBe(0);
+    // The lever's own placards: exactly one UP and one DOWN besides the VSI's UP/DOWN.
+    const m = mockCtx(2048, 1024);
+    drawPanel(m.ctx, 2048, 1024, down);
+    const vsi = mockCtx();
+    drawVsi(vsi.ctx, 100, 100, 400, down);
+    expect(count(down, 'DOWN') - vsi.texts().filter((t) => t === 'DOWN').length).toBe(1);
+  });
+
+  it('drawPanel: the gear warning lights a red GEAR lamp on the panel (horn conditions), dark otherwise', () => {
+    const redStops = (r: Parameters<typeof drawPanel>[3]) => {
+      const m = mockCtx(2048, 1024);
+      drawPanel(m.ctx, 2048, 1024, r);
+      return m.argsOf('addColorStop').filter((a) => a[1] === '#ff7a6e').length;
+    };
+    const safe = { ...makeReadings({ gear: 'up', gearLight: 'off', throttlePct: 65, engineStatus: 'RUNNING' }), gearHandleDown: false };
+    const unsafe = { ...safe, throttlePct: 5 };
+    expect(redStops(safe)).toBe(0);
+    expect(redStops(unsafe)).toBeGreaterThanOrEqual(2); // annunciator pill + gear-panel lamp
+    const m = mockCtx(2048, 1024);
+    drawPanel(m.ctx, 2048, 1024, unsafe);
+    expect(m.texts()).toContain('GEAR');
+  });
+
+  it('small gauges (< simpleFaceBelowPx) use simplified faces: no small print, fewer and larger numerals', () => {
+    const fontsPx = (m: ReturnType<typeof mockCtx>) =>
+      m.argsOf('set:font').map((a) => Number(/([\d.]+)px/.exec(String(a[0]))?.[1] ?? 'NaN')).filter(Number.isFinite);
+    for (const [name, draw] of Object.entries(GAUGES)) {
+      for (const size of [72, 96, 111]) {
+        const m = mockCtx();
+        draw(m.ctx, 100, 100, size, makeReadings());
+        const px = fontsPx(m);
+        if (px.length) expect(Math.min(...px), `${name} @${size}px`).toBeGreaterThanOrEqual(size * 0.095);
+        expect(m.bad(), name).toEqual([]);
+      }
+      const big = mockCtx();
+      const small = mockCtx();
+      draw(big.ctx, 100, 100, 140, makeReadings());
+      draw(small.ctx, 100, 100, 96, makeReadings());
+      expect(small.texts().length, name).toBeLessThanOrEqual(big.texts().length);
+    }
+    const asi = mockCtx();
+    drawAirspeed(asi.ctx, 100, 100, 96, makeReadings());
+    expect(asi.texts()).not.toContain('AIRSPEED');
+    expect(asi.texts()).toContain('KT');
+    const tach = mockCtx();
+    drawTachometer(tach.ctx, 100, 100, 96, makeReadings());
+    expect(tach.texts()).not.toContain('HOURS');
+    expect(tach.texts()).toContain('RPM');
+    expect(CONFIG.hud.simpleFaceBelowPx).toBeGreaterThan(CONFIG.hud.gaugeSize1024);
+  });
+
   it('drawPanel lays out the 172RG panel (six-pack, tach, gear, flaps) without NaN', () => {
     const m = mockCtx(2048, 1024);
     drawPanel(m.ctx, 2048, 1024, makeReadings());

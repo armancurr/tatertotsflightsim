@@ -147,6 +147,10 @@ export interface HudInfo {
   state: AircraftState;
   controls: Controls;
   mouseYoke: boolean;
+  /** Landing light switch (L); a change is confirmed with a toast. */
+  landingLight?: boolean;
+  /** True while the start-up loading veil covers the screen (the start hint waits for it). */
+  veil?: boolean;
 }
 
 export type PanelDrawerFn = (ctx: CanvasRenderingContext2D, w: number, h: number, r: InstrumentReadings) => void;
@@ -288,6 +292,8 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   let lastCamera: CameraMode | null = null;
   let lastYoke: boolean | null = null;
   let lastTod: string | null = null;
+  let lastLight: boolean | null = null;
+  let hintTime = 0;
   let lastTouchdown: number | null = null;
   let lastCrash: string | null = null;
   let pausedShown = false;
@@ -442,7 +448,10 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     // Short confirmations when a setting changes.
     if (lastCamera !== null && info.cameraMode !== lastCamera) flash(`${CAMERA_NAME[info.cameraMode] ?? info.cameraMode} view`, 'info', 1.4);
     if (lastYoke !== null && info.mouseYoke !== lastYoke) flash(info.mouseYoke ? 'Mouse yoke ON — the mouse flies the aircraft' : 'Mouse yoke OFF', 'info');
-    if (lastTod !== null && info.timeOfDay !== lastTod) flash(info.timeOfDay, 'info', 1.6);
+    if (lastTod !== null && info.timeOfDay !== lastTod) flash(`Time of day — ${info.timeOfDay}`, 'info', 1.6);
+    const light = typeof info.landingLight === 'boolean' ? info.landingLight : null;
+    if (light !== null && lastLight !== null && light !== lastLight) flash(light ? 'Landing light ON' : 'Landing light OFF', 'info', 1.4);
+    lastLight = light;
     const chipDirty = info.cameraMode !== lastCamera || info.mouseYoke !== lastYoke || info.timeOfDay !== lastTod;
     lastCamera = info.cameraMode;
     lastYoke = info.mouseYoke;
@@ -457,15 +466,16 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       }
     }
 
-    // Annunciators; STALL blinks.
+    // Annunciators; STALL and GEAR blink.
     const dim = Math.floor(time * cfg.hud.stallBlinkHz * 2) % 2 === 1;
+    const gearDim = Math.floor(time * cfg.hud.gearWarning.blinkHz * 2) % 2 === 1;
     for (const a of anns) {
       const on = annunciationActive(a.id, r, cfg);
       if (on !== a.on) {
         a.on = on;
         a.el.hidden = !on;
       }
-      const d = on && a.id === 'stall' && dim;
+      const d = on && ((a.id === 'stall' && dim) || (a.id === 'gearUnsafe' && gearDim));
       if (d !== a.dim) {
         a.dim = d;
         a.el.classList.toggle('fsh-dim', d);
@@ -510,9 +520,10 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       } else if (t.until - time < 0.4 && !t.el.classList.contains('fsh-out')) t.el.classList.add('fsh-out');
     }
 
-    // Start hint for the first seconds.
+    // Start hint for the first seconds after the loading veil has gone.
+    if (!info.veil) hintTime += step;
     if (hintState < 2) {
-      const left = cfg.hud.startHintSeconds - time;
+      const left = cfg.hud.startHintSeconds - hintTime;
       if (left <= 0 || crash) {
         hintState = 2;
         hintEl.hidden = true;

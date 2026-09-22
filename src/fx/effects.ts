@@ -14,6 +14,7 @@ import { FxSim } from './sim';
 import { particleAlpha, particleHeat, particleSize, type ParticlePool } from './pool';
 import { createSortScratch, sortBackToFront } from './sort';
 import { generateParticleAtlas } from './sprites';
+import { FIRE_GLSL } from './shading';
 
 const FX = CONFIG.fx;
 
@@ -48,33 +49,43 @@ attribute vec4 iColor;
 attribute float iGround;
 uniform vec3 uSunView;
 uniform float uNearFade;
+uniform float uMaxCover;
 varying vec2 vUv;
 varying vec3 vLight;
 varying vec4 vColor;
 varying vec3 vFx;
 varying vec2 vGround;
+varying float vPhase;
 #include <fog_pars_vertex>
+${FIRE_GLSL}
 void main() {
   float size = iPos.w;
   float tile = iParams.w;
   float isFlame = step(3.5, tile);
   vec4 mvPosition = viewMatrix * vec4(iPos.xyz, 1.0);
+  float depth = -mvPosition.z;
+  // Fade sprites the camera is inside of, and any that would cover too much of the screen.
+  float fade = iParams.y * smoothstep(0.1 * size * uNearFade, size * uNearFade, depth) * coverFade(size, depth, projectionMatrix[1][1], uMaxCover);
   vec3 upV = mat3(viewMatrix) * vec3(0.0, 1.0, 0.0);
   float rot = mix(iParams.x, atan(-upV.x, upV.y) + iParams.x * 0.3, isFlame);
   float c = cos(rot);
   float s = sin(rot);
   vec2 corner = position.xy;
-  vec2 off = vec2(c * corner.x - s * corner.y, s * corner.x + c * corner.y) * size;
+  // Flame licks are taller than wide and stand on their base.
+  vec2 k = corner * vec2(1.0, mix(1.0, 1.5, isFlame)) + vec2(0.0, 0.25 * isFlame);
+  vec2 off = vec2(c * k.x - s * k.y, s * k.x + c * k.y) * size;
   mvPosition.xy += off;
   gl_Position = projectionMatrix * mvPosition;
+  if (fade < 0.003) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // nothing to draw: no fill cost
   vUv = (vec2(mod(tile, 4.0), floor(tile / 4.0)) + corner + 0.5) / vec2(4.0, 2.0);
   vLight = vec3(c * uSunView.x + s * uSunView.y, -s * uSunView.x + c * uSunView.y, uSunView.z);
+  // Forward scattering (Henyey-Greenstein, g = 0.6): thin smoke glows when it is between the eye and the sun.
+  float cosT = dot(normalize(mvPosition.xyz), uSunView);
+  vPhase = 0.64 / pow(1.36 - 1.2 * cosT, 1.5);
   vColor = iColor;
   vec3 worldOff = (vec4(off, 0.0, 0.0) * viewMatrix).xyz;
   vGround = vec2(iPos.y + worldOff.y - iGround, 1.0 / max(0.05, 0.25 * size));
-  float depth = -mvPosition.z;
-  float nearF = smoothstep(0.1 * size * uNearFade, size * uNearFade, depth);
-  vFx = vec3(iParams.y * nearF, iParams.z, isFlame);
+  vFx = vec3(fade, iParams.z, isFlame);
   #include <fog_vertex>
 }
 `;
@@ -91,11 +102,9 @@ varying vec3 vLight;
 varying vec4 vColor;
 varying vec3 vFx;
 varying vec2 vGround;
+varying float vPhase;
 #include <fog_pars_fragment>
-vec3 fireRamp(float h) {
-  vec3 c = vec3(smoothstep(0.0, 0.35, h), smoothstep(0.25, 0.8, h) * 0.8, smoothstep(0.65, 1.1, h) * 0.65);
-  return c * (0.15 + 2.2 * h * h);
-}
+${FIRE_GLSL}
 vec3 finishColor(vec3 c) {
   #ifdef TONE_MAPPING
     c = toneMapping(c);
@@ -107,15 +116,18 @@ void main() {
   float groundFade = clamp(vGround.x * vGround.y, 0.0, 1.0);
   float a = tex.a * vFx.x * groundFade;
   if (a < 0.002) discard;
+  // Smoke: lit like a volume by the sun (sprite-space normals) and the sky, with forward scattering at thin edges.
   vec3 n = vec3(tex.rg * 2.0 - 1.0, 0.0);
   n.z = sqrt(max(0.0, 1.0 - dot(n.xy, n.xy)));
-  float diff = clamp(dot(n, normalize(vLight)) * 0.55 + 0.45, 0.0, 1.0);
+  float diff = clamp(dot(n, normalize(vLight)) * 0.6 + 0.4, 0.0, 1.0);
+  float phase = mix(1.0, clamp(vPhase, 0.25, 4.0), (1.0 - tex.a) * 0.75);
   vec3 albedo = vColor.rgb;
-  vec3 lit = albedo * (uAmbient + uSunColor * diff) + albedo * uGlowColor * vColor.a;
-  float heat = vFx.y * mix(0.55 + 0.6 * tex.b, 0.7 + 0.5 * tex.b, vFx.z);
-  vec3 emis = fireRamp(clamp(heat, 0.0, 1.3)) * uFireIntensity;
-  float hot = clamp(vFx.y * 1.5, 0.0, 1.0);
-  float aOcc = a * mix(1.0, uFireOcclusion, hot);
+  vec3 lit = albedo * (uAmbient + uSunColor * diff * phase) + albedo * uGlowColor * vColor.a;
+  // Fire: hottest in the core of the sprite, cooler and sooty at its edges.
+  float T = vFx.y * mix(0.3, 1.15, tex.b);
+  vec3 emis = fireRamp(T) * uFireIntensity;
+  float glow = smoothstep(0.3, 0.9, T);
+  float aOcc = a * mix(1.0, uFireOcclusion, glow);
   gl_FragColor = vec4(0.0);
   {
     #include <fog_fragment>
@@ -130,6 +142,25 @@ void main() {
   gl_FragColor = vec4(col, aOcc);
 }
 `;
+
+interface RgbLike {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * Smoke lighting from the atmosphere, in the same units three's lit materials use: the sun as
+ * radiance per unit albedo (colour × intensity / π, like a Lambert surface facing the sun) and an
+ * ambient from the sky dome plus a little sunlit-ground bounce (a puff is lit from all around).
+ */
+export function smokeLighting(sunColor: RgbLike, sunIntensity: number, skyIrradiance: RgbLike, groundRadiance: RgbLike, outSun: THREE.Color, outAmbient: THREE.Color): void {
+  const k = Number.isFinite(sunIntensity) ? Math.max(0, sunIntensity) / Math.PI : 0;
+  const f = (v: number) => (Number.isFinite(v) ? Math.max(0, v) : 0);
+  outSun.setRGB(f(sunColor.r) * k, f(sunColor.g) * k, f(sunColor.b) * k);
+  const amb = (sky: number, ground: number) => (0.8 * f(sky)) / Math.PI + 0.25 * f(ground);
+  outAmbient.setRGB(amb(skyIrradiance.r, groundRadiance.r), amb(skyIrradiance.g, groundRadiance.g), amb(skyIrradiance.b, groundRadiance.b));
+}
 
 function debrisGeometry(): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(1, 0.06, 0.65, 3, 1, 2);
@@ -178,10 +209,11 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
     uSunView: { value: new THREE.Vector3(0, 1, 0) },
     uSunColor: { value: new THREE.Color(1.0, 0.96, 0.9) },
     uAmbient: { value: new THREE.Color(0.32, 0.37, 0.46) },
-    uGlowColor: { value: new THREE.Color(1.6, 0.62, 0.2) },
+    uGlowColor: { value: new THREE.Color(1.1, 0.42, 0.1) },
     uFireIntensity: { value: FX.fireIntensity },
     uFireOcclusion: { value: FX.fireOcclusion },
     uNearFade: { value: FX.nearFade },
+    uMaxCover: { value: FX.maxScreenCover },
   };
   // keep the shared atmospheric-fog array by reference (see render/fog.ts)
   const fogLib = THREE.UniformsLib.fog as Record<string, THREE.IUniform>;

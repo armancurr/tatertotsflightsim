@@ -146,6 +146,55 @@ describe('HUD: messages', () => {
     expect(shown(stall)).toBe(false);
   });
 
+  it('flashes the red GEAR annunciator with the gear up at idle in flight, and clears when the gear is down', () => {
+    hud = createHud(root);
+    const up = { ...makeReadings({ gear: 'up', gearLight: 'off', throttlePct: 5, airspeedKt: 80 }), gearHandleDown: false };
+    hud.update(up, info(), 1 / 60);
+    const gear = $('[data-ann="gearUnsafe"]');
+    expect(shown(gear)).toBe(true);
+    expect(gear!.textContent).toBe('GEAR');
+    expect(gear!.classList.contains('fsh-warning')).toBe(true);
+    const phases = new Set<boolean>();
+    for (let i = 0; i < 40; i++) {
+      hud.update(up, info(), 1 / 30);
+      phases.add(gear!.classList.contains('fsh-dim'));
+    }
+    expect(phases.size).toBe(2);
+    const down = { ...up, gear: 'down' as const, gearLight: 'green' as const, gearHandleDown: true };
+    hud.update(down, info(), 1 / 60);
+    expect(shown(gear)).toBe(false);
+  });
+
+  it('shows the amber squat-switch caution when the gear handle is UP on the ground', () => {
+    hud = createHud(root);
+    const r = { ...makeReadings({ gear: 'down', gearLight: 'green', state: 'ground', throttlePct: 0, airspeedKt: 0 }), gearHandleDown: false };
+    hud.update(r, info(), 1 / 60);
+    const squat = $('[data-ann="gearSquat"]');
+    expect(shown(squat)).toBe(true);
+    expect(squat!.textContent).toBe('GEAR — SQUAT SWITCH');
+    expect(squat!.classList.contains('fsh-caution')).toBe(true);
+    expect(shown($('[data-ann="gearUnsafe"]'))).toBe(false);
+  });
+
+  it('confirms the landing light switch with a short toast', () => {
+    hud = createHud(root);
+    hud.update(makeReadings(), info({ landingLight: true }), 1 / 60);
+    hud.update(makeReadings(), info({ landingLight: false }), 1 / 60);
+    const t = () => [...document.querySelectorAll('.fsh-toast')].map((e) => e.textContent).join(' | ');
+    expect(t()).toMatch(/landing light off/i);
+    hud.update(makeReadings(), info({ landingLight: true }), 1 / 60);
+    expect(t()).toMatch(/landing light on/i);
+  });
+
+  it('the start hint waits for the loading veil to go, then shows for its full time', () => {
+    hud = createHud(root);
+    for (let i = 0; i < (CONFIG.hud.startHintSeconds + 2) * 10; i++) hud.update(makeReadings(), info({ veil: true }), 0.1);
+    for (let i = 0; i < 20; i++) hud.update(makeReadings(), info({ veil: false }), 0.1);
+    expect(shown($('.fsh-hint'))).toBe(true);
+    for (let i = 0; i < (CONFIG.hud.startHintSeconds + 1) * 10; i++) hud.update(makeReadings(), info(), 0.1);
+    expect(shown($('.fsh-hint'))).toBe(false);
+  });
+
   it('shows gear and flap overspeed cautions', () => {
     hud = createHud(root);
     hud.update(makeReadings({ airspeedKt: 150, flapsDeg: 20, gear: 'down', gearLight: 'green' }), info(), 1 / 60);

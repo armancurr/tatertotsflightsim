@@ -127,6 +127,36 @@ export function hornWaveform(n: number): Float32Array {
   return normalise(s);
 }
 
+/**
+ * One period of an on/off gate (0..1) with raised-cosine edges of `edge` × period (default 6 %),
+ * on for `duty` of the period. Used to beep the gear warning horn without clicks.
+ */
+export function gateWaveform(n: number, duty: number, edge = 0.06): Float32Array {
+  const s = new Float32Array(n);
+  const d = Math.min(0.9, Math.max(0.1, Number.isFinite(duty) ? duty : 0.5));
+  const e = Math.min(0.2, Math.max(0.01, edge));
+  for (let j = 0; j < n; j++) {
+    const t = j / n;
+    let v: number;
+    if (t < e) v = 0.5 - 0.5 * Math.cos((Math.PI * t) / e);
+    else if (t < d) v = 1;
+    else if (t < d + e) v = 0.5 + 0.5 * Math.cos((Math.PI * (t - d)) / e);
+    else v = 0;
+    s[j] = v;
+  }
+  return s;
+}
+
+/** Electronic warning beep: a square wave with slightly rounded edges and a touch of even harmonic (a small cabin speaker). */
+export function beepWaveform(n: number): Float32Array {
+  const s = new Float32Array(n);
+  for (let j = 0; j < n; j++) {
+    const t = j / n;
+    s[j] = Math.tanh(4 * Math.sin(2 * Math.PI * t)) + 0.12 * Math.sin(4 * Math.PI * t);
+  }
+  return normalise(s);
+}
+
 export type NoiseKind = 'white' | 'pink' | 'brown';
 
 /** Deterministic noise, zero mean, peak-normalised to 0.99. */

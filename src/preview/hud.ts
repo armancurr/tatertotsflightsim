@@ -7,9 +7,11 @@
  *   &brake=1 &park=1 &engine=OFF &turn=3 &slip=0.4 &fps=60 &tod=Morning
  *   &yoke=1 &hud=0 &flash=text &animate=1
  *   &panel=1  → drawPanel() onto a 2048×1024 canvas shown full screen.
+ *   &veil=boot|streaming|ready → the start-up loading veil, frozen in that state.
  * window.hudPreview exposes { hud, readings } for poking from DevTools.
  */
-import { CONFIG } from '../config';
+import { CONFIG, cloneConfig } from '../config';
+import { createLoadingVeil } from '../ui/veil';
 import type { AircraftState, CameraMode, EngineStatus, GearState, InstrumentReadings, TouchdownRecord } from '../types';
 import { createHud } from '../ui/hud';
 import { drawPanel } from '../ui/gauges';
@@ -81,6 +83,17 @@ const setHorizon = (pitch: number, roll: number) => {
   scene.style.transform = `rotate(${-roll}deg) translateY(${pitch * 0.9}vh)`;
 };
 setHorizon(readings.pitchDeg, readings.rollDeg);
+
+const veilMode = q.get('veil');
+if (veilMode) {
+  // Loading veil frozen in a state: ?veil=boot|streaming|ready (it never auto-dismisses here).
+  const cfg = cloneConfig();
+  cfg.hud.veil.autoDismissS = 1e9;
+  cfg.hud.veil.maxTotalS = 1e9;
+  const v = createLoadingVeil(document, cfg);
+  if (veilMode !== 'boot') v.mark(2);
+  if (veilMode === 'ready') for (let i = 0; i < 60; i++) v.frame(1 / 60);
+}
 
 if (flag('panel')) {
   const c = document.getElementById('panel') as HTMLCanvasElement;

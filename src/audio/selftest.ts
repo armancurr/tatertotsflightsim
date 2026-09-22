@@ -67,6 +67,24 @@ export const SCENARIOS: Scenario[] = [
       return { ok: f >= 1600 && f <= 2000 && rms(s) > 2e-3, detail: `peak ${f} Hz, rms ${rms(s).toFixed(4)}` };
     },
   },
+  {
+    name: 'gear warning horn (cockpit)', base: { gearWarning: true, airspeedKt: 70, onGround: false, cameraMode: 'cockpit' },
+    check: (s, sr) => {
+      const f = dominantFrequency(s, sr, 300, 3000, 5);
+      // Intermittent: 40 ms windows swing between loud (beep) and near-silent (gap).
+      const win = Math.round(0.04 * sr);
+      let lo = Infinity;
+      let hi = 0;
+      for (let i = 0; i + win <= s.length; i += win) {
+        const r = rms(s.subarray(i, i + win));
+        lo = Math.min(lo, r);
+        hi = Math.max(hi, r);
+      }
+      const want = CONFIG.audio.gearHornHz;
+      const ok = Math.abs(f - want) < want * 0.06 && hi > 5e-3 && hi > lo * 6;
+      return { ok, detail: `peak ${f} Hz (want ${want}), beep/gap rms ${hi.toFixed(4)}/${lo.toFixed(4)}` };
+    },
+  },
   { name: 'gear motor (cockpit)', base: { gearMoving: true, cameraMode: 'cockpit' }, check: audible(1e-3) },
   { name: 'flap motor (cockpit)', base: { flapsMoving: true, cameraMode: 'cockpit' }, check: audible(1e-3) },
   { name: 'touchdown 600 fpm', base: { onGround: true, groundSpeedKt: 55 }, event: { at: 0.1, inputs: { onGround: true, groundSpeedKt: 55, touchdownFpm: -600 } }, check: audible(4e-3) },

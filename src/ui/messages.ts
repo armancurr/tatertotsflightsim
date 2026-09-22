@@ -4,15 +4,16 @@
  */
 import { CONFIG, type Config } from '../config';
 import type { CrashRecord, InstrumentReadings, TouchdownRecord } from '../types';
+import { gearFlags } from './gearWarning';
 
 export type MessageLevel = 'info' | 'warn' | 'good';
 
-export type AnnunciationId = 'stall' | 'overspeed' | 'flapOverspeed' | 'gearOverspeed' | 'engineFailed' | 'engineOff';
+export type AnnunciationId = 'stall' | 'gearUnsafe' | 'overspeed' | 'flapOverspeed' | 'gearOverspeed' | 'gearSquat' | 'engineFailed' | 'engineOff';
 
 export interface Annunciation {
   id: AnnunciationId;
   text: string;
-  /** 'warning' = red (STALL flashes), 'caution' = amber. */
+  /** 'warning' = red (STALL and GEAR flash), 'caution' = amber. */
   level: 'warning' | 'caution';
 }
 
@@ -47,10 +48,12 @@ export function crashText(crash: CrashRecord): { title: string; hint: string } {
 export function annunciationList(cfg: Config = CONFIG): Annunciation[] {
   return [
     { id: 'stall', text: 'STALL', level: 'warning' },
+    { id: 'gearUnsafe', text: 'GEAR', level: 'warning' },
     { id: 'overspeed', text: 'OVERSPEED', level: 'warning' },
     { id: 'engineFailed', text: 'ENGINE FAILURE', level: 'warning' },
     { id: 'flapOverspeed', text: 'FLAP OVERSPEED', level: 'caution' },
     { id: 'gearOverspeed', text: 'GEAR OVERSPEED', level: 'caution' },
+    { id: 'gearSquat', text: 'GEAR — SQUAT SWITCH', level: 'caution' },
     { id: 'engineOff', text: `ENGINE OFF · ${keysOf('engine', cfg)} to start`, level: 'caution' },
   ];
 }
@@ -64,7 +67,9 @@ export function annunciationActive(id: AnnunciationId, r: InstrumentReadings, cf
     case 'overspeed': return r.overspeed;
     case 'engineFailed': return r.engineStatus === 'FAILED';
     case 'flapOverspeed': return r.flapsDeg > 0.5 && ias > cfg.aircraft.flaps.vfeKt;
-    case 'gearOverspeed': return r.gear !== 'up' && ias > cfg.aircraft.gear.vleKt;
+    case 'gearUnsafe': return gearFlags(r, cfg).gearUnsafe;
+    case 'gearOverspeed': return gearFlags(r, cfg).overspeed;
+    case 'gearSquat': return gearFlags(r, cfg).squatSwitch;
     case 'engineOff': return r.engineStatus === 'OFF';
   }
 }
