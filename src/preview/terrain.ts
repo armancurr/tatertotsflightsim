@@ -10,6 +10,8 @@
  *   tod                time-of-day preset in atmo mode
  *   fly=<m/s>          fly forward along the heading (streaming / hitch test)
  *   hud=0              hide the label
+ *   gpu=1              measure GPU time per frame (EXT_disjoint_timer_query_webgl2) → window.__gpu()
+ *   water=0, terrain=0 hide the water / the terrain (GPU cost baselines)
  * window.__fps (smoothed), window.__ready (terrain.ready() resolved),
  * window.__stats() (terrain stats + frame-time percentiles), window.__terrain.
  */
@@ -25,6 +27,7 @@ declare global {
     __ready: boolean;
     __stats: () => unknown;
     __terrain: unknown;
+    __gpu: () => { median: number; p90: number; n: number } | null;
   }
 }
 
@@ -122,6 +125,20 @@ async function main() {
 
   const terrain = createTerrain(renderer, scene);
   const water = createWater(scene);
+  if (!flag('terrain', true)) terrain.group.visible = false;
+  if (!flag('water', true)) scene.traverse((o) => {
+    if (o !== terrain.group && o.parent === scene && o.name.toLowerCase().includes('water')) o.visible = false;
+  });
+  // GPU timer around each frame's render (median of recent frames).
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  const tq = flag('gpu') ? (gl.getExtension('EXT_disjoint_timer_query_webgl2') as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null) : null;
+  const gpuMs: number[] = [];
+  const inflight: WebGLQuery[] = [];
+  window.__gpu = () => {
+    if (!gpuMs.length) return null;
+    const s = [...gpuMs].sort((a, b) => a - b);
+    return { median: s[Math.floor(s.length / 2)], p90: s[Math.floor(s.length * 0.9)], n: s.length };
+  };
   window.__terrain = terrain;
   terrain.update(camera);
   terrain.ready().then(() => {
@@ -162,7 +179,22 @@ async function main() {
     atmoUpdate?.(dt);
     terrain.update(camera);
     water.update(camera, (now - t0) / 1000, sunDir);
+    let qy: WebGLQuery | null = null;
+    if (tq) {
+      qy = gl.createQuery();
+      if (qy) gl.beginQuery(tq.TIME_ELAPSED_EXT, qy);
+    }
     renderFn();
+    if (tq && qy) {
+      gl.endQuery(tq.TIME_ELAPSED_EXT);
+      inflight.push(qy);
+      while (inflight.length && gl.getQueryParameter(inflight[0], gl.QUERY_RESULT_AVAILABLE)) {
+        const q0 = inflight.shift()!;
+        if (!gl.getParameter(tq.GPU_DISJOINT_EXT)) gpuMs.push(gl.getQueryParameter(q0, gl.QUERY_RESULT) / 1e6);
+        gl.deleteQuery(q0);
+        if (gpuMs.length > 240) gpuMs.shift();
+      }
+    }
     if (flag('hud', true) && fpsFrames === 0) {
       const st = terrain.stats();
       label.textContent = `fps ${window.__fps}  tiles ${st.tiles}  pending ${st.pending}  tris ${(st.triangles / 1e6).toFixed(2)}M  calls ${renderer.info.render.calls}  ${window.__ready ? 'ready' : 'loading'}\ncam ${camera.position.x.toFixed(0)}, ${camera.position.y.toFixed(0)}, ${camera.position.z.toFixed(0)}  ground ${terrainHeight(camera.position.x, camera.position.z).toFixed(1)} m`;

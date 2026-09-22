@@ -73,6 +73,8 @@ interface TNode {
   dist: number;
 }
 
+const ATTRS = ['position', 'normal', 'lc0', 'lc1', 'lcp0', 'lcp1', 'aMorph'] as const;
+
 export function createTerrain(renderer: THREE.WebGLRenderer, scene: THREE.Scene, opts: TerrainOptions = {}): Terrain {
   void renderer;
   const cfg = opts.config ?? CONFIG;
@@ -103,6 +105,8 @@ export function createTerrain(renderer: THREE.WebGLRenderer, scene: THREE.Scene,
     g.setAttribute('normal', new THREE.BufferAttribute(new Int16Array(nv * 3), 3, true));
     g.setAttribute('lc0', new THREE.BufferAttribute(new Uint8Array(nv * 4), 4, true));
     g.setAttribute('lc1', new THREE.BufferAttribute(new Uint8Array(nv * 4), 4, true));
+    g.setAttribute('lcp0', new THREE.BufferAttribute(new Uint8Array(nv * 4), 4, true));
+    g.setAttribute('lcp1', new THREE.BufferAttribute(new Uint8Array(nv * 4), 4, true));
     g.setAttribute('aMorph', new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
     g.boundingSphere = new THREE.Sphere();
     g.boundingBox = new THREE.Box3();
@@ -121,8 +125,10 @@ export function createTerrain(renderer: THREE.WebGLRenderer, scene: THREE.Scene,
     (a.normal.array as Int16Array).set(data.normals);
     (a.lc0.array as Uint8Array).set(data.lc0);
     (a.lc1.array as Uint8Array).set(data.lc1);
+    (a.lcp0.array as Uint8Array).set(data.lcp0);
+    (a.lcp1.array as Uint8Array).set(data.lcp1);
     (a.aMorph.array as Float32Array).set(data.morph);
-    for (const k of ['position', 'normal', 'lc0', 'lc1', 'aMorph']) a[k].needsUpdate = true;
+    for (const k of ATTRS) a[k].needsUpdate = true;
     const half = data.size / 2;
     const midY = (data.minY + data.maxY) / 2;
     const halfY = (data.maxY - data.minY) / 2;
@@ -336,14 +342,14 @@ export function createTerrain(renderer: THREE.WebGLRenderer, scene: THREE.Scene,
       new Promise<void>((res) => {
         if (frame > 0 && lastMissing === 0 && completed.length === 0) res();
         else readyWaiters.push(res);
-      }),
+      }).then(() => tm.ready),
     dispose: () => {
       pool.dispose();
       for (const t of [...liveTiles]) release(t);
       for (const m of freeMeshes) m.geometry.dispose();
       freeMeshes.length = 0;
       index.array = new Uint16Array(0);
-      material.dispose();
+      tm.dispose();
       group.removeFromParent();
       roots.clear();
       jobs.clear();
