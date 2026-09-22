@@ -593,6 +593,58 @@ export const CONFIG = {
         carViewDistance: 3500,
       },
     },
+    /** Ships, boats and other aircraft (owned by src/world/traffic; systems ships.ts + airTraffic.ts). */
+    traffic: {
+      /** Schedules are a pure function of this seed + the traffic clock (+ the player's position at decision points). */
+      seed: 4217,
+      /** Traffic clock at start-up, s (URL `?tt=<s>` overrides, for QA photos). The clock stops while paused. */
+      startTime: 0,
+      /** Surface wind for sailing (direction it blows FROM, deg true) and its speed, kt. */
+      windFromDeg: 230,
+      windKt: 13,
+      /** Airborne traffic keeps at least this far from the player (m); nothing spawns closer than spawnClearance. */
+      playerClearance: 330,
+      spawnClearance: 3000,
+      sea: {
+        /** Port Chateau marina: centre x on the city waterfront (the quay follows the coastline). */
+        marinaX: -4700,
+        /** Fraction of the marina berths that hold a boat. */
+        berthFill: 0.72,
+        sailingYachts: 6,
+        motorYachts: 3,
+        fishingBoats: 3,
+        lakeBoats: 3,
+        /** Small craft are drawn within this distance of the camera (m); ships (ferry, cargo) within shipViewDistance. */
+        viewDistance: 7000,
+        shipViewDistance: 42000,
+        /** Low-detail boat meshes beyond this distance (m). */
+        lodDistance: 700,
+        /** Wakes (foam trail + Kelvin arms) are drawn for vessels within this distance of the camera (m). */
+        wakeDistance: 6000,
+        /** Wake samples per vessel (ribbon resolution). */
+        wakeSamples: 22,
+        /** Ferry: cruise speed (kt), dwell at each terminal (s), acceleration (m/s²). */
+        ferry: { speedKt: 13, dwell: 110, accel: 0.07 },
+      },
+      air: {
+        /** Aircraft flying left-hand circuits for runway 36 (touch-and-go / full stop / go-around). */
+        circuit: 3,
+        /** GA aircraft on straight tracks across the area, and airliners at cruise. */
+        crossing: 3,
+        airliners: 3,
+        helicopter: true,
+        patternAltitudeFt: 1000,
+        /** Downwind leg offset west of the runway centreline (m). */
+        downwindOffset: 1150,
+        crossingAltitudeFt: [2500, 6500] as [number, number],
+        airlinerAltitudeFt: [30000, 38000] as [number, number],
+        /** Aircraft meshes within this distance (m); a lit dot beyond, hidden past dotDistance. */
+        meshDistance: 4000,
+        dotDistance: 30000,
+        /** Contrails: age (s) at which a persistent trail has faded out. */
+        contrailMaxAge: 170,
+      },
+    },
   },
 
   // ─── Sky, sun, fog, lighting (owned by src/render) ───────────────────────────
