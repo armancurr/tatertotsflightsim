@@ -8,6 +8,7 @@ import { CONFIG, MS_TO_KT, RAD_TO_DEG } from '../../src/config';
 import type { AircraftState, Controls } from '../../src/types';
 import { createInitialState, defaultControls, powerTarget, airDensity, step, createTrimmedState } from '../../src/physics';
 import { toRunwayCoords } from '../../src/world/runway';
+import { quatFromEuler } from '../../src/physics/frames';
 import { clamp } from '../../src/math/vec3';
 import { fly, trimmed, iasKt, tasKt, altitudeHold, bankHold, allFinite, rng, DT, RUNWAY_ENV } from './helpers';
 
@@ -25,13 +26,16 @@ describe('realism (C172RG POH calibration)', () => {
     const roll = toRunwayCoords(s.position.x, s.position.z).along - start;
     expect(roll).toBeGreaterThan(200);
     expect(roll).toBeLessThan(400);
+    let liftoffKt = 0;
     s = fly(s, (x) => ({ ...defaultControls(), throttle: 1, elevator: x.derived.pitchDeg < 9 ? 0.6 : 0.1 }), 10, {
       env: RUNWAY_ENV,
+      each: (x) => { if (!liftoffKt && x.phase === 'airborne') liftoffKt = iasKt(x); },
       until: (x) => x.airborneTime > 2,
     });
     expect(s.phase).toBe('airborne');
     expect(s.crash).toBeNull();
-    expect(iasKt(s)).toBeLessThan(75);
+    expect(liftoffKt).toBeGreaterThan(50);
+    expect(liftoffKt).toBeLessThan(65);
   });
 
   it(`best-rate climb (Vy ${LIM.vyKt} KIAS, full power, sea level): 550–950 fpm`, () => {
@@ -84,7 +88,7 @@ describe('realism (C172RG POH calibration)', () => {
   it('hands-off trimmed cruise is stable for 60 s (no divergence, wings stay level, altitude held)', () => {
     const { state, controls } = trimmed({ altitudeM: 1500, iasKt: 110, gearDown: false });
     // A small upset to see that it damps: 4° of bank and a 1 m/s updraft.
-    const s0 = { ...state, velocity: { ...state.velocity, y: 1 } };
+    const s0 = { ...state, orientation: quatFromEuler(0, state.derived.pitchDeg, 4), velocity: { ...state.velocity, y: 1 } };
     let maxRoll = 0;
     let maxDy = 0;
     const s = fly(s0, controls, 60, {
@@ -106,7 +110,7 @@ describe('realism (C172RG POH calibration)', () => {
     const v = state.derived.tas;
     const rolling: AircraftState = { ...g, velocity: { x: 0, y: 0, z: -v }, flapsDeg: 30, phase: 'landed' };
     const start = toRunwayCoords(rolling.position.x, rolling.position.z).along;
-    const s = fly(rolling, { ...defaultControls(), flapsNotch: 3, brake: 1, elevator: 0.3 }, 60, {
+    const s = fly(rolling, { ...defaultControls(), flapsNotch: 3, brake: 1 }, 60, {
       env: RUNWAY_ENV,
       until: (x) => x.derived.groundSpeed < 0.3,
     });

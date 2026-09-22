@@ -149,8 +149,8 @@ describe('landing state', () => {
       const h = s.derived.altitudeAGL - 1.2; // main wheels above the runway
       if (h < 6) {
         const err = -Math.max(0.3, 0.3 * h) - s.velocity.y;
-        integ = clamp(integ + DT * 0.25 * err, -0.2, 0.8);
-        c.elevator = clamp(0.15 * err + integ - 0.03 * s.derived.q * RAD_TO_DEG, -0.3, 1);
+        integ = clamp(integ + DT * 0.5 * err, -0.2, 1);
+        c.elevator = clamp(0.3 * err + integ - 0.05 * s.derived.q * RAD_TO_DEG, -0.3, 1);
         c.throttle = base.throttle * clamp(h / 6, 0, 1);
       }
       return c;
@@ -169,6 +169,8 @@ describe('landing state', () => {
     expect(c.along).toBeGreaterThan(0);
     expect(c.along).toBeLessThan(rw.length);
     expect(Math.abs(td.bankDeg)).toBeLessThan(5);
+    expect(td.pitchDeg).toBeGreaterThan(0); // flared: main wheels first
+    expect(td.airspeedKt).toBeLessThan(65);
     expect(s.derived.alpha * RAD_TO_DEG).toBeLessThan(20);
   });
 });

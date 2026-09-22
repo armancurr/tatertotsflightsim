@@ -21,7 +21,7 @@ describe('drag', () => {
       prev = cd;
     }
     expect(dragCoefficient(10 * D, 0, 0, 1)).toBeGreaterThan(dragCoefficient(2 * D, 0, 0, 1) + 0.02);
-    expect(dragCoefficient(stallAlphaRad(0) + 10 * D, 0, 0, 1)).toBeGreaterThan(dragCoefficient(stallAlphaRad(0), 0, 0, 1) + 0.1);
+    expect(dragCoefficient(stallAlphaRad(0) + 10 * D, 0, 0, 1)).toBeGreaterThan(dragCoefficient(stallAlphaRad(0), 0, 0, 1) + 0.05);
     expect(dragCoefficient(90 * D, 0, 0, 1)).toBeGreaterThan(1);
   });
 

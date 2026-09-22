@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CONFIG } from '../../src/config';
-import { createInitialState, defaultControls, propThrust, powerTarget } from '../../src/physics';
+import { createInitialState, createTrimmedState, defaultControls, propThrust, powerTarget } from '../../src/physics';
 import { fly } from './helpers';
 
 const E = CONFIG.aircraft.engine;
@@ -67,6 +67,16 @@ describe('throttle and engine', () => {
     expect(s.engine.power).toBeLessThan(0.001);
     expect(s.engine.rpm).toBeLessThan(50); // parked: no windmilling
     expect(s.engine.thrust).toBeCloseTo(0, 1);
+  });
+
+  it('a dead engine in flight windmills with airspeed and the prop makes drag', () => {
+    const { state, controls } = createTrimmedState({ altitudeM: 1500, iasKt: 80 });
+    const s = fly(state, { ...controls, engineOn: false }, 10);
+    expect(s.engine.running).toBe(false);
+    expect(s.engine.power).toBeLessThan(0.001);
+    const windmill = E.windmillRpmPerKt * s.derived.ias * 1.943844;
+    expect(Math.abs(s.engine.rpm - windmill)).toBeLessThan(0.05 * windmill);
+    expect(s.engine.thrust).toBeLessThan(0);
   });
 
   it('engine on again: cranks for startTime, then runs', () => {

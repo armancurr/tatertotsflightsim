@@ -137,6 +137,7 @@ export interface AeroResult {
  * @param vb        velocity of the aircraft relative to the air, BODY frame (m/s)
  * @param omegaBody angular velocity, BODY frame (rad/s)
  * @param thrust    propeller thrust along the nose (N, may be negative when windmilling)
+ * @param wingHeightM height of the wing above the surface (m) for ground effect; Infinity = none
  */
 export function computeAero(
   vb: Vec3,
@@ -147,6 +148,7 @@ export function computeAero(
   ctl: SurfaceInputs,
   thrust: number,
   cfg: Config = CONFIG,
+  wingHeightM = Infinity,
 ): AeroResult {
   const ac = cfg.aircraft;
   const a = ac.aero;
@@ -170,6 +172,8 @@ export function computeAero(
   const disc = Math.PI * ac.geometry.propRadius * ac.geometry.propRadius;
   const posThrust = thrust > 0 ? thrust : 0;
   const qTail = qbar + (a.propwashTail * posThrust) / disc;
+  // Tail stability/damping terms ride the slipstream too (ratio capped; → 1 with no power).
+  const kTail = qbar > 0 ? Math.min(qTail / qbar, a.propwashTailMaxRatio) : 1;
 
   const lift = qbar * S * CL;
   const drag = qbar * S * CD;
@@ -217,14 +221,17 @@ export function computeAero(
     qbar * S * b * (a.clBeta * beta + a.clAileron * ctl.aileron - a.stallWingDrop * sf * beta - a.clP * loss * pLim * Math.tanh(pHat / pLim)) +
     qTail * S * b * a.clRudder * ctl.rudder +
     dampB * (a.clP * p + a.clR * r + a.stallWingDrop * sf * a.stallWingDropYawGain * r);
+  // Ground effect: less downwash at the tail near the ground → nose-down, growing with lift.
+  const hr = wingHeightM > 0 ? wingHeightM / (a.groundEffectScale * b) : 0;
+  const groundEffect = 1 / (1 + hr * hr);
   const Mpitch =
-    qbar * S * c * (a.cm0 + a.cmAlpha * Math.sin(alpha) + a.cmFlapsFull * f + a.stallPitchBreak * sf) +
+    qbar * S * c * (a.cm0 + (kTail - 1) * a.cm0Tail + kTail * (a.cmAlpha * Math.sin(alpha) - a.cmGroundEffect * CL * groundEffect) + a.cmFlapsFull * f + a.stallPitchBreak * sf) +
     qTail * S * c * (1 - a.stallTailBlanking * sf) * (a.cmElevator * ctl.elevator + a.cmTrim * ctl.elevatorTrim) +
-    dampC * (a.cmQ + a.cmAlphaDot) * q;
+    dampC * kTail * (a.cmQ + a.cmAlphaDot) * q;
   const Nyaw =
-    qbar * S * b * (a.cnBeta * beta + a.cnAileron * ctl.aileron - a.pFactor * (posThrust / W) * alpha) +
+    qbar * S * b * (kTail * a.cnBeta * beta + a.cnAileron * ctl.aileron - a.pFactor * (posThrust / W) * (alpha > 0 ? alpha : 0)) +
     qTail * S * b * a.cnRudder * ctl.rudder +
-    dampB * (a.cnP * p + a.cnR * r);
+    dampB * (a.cnP * p + kTail * a.cnR * r);
 
   const t = torqueFromLMN(Lroll, Mpitch, Nyaw);
   // Thrust acts at the prop hub: τ = hub × (0, 0, −T).

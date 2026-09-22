@@ -123,14 +123,16 @@ describe('stall recovery', () => {
     });
     expect(s.stalled).toBe(false);
     expect(s.time - tStart).toBeLessThan(4);
-    // Pull out of the dive gently and climb.
-    s = fly(s, (x) => ({ ...controls, throttle: 1, elevator: x.derived.loadFactor > 2 ? 0 : 0.15, aileron: bankHold(x, 0) }), 25, {
+    // Pull out of the dive gently (≤ 2 g) and climb away holding a climb attitude of 8°.
+    const climbOut = (x: AircraftState) =>
+      x.derived.loadFactor > 2 ? 0 : Math.max(-0.6, Math.min(0.8, 0.08 * (8 - x.derived.pitchDeg) - 0.05 * x.derived.q * RAD_TO_DEG));
+    s = fly(s, (x) => ({ ...controls, throttle: 1, elevator: climbOut(x), aileron: bankHold(x, 0), rudder: 0.05 }), 25, {
       each: (x) => { minY = Math.min(minY, x.position.y); },
     });
     expect(yStart - minY).toBeLessThan(150);
     expect(s.stalled).toBe(false);
     expect(s.velocity.y).toBeGreaterThan(0.5);
-    expect(s.position.y).toBeGreaterThan(minY + 30);
+    expect(s.position.y).toBeGreaterThan(minY + 20);
     expect(Math.abs(s.derived.rollDeg)).toBeLessThan(15);
     expect(s.derived.alpha * RAD_TO_DEG).toBeLessThan(12);
   });

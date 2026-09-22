@@ -105,6 +105,23 @@ describe('aircraft state', () => {
     expect(allFinite(big)).toBe(true);
   });
 
+  it('flaps run at the motor rate to the selected notch; the gear takes transitTime and only counts when locked', () => {
+    const { state, controls } = trimmed({ altitudeM: 1500, iasKt: 80 });
+    const notch = A.flaps.notchesDeg[3];
+    let s = fly(state, { ...controls, flapsNotch: 3 }, 1);
+    expect(s.flapsDeg).toBeCloseTo(A.flaps.rateDegPerSec * 1, 1);
+    s = fly(s, { ...controls, flapsNotch: 3 }, notch / A.flaps.rateDegPerSec);
+    expect(s.flapsDeg).toBe(notch);
+    let g = fly(state, { ...controls, gearDown: false }, A.gear.transitTime / 2);
+    expect(g.gearPos).toBeCloseTo(0.5, 2);
+    g = fly(g, { ...controls, gearDown: false }, A.gear.transitTime / 2 + 0.1);
+    expect(g.gearPos).toBe(0);
+    g = fly(g, { ...controls, gearDown: true }, A.gear.transitTime - 0.5);
+    expect(g.gearPos).toBeLessThan(0.999);
+    g = fly(g, { ...controls, gearDown: true }, 0.6);
+    expect(g.gearPos).toBe(1);
+  });
+
   it('simStateLabel layers stalled on top of airborne and reports crashed', () => {
     const { state } = trimmed();
     expect(simStateLabel(state)).toBe('airborne');

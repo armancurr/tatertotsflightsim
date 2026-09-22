@@ -44,11 +44,11 @@ export const CONFIG = {
 
     aero: {
       /** Lift coefficient at zero body angle of attack (wing incidence + camber). */
-      cl0: 0.34,
+      cl0: 0.4,
       /** Lift curve slope, per radian. */
       clAlpha: 4.9,
       /** Clean stall angle of attack (positive), degrees. */
-      stallAlphaDeg: 16,
+      stallAlphaDeg: 15.5,
       /** Negative stall angle of attack, degrees. */
       stallAlphaNegDeg: -13,
       /** Width of the rounded top of the lift curve just before the stall, degrees. */
@@ -66,7 +66,7 @@ export const CONFIG = {
       /** Extra zero-lift drag at full flaps (30°); scales ~linearly with deflection. */
       cdFlapsFull: 0.055,
       /** Extra lift coefficient at full flaps (30°); scales ~linearly with deflection. */
-      clFlapsFull: 0.85,
+      clFlapsFull: 0.75,
       /** Stall angle change at full flaps, degrees (flaps stall at a slightly lower AoA). */
       stallAlphaFlapsShiftDeg: -2,
       /** Pitch moment from full flaps (C172 pitches up a little as flaps come down). */
@@ -80,14 +80,19 @@ export const CONFIG = {
       cyRudder: -0.06,
 
       // Pitch (moments are per unit control in THIS sim's convention, see types.ts)
-      cm0: 0.025,
+      cm0: 0.05,
+      /**
+       * The tail's share of cm0 (its download from the stabiliser incidence). It rides the propeller
+       * slipstream, so adding power pitches the nose up like the real 172. cm0 is the power-off total.
+       */
+      cm0Tail: 0.08,
       cmAlpha: -0.89,
       cmQ: -12.4,
       cmAlphaDot: -5.2,
       /** Pitch moment coefficient at full up elevator (+1). */
-      cmElevator: 0.5,
+      cmElevator: 0.24,
       /** Pitch moment coefficient at full nose-up trim (+1). */
-      cmTrim: 0.12,
+      cmTrim: 0.15,
 
       // Roll
       clBeta: -0.089,
@@ -117,7 +122,7 @@ export const CONFIG = {
       /** Sideslip (deg, plus yaw-rate equivalent) at which the full stall damping loss / autorotation applies. */
       stallAsymmetryRefDeg: 4,
       /** The autorotative roll moment saturates above this non-dimensional roll rate p̂ = p·b/2V (bounded spin rate). */
-      stallAutorotationRateLimit: 0.25,
+      stallAutorotationRateLimit: 0.15,
       /** Past the stall the flaps keep this fraction of their lift increment (flapped stalls are gentler). */
       postStallFlapLiftFraction: 0.5,
       /** Past the stall, extra roll moment per radian of sideslip/yaw (uncoordinated stalls drop a wing). */
@@ -129,8 +134,21 @@ export const CONFIG = {
       /** Past the stall the tail sits in the stalled wing's wake: elevator/trim effectiveness drops by this fraction. */
       stallTailBlanking: 0.4,
       /** Extra dynamic pressure over the tail from the propeller slipstream, as a fraction of thrust/(½ρ·disc area). */
-      propwashTail: 0.45,
-      /** P-factor/torque: yaw moment coefficient (nose left) per unit (thrust/weight · alpha). */
+      propwashTail: 0.3,
+      /**
+       * The whole tail sits in the slipstream, so its stability and damping contributions (cmAlpha, cmQ,
+       * cnBeta, cnR) scale with the same tail dynamic-pressure ratio as the elevator/rudder, capped here.
+       * This keeps the AoA change per unit of elevator the same with and without power.
+       */
+      propwashTailMaxRatio: 2,
+      /**
+       * Ground effect: near the ground the wing's downwash at the tail is reduced, which pitches the nose
+       * down (more up-elevator needed to rotate and flare): ΔCm = −k·CL·φ, φ = 1/(1 + (h / (scale·span))²),
+       * h = wing height above the surface.
+       */
+      cmGroundEffect: 0.08,
+      groundEffectScale: 0.25,
+      /** P-factor/torque: yaw moment coefficient (nose left) per unit (thrust/weight · alpha), for alpha > 0 (rigged neutral in cruise). */
       pFactor: 0.08,
     },
 
@@ -294,6 +312,8 @@ export const CONFIG = {
       longitudinalSmoothing: 0.05,
       /** Past strutTravel the strut bottoms out: spring × this factor. */
       bottomOutStiffness: 10,
+      /** Strut damping when extending (rebound) = damper × this (oleo struts rebound slowly: no bounce, no nose kick). */
+      reboundDampingFactor: 3,
       /** Sliding friction of the tail skid/tailcone on a gentle scrape. */
       tailSkidFriction: 0.4,
     },
@@ -313,6 +333,8 @@ export const CONFIG = {
       structuralFailureG: 6.5,
       /** Negative load factor beyond which the airframe fails (crash). */
       structuralFailureNegG: -3,
+      /** Flutter/overspeed: IAS beyond vneKt × this is a structural failure (≈ design dive speed + margin). */
+      overspeedFailureFactor: 1.3,
       /** Safety net: body angular rates are clamped to this magnitude, rad/s (≈ 460°/s). */
       maxAngularRate: 8,
     },
@@ -340,7 +362,7 @@ export const CONFIG = {
       /** Touching water at more than this ground speed (or at all with the engine running) is a crash. */
       ditchSpeedKt: 0,
       /** Speed at which impact with a structural point is a crash rather than a scrape. */
-      scrapeSpeedMs: 1.5,
+      scrapeSpeedMs: 3,
       /** A structural point (or the gear) hitting the surface faster than this (m/s) is "Hit terrain". */
       terrainImpactMs: 8,
       /** A structural point found deeper than this below the surface flew into it ("Hit terrain"), m. */
@@ -360,7 +382,7 @@ export const CONFIG = {
        * throttle (initial guess — the trim solver finds the exact value), aim point past the threshold (m).
        * height ≈ tan(3°) × (distance + aimPointM), so the spawn sits on a 3° glide to the aim point.
        */
-      approach: { distance: 4200, height: 236, speedKt: 72, flapsNotch: 2, throttle: 0.42, aimPointM: 300 },
+      approach: { distance: 4200, height: 236, speedKt: 72, flapsNotch: 2, throttle: 0.5, aimPointM: 300 },
     },
   },
 
@@ -494,19 +516,20 @@ export const CONFIG = {
       { name: 'Golden hour', elevationDeg: 9, azimuthDeg: 255 },
       { name: 'Dawn', elevationDeg: 4, azimuthDeg: 95 },
     ],
-    exposure: 0.62,
+    /** Tone-mapping exposure (scene radiance → display). */
+    exposure: 2.2,
     /** Top-of-atmosphere sun illuminance in three.js light units; the sun light, sky and haze all scale with it. */
     sunIntensity: 3.2,
     /** Sunlight colour above the atmosphere (linear RGB) — effectively the camera white balance. */
-    sunColor: [1.0, 1.0, 1.0] as [number, number, number],
+    sunColor: [0.92, 0.98, 1.08] as [number, number, number],
     /** Multiplier on scene.environment (the PMREM sky) = the sky-ambient light on PBR materials. */
     skyAmbientIntensity: 0.9,
     /**
      * Aerial perspective = the aerosol (Mie) haze of the sky model: extinction at sea level (per metre)
      * and its height falloff (per metre, 1/scale height). Rayleigh (blue) scattering is added on top.
      */
-    fogDensity: 0.00005,
-    fogHeightFalloff: 0.0006,
+    fogDensity: 0.00003,
+    fogHeightFalloff: 0.0007,
     /** Distance at which things are fully hazed out (m) — also the terrain draw distance. */
     visibility: 60000,
     /** Multiplier on Earth's Rayleigh scattering (1 = standard atmosphere). */
@@ -516,7 +539,7 @@ export const CONFIG = {
     /** Aerosol phase-function asymmetry: how tight/bright the glow around the sun is. */
     mieDirectionalG: 0.8,
     /** Isotropic multiple-scattering approximation strength (brightens/whitens the horizon). */
-    multiScatter: 0.5,
+    multiScatter: 0.4,
     /** Legacy Preetham parameters (unused by the physical sky; kept for compatibility). */
     turbidity: 3.2,
     rayleigh: 1.4,
@@ -524,7 +547,25 @@ export const CONFIG = {
     shadowMapSize: 2048,
     /** Half-size of the sun shadow frustum around the aircraft, m. */
     shadowExtent: 160,
-    clouds: { coverage: 0.42, baseAltitude: 1500, thickness: 900, count: 220, areaRadius: 38000 },
+    /** Cumulus field: `count` clouds in a square tile of half-size `areaRadius` that wraps around the camera. */
+    clouds: { coverage: 0.42, baseAltitude: 1500, thickness: 900, count: 420, areaRadius: 38000 },
+    /** High thin cirrus wisps drawn in the sky shader. */
+    cirrus: { altitude: 9000, coverage: 0.45, opacity: 0.55, scale: 1 / 45000 },
+    /** Apparent sun radius (the real sun is 0.2666°). */
+    sunAngularRadiusDeg: 0.2666,
+    /** Re-bake the PMREM environment when the camera altitude changes by more than this (m). */
+    envRebakeAltitudeStep: 600,
+    /**
+     * Shadow depth bias along the light ray and normal-offset bias, both in METRES (converted to the
+     * shadow camera's depth range; the sign is flipped automatically for a reversed depth buffer).
+     */
+    shadowBias: 0.06,
+    shadowNormalBias: 0.04,
+    /** Distance from the focus to the shadow camera toward the sun, and the total depth it covers (m). */
+    shadowLightDistance: 800,
+    shadowDepthRange: 4000,
+    /** PCF filter radius in shadow-map texels (soft edges). */
+    shadowRadius: 2.5,
   },
 
   // ─── Rendering quality (owned by src/render) ────────────────────────────────
@@ -535,6 +576,17 @@ export const CONFIG = {
     /** Dynamic resolution: scale pixel ratio down when the frame rate drops below target. */
     targetFps: 60,
     minPixelRatio: 0.75,
+    dynamicResolution: true,
+    /** Linear-HDR render target (RGBA16F + 32-bit float reversed depth) + output pass. */
+    hdr: true,
+    /** MSAA samples of the HDR target. */
+    msaaSamples: 4,
+    /** 'agx' | 'aces' | 'neutral' — Khronos PBR Neutral keeps sky/sunset hues (ACES bleaches the golden-hour glow, AgX is flat). */
+    toneMapping: 'neutral',
+    /** Output grade: corner darkening 0..1 and saturation (1 = unchanged). */
+    vignette: 0.16,
+    saturation: 1.0,
+    lensFlare: { enabled: true, glare: 1.0, ghosts: 0.015, starburst: 0.06 },
   },
 
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────

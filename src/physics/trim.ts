@@ -7,7 +7,7 @@
 import { CONFIG, KT_TO_MS, type Config } from '../config';
 import { airDensity } from './atmosphere';
 import { computeAero, liftCoefficient } from './aero';
-import { propThrust, throttleForPower } from './engine';
+import { powerTarget, propThrust, throttleForPower } from './engine';
 import { quatFromEuler, worldToBody } from './frames';
 
 const DEG = Math.PI / 180;
@@ -124,7 +124,8 @@ export function solveTrim(req: TrimRequest, cfg: Config = CONFIG): TrimResult {
   const throttleRaw = throttleForPower(powerRaw, rho, cfg);
   const throttle = Math.max(0, Math.min(1, throttleRaw));
   const elevatorTrim = Math.max(-1, Math.min(1, trimRaw));
-  const power = Math.max(0, powerRaw);
+  // Never hand back more power than the engine can make here (an infeasible request is flagged instead).
+  const power = Math.max(0, Math.min(powerRaw, powerTarget(1, rho, cfg)));
   return {
     alpha,
     pitchDeg: (gamma + alpha) / DEG,

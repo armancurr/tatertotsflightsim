@@ -4,8 +4,30 @@
  * Pure and deterministic: step() never mutates its inputs and never touches
  * the renderer or the DOM.
  *
- * ─── Calibration results (measured by tests/physics/realism.test.ts & stall.test.ts) ───
- *   CALIBRATION_TABLE_PLACEHOLDER
+ * ─── Calibration results (1100 kg, ISA, no wind; measured with the fixed 1/120 s step) ───
+ * Checked by tests/physics/realism.test.ts, stall.test.ts, attitude.test.ts.
+ *
+ *   Quantity                                   Measured                              C172RG POH / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   CLmax clean / full flaps (30°)             1.62 @ 15.5° / 2.20 @ 13.5°           1.5–1.7 clean
+ *   Stall, clean, idle (Vs1)                   49.5 KIAS                             48 KIAS (44–54)
+ *   Stall, full flaps, idle (Vs0)              42.4 KIAS                             40 KIAS (36–47)
+ *   Full-throttle ground roll to Vr 55 KIAS    230 m (16.2 s)                        200–400 m
+ *   Rotate at Vr, 0.7 yoke → lift-off          5.9 °/s rotation, 60.6 KIAS, 9.4° pitch, 299 m   3–6 °/s, 8–10°
+ *   Yank: yoke +1 for 1 s then +0.3            ≤ 9.7° pitch on the wheels, airborne in 1.3 s, no tail strike
+ *   Best-rate climb, Vy 75 KIAS, sea level     679 fpm, 11° pitch                    550–950 fpm
+ *   75 % power cruise, 8000 ft, gear up        127 KTAS (113 KIAS), 2630 rpm         120–140 KTAS
+ *   Top speed, full power, sea level, gear up  138 KTAS                              < 160 kt
+ *   Idle glide 70 KIAS, gear up / gear down    9.6 : 1 / 8.6 : 1                     8–10 : 1
+ *   Hands-off trimmed cruise, 110 KIAS         4° bank upset → 1.7° in 60 s (→ 0.3° in 180 s), |Δalt| < 3 m
+ *   Max roll rate, full aileron, 90 KIAS       44 °/s                                30–90 °/s
+ *   Approach 72 KIAS, flaps 20, 3° glide       throttle 0.51, trim −0.53, pitch −4.3° (holds hands-off)
+ *   Approach + simple flare                    "smooth" −175 fpm, 60 KIAS, mains first, 582 m past threshold
+ *   Braking rollout from 55 kt, full flaps     163 m                                 < 500 m
+ *   Coordinated full-aft stall at idle         breaks straight (bank ≤ 1°), nose +21° → −9°, ~40 m lost
+ *   Full-aft stall with full rudder            wing drops → spin/spiral (≤ 270 °/s roll)
+ *   Full aft yoke at 110 / 125 KIAS            3.6 g / 4.4 g; > 6.5 g or > 1.3·Vne = structural failure
+ *   step() cost (M2 Max, node)                 ~1.1 µs airborne, ~2.7 µs on the ground   ≪ 0.1 ms
  */
 import { CONFIG, MS_TO_FPM, MS_TO_KT, type Config } from '../config';
 import type {
@@ -289,7 +311,7 @@ function crashedState(
     phase: 'crashed',
     stalled: false,
     crash,
-    derived: computeDerived(position, ZERO, s.orientation, ZERO, ZERO, 0, env, cfg),
+    derived: computeDerived(position, ZERO, s.orientation, ZERO, ZERO, 1, env, cfg),
   };
 }
 
@@ -328,7 +350,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   const engine = stepEngine(state.engine, c, dt, rho, Math.max(0, ad.u), iasKt, cfg);
 
   // ── Airframe forces (body) ──
-  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg);
+  // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
+  const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
+  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight);
   const fAir = bodyToWorld(q, { x: aero.fx, y: aero.fy, z: aero.fz });
 
   // ── Ground, structure, water, obstacles ──
@@ -415,6 +439,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   const loadFactor = (aero.fy + gBody.y) / (m * g);
   if (nAero > ac.limits.structuralFailureG || nAero < ac.limits.structuralFailureNegG) {
     return crashedState(state, 'Structural failure — over-G', time, env, cfg, { flapsDeg, gearPos });
+  }
+  if (iasKt > ac.limits.vneKt * ac.limits.overspeedFailureFactor) {
+    return crashedState(state, 'Structural failure — overspeed', time, env, cfg, { flapsDeg, gearPos });
   }
 
   const derived = computeDerived(position, velocity, orientation, angularVelocity, wind, loadFactor, env, cfg);

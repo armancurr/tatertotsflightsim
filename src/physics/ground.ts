@@ -160,7 +160,8 @@ export function groundContacts(inp: GroundInput, env: Environment, cfg: Config =
       const vz = vel.z + (w.x * r.y - w.y * r.x);
       const vn = vx * n.x + vy * n.y + vz * n.z;
       const k = i === 0 ? gd.springNose : gd.springMain;
-      const c = i === 0 ? gd.damperNose : gd.damperMain;
+      // Oleo struts damp extension (rebound) much harder than compression: no spring "kick".
+      const c = (i === 0 ? gd.damperNose : gd.damperMain) * (vn > 0 ? gd.reboundDampingFactor : 1);
       let Fn = k * d - c * vn;
       if (d > geo.strutTravel) Fn += k * gd.bottomOutStiffness * (d - geo.strutTravel) - c * vn;
       if (Fn <= 0) continue;

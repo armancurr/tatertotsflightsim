@@ -103,6 +103,20 @@ describe('collision detection', () => {
     expect(maxG).toBeGreaterThan(CONFIG.aircraft.limits.gLimitPos);
   });
 
+  it('diving far past Vne is a crash: "Structural failure — overspeed"', () => {
+    const { state, controls } = trimmed({ altitudeM: 4000, iasKt: 150, gearDown: false });
+    const dive = { ...state, orientation: quatFromEuler(0, -80, 0), velocity: { x: 0, y: -60, z: -40 } };
+    let maxKias = 0;
+    const s = fly(dive, { ...controls, throttle: 1, elevator: 0 }, 60, {
+      until: (x) => x.phase === 'crashed',
+      each: (x) => { if (x.phase !== 'crashed') maxKias = Math.max(maxKias, x.derived.ias * 1.943844); },
+    });
+    expect(s.phase).toBe('crashed');
+    expect(s.crash?.reason).toMatch(/overspeed/i);
+    expect(maxKias).toBeGreaterThan(CONFIG.aircraft.limits.vneKt);
+    expect(maxKias).toBeLessThan(CONFIG.aircraft.limits.vneKt * 1.4);
+  });
+
   it('a normal steep turn (2 g) does not break the airframe', () => {
     const { state, controls } = trimmed({ altitudeM: 2000, iasKt: 100, gearDown: false });
     let maxG = 0;
@@ -116,7 +130,7 @@ describe('collision detection', () => {
     expect(maxG).toBeGreaterThan(1.7);
   });
 
-  it('a gentle tail scrape skids; a hard one is a "Tail strike"', () => {
+  it('a tail scrape (even a firm 2.5 m/s one) skids on the tail tie-down; only a violent > 3 m/s impact is a "Tail strike"', () => {
     const base = createInitialState();
     const tailDown = (vs: number): AircraftState => {
       const q = quatFromEuler(0, 14, 0);
@@ -126,7 +140,10 @@ describe('collision detection', () => {
     };
     const gentle = fly(tailDown(-0.4), { ...defaultControls(), throttle: 0.3 }, 3, { until: (s) => s.phase === 'crashed' });
     expect(gentle.phase).not.toBe('crashed');
-    const hard = fly(tailDown(-2.5), { ...defaultControls(), throttle: 0.3 }, 1, { until: (s) => s.phase === 'crashed' });
+    const firm = fly(tailDown(-2.5), { ...defaultControls(), throttle: 0.3 }, 3, { until: (s) => s.phase === 'crashed' });
+    expect(firm.phase).not.toBe('crashed');
+    expect(firm.wheelContact.some(Boolean)).toBe(true); // it settles back onto the wheels
+    const hard = fly(tailDown(-4.5), { ...defaultControls(), throttle: 0.3 }, 1, { until: (s) => s.phase === 'crashed' });
     expect(hard.phase).toBe('crashed');
     expect(hard.crash?.reason).toBe('Tail strike');
   });

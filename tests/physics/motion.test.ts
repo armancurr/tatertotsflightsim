@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { CONFIG, MS_TO_KT } from '../../src/config';
-import { createInitialState, defaultControls, createTrimmedState } from '../../src/physics';
+import { createInitialState, defaultControls, createTrimmedState, FLAT_ENV } from '../../src/physics';
 import { toRunwayCoords } from '../../src/world/runway';
 import { fly, iasKt, trimmed, bankHold, altitudeHold, DT } from './helpers';
 import { qIdentity } from '../../src/math/quat';
@@ -137,3 +137,28 @@ describe('altitude', () => {
     expect(s.derived.tas * MS_TO_KT).toBeGreaterThan(90);
   });
 });
+
+describe('wind', () => {
+  it('flies relative to the air: a headwind cuts the ground speed, a crosswind makes it drift', () => {
+    const head = { ...FLAT_ENV, wind: () => ({ x: 0, y: 0, z: 10 }) }; // air moving south, aircraft heading north
+    const { state, controls } = createTrimmedState({ altitudeM: 1000, iasKt: 90 }, head);
+    const s = fly(state, (x) => ({ ...controls, aileron: bankHold(x, 0) }), 10, { env: head });
+    expect(Math.abs(s.derived.tas - state.derived.tas)).toBeLessThan(1.5);
+    expect(s.derived.groundSpeed).toBeCloseTo(s.derived.tas - 10, 0);
+    expect(Math.abs(s.position.y - 1000)).toBeLessThan(10);
+
+    const cross = { ...FLAT_ENV, wind: () => ({ x: 8, y: 0, z: 0 }) }; // blowing toward the east
+    const c = createTrimmedState({ altitudeM: 1000, iasKt: 90 }, cross);
+    const d = fly(c.state, (x) => ({ ...c.controls, aileron: bankHold(x, 0) }), 20, { env: cross });
+    expect(d.position.x).toBeGreaterThan(100); // drifted downwind
+    expect(Math.abs(d.derived.beta * 180 / Math.PI)).toBeLessThan(2); // but flies straight through the air mass
+  });
+
+  it('a crosswind on the ground makes it weathervane into the wind unless held with rudder', () => {
+    const env = { ...FLAT_ENV, wind: () => ({ x: -9, y: 0, z: 0 }) }; // from the east (right), 17 kt
+    const s = fly(createInitialState(env), { ...defaultControls(), throttle: 1 }, 12, { env });
+    expect(s.derived.headingDeg).toBeGreaterThan(0.5);
+    expect(s.derived.headingDeg).toBeLessThan(90);
+  });
+});
+
