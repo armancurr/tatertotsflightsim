@@ -559,13 +559,13 @@ export const CONFIG = {
      * Shadow depth bias along the light ray and normal-offset bias, both in METRES (converted to the
      * shadow camera's depth range; the sign is flipped automatically for a reversed depth buffer).
      */
-    shadowBias: 0.06,
-    shadowNormalBias: 0.04,
+    shadowBias: 0.08,
+    shadowNormalBias: 0.14,
     /** Distance from the focus to the shadow camera toward the sun, and the total depth it covers (m). */
     shadowLightDistance: 800,
     shadowDepthRange: 4000,
     /** PCF filter radius in shadow-map texels (soft edges). */
-    shadowRadius: 2.5,
+    shadowRadius: 2,
   },
 
   // ─── Rendering quality (owned by src/render) ────────────────────────────────
@@ -581,8 +581,11 @@ export const CONFIG = {
     hdr: true,
     /** MSAA samples of the HDR target. */
     msaaSamples: 4,
-    /** 'agx' | 'aces' | 'neutral' — Khronos PBR Neutral keeps sky/sunset hues (ACES bleaches the golden-hour glow, AgX is flat). */
-    toneMapping: 'neutral',
+    /**
+     * 'filmic' (Filmic Neutral: Khronos Neutral's hue-preserving shoulder without its shadow-crushing toe) |
+     * 'neutral' | 'aces' | 'agx'. ACES bleaches the golden-hour glow; AgX is flat; Neutral crushes shadows.
+     */
+    toneMapping: 'filmic',
     /** Output grade: corner darkening 0..1 and saturation (1 = unchanged). */
     vignette: 0.16,
     saturation: 1.0,

@@ -46,7 +46,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
 
   // ── World ─────────────────────────────────────────────────────────────────
   const env = createEnvironment();
-  const atmosphere = createAtmosphere(renderer, scene);
+  const atmosphere = createAtmosphere(renderer, scene, { groundHeight: (x: number, z: number) => env.groundHeight(x, z) });
   const terrain = createTerrain(renderer, scene);
   const water = createWater(scene);
 

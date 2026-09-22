@@ -72,7 +72,8 @@ export function wrapCoord(v: number, center: number, tile: number): number {
   return center + (((d % tile) + tile) % tile) - tile / 2;
 }
 
-function maxGroundUnder(g: (x: number, z: number) => number, x: number, z: number, r: number): number {
+/** Highest terrain under a cloud footprint (centre + 8 points on its rim). */
+export function maxGroundUnder(g: (x: number, z: number) => number, x: number, z: number, r: number): number {
   let m = g(x, z);
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
@@ -97,9 +98,9 @@ export function generateCloudField(o: CloudLayoutOptions): CloudField {
     attempts++;
     const x = (rng() * 2 - 1) * o.areaRadius;
     const z = (rng() * 2 - 1) * o.areaRadius;
-    // Clumping: accept where a low-frequency "convection" field is high.
-    const n = fbm2(x / 16000 + 50, z / 16000 + 50, 3, o.seed);
-    if (rng() > smoothstep(lo, hi, n) && attempts < count * 300) continue;
+    // Clumping: favour a low-frequency "convection" field, but never leave big holes.
+    const n = fbm2(x / 10000 + 50, z / 10000 + 50, 3, o.seed);
+    if (rng() > 0.3 + 0.7 * smoothstep(lo, hi, n) && attempts < count * 300) continue;
     const u = rng();
     const radius = Math.min(1400, (260 + 740 * Math.pow(u, 1.8)) * sizeScale);
     // keep clouds from merging into one blob
@@ -119,22 +120,23 @@ export function generateCloudField(o: CloudLayoutOptions): CloudField {
     if (o.groundHeight) base = Math.max(base, maxGroundUnder(o.groundHeight, x, z, radius) + clearance);
 
     const firstPuff = puffList.length / PUFF_STRIDE;
-    const nPuffs = Math.min(36, Math.max(10, Math.round(6 + radius / 40)));
-    const nBase = Math.max(4, Math.round(nPuffs * 0.35));
+    const nPuffs = Math.min(40, Math.max(12, Math.round(8 + radius / 32)));
+    const nBase = Math.max(4, Math.round(nPuffs * 0.3));
     const maxR = height / 1.2;
     for (let k = 0; k < nPuffs; k++) {
       let r: number, y: number, rho: number;
       if (k < nBase) {
         // broad, flat-bottomed base layer
-        r = Math.min(maxR, radius * (0.34 + 0.12 * rng()));
+        r = Math.min(maxR, radius * (0.28 + 0.1 * rng()));
         y = base + 0.6 * r;
         rho = Math.sqrt(rng()) * radius * 0.72;
       } else {
         // cauliflower dome: smaller puffs toward the top, pulled toward the centre
         const yf = k === nBase ? 0.35 : 0.25 + 0.75 * Math.pow(rng(), 0.9);
-        r = Math.min(maxR, Math.min(radius, height * 1.3) * (0.42 - 0.2 * yf) * (0.85 + 0.3 * rng()));
+        r = Math.min(maxR, Math.min(radius, height * 1.3) * (0.36 - 0.17 * yf) * (0.8 + 0.4 * rng()));
         y = base + 0.6 * r + yf * (height - 1.2 * r);
-        rho = rng() * radius * 0.78 * Math.sqrt(Math.max(0, 1 - yf * yf));
+        // stay attached to the body: the dome narrows with height
+        rho = rng() * radius * 0.62 * Math.sqrt(Math.max(0, 1 - yf * yf));
       }
       rho = Math.min(rho, radius - 1e-3);
       const a = rng() * Math.PI * 2;
@@ -165,9 +167,11 @@ export function computePuffSunOcclusion(f: CloudField, sunDir: Vec3): void {
     const end = c.firstPuff + c.puffCount;
     for (let i = c.firstPuff; i < end; i++) {
       const oi = i * PUFF_STRIDE;
-      const ox = p[oi + P_DX];
-      const oy = p[oi + P_Y];
-      const oz = p[oi + P_DZ];
+      // light enters the puff through its sun-facing surface, not its centre
+      const lift = p[oi + P_R] * 0.7;
+      const ox = p[oi + P_DX] + sunDir.x * lift;
+      const oy = p[oi + P_Y] + sunDir.y * lift;
+      const oz = p[oi + P_DZ] + sunDir.z * lift;
       let len = 0;
       for (let j = c.firstPuff; j < end; j++) {
         if (j === i) continue;

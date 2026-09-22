@@ -86,7 +86,7 @@ const BANK_H = 1.8; // river bank height above the water
 const BANK_W = 14; // width of the bank rise beyond the water's edge
 const VALLEY_INNER = 70; // flat valley floor half-width around the valley centreline
 const VALLEY_W_PLAINS = 380;
-const VALLEY_W_MOUNTAINS = 2300;
+const VALLEY_W_MOUNTAINS = 3200;
 const LAKE_RIM = 320;
 const ROAD_SHOULDER = 28;
 
@@ -147,14 +147,30 @@ export function createHeightfield(cfg: Config = CONFIG, layout?: WorldLayout): H
     out.valleyT = 1;
     if (valleyIdx.query(x, z, qv)) {
       const lv = qv.v[0];
-      const valleyW = VALLEY_W_PLAINS + (VALLEY_W_MOUNTAINS - VALLEY_W_PLAINS) * Math.max(rs.footMask, rs.rangeMask);
-      const t = smooth(VALLEY_INNER, VALLEY_INNER + valleyW, qv.d);
       const floor = lv + BANK_H;
-      const hv = floor + (h - floor) * t;
-      let raise = (h - lv) / 3;
+      // wide in the mountains, and never steeper than the height it has to blend away allows
+      let valleyW = VALLEY_W_PLAINS + (VALLEY_W_MOUNTAINS - VALLEY_W_PLAINS) * Math.max(rs.footMask, rs.rangeMask);
+      const need = (h - floor) * 1.5;
+      if (need > valleyW) valleyW = need < VALLEY_W_MOUNTAINS ? need : VALLEY_W_MOUNTAINS;
+      const t = smooth(VALLEY_INNER, VALLEY_INNER + valleyW, qv.d);
+      let hv = floor + (h - floor) * t;
+      // natural levee: the flood plain beside the channel never lies below the water
+      const levee = floor - Math.max(0, qv.d - VALLEY_INNER) * 0.011;
+      if (levee > hv) hv = levee;
+      // On land the valley floor is pulled to the river's bank level (building low natural
+      // levees where the land lies below it); at sea nothing is raised.
+      let raise = rs.coast / 150;
       raise = raise < 0 ? 0 : raise > 1 ? 1 : raise;
       h += raise * (hv - h);
       out.valleyT = t;
+    }
+    // Levee from the channel's own level: the ground right beside the water is always above it.
+    if (rs.coast > 0 && channelIdx.query(x, z, qc)) {
+      const lvF = qc.v[0];
+      const e = qc.d - qc.v[1] - BANK_W;
+      const levee = lvF + BANK_H - Math.max(0, e) * 0.011 - Math.max(0, e - 45) * 0.5;
+      const raise = rs.coast < 150 ? rs.coast / 150 : 1;
+      if (levee > h) h += (levee - h) * raise;
     }
     // Lakes
     out.lakeIndex = -1;

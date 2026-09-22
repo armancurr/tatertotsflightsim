@@ -222,8 +222,9 @@ export function createRegional(cfg: Config = CONFIG): Regional {
       const wx = x + 1000 * nWarp(x / 11000, z / 11000);
       const wz = z + 1000 * nWarp(x / 11000 + 13.7, z / 11000 - 4.1);
       const massif = 0.72 + 0.28 * fbm(nMassif, x / 17000, z / 17000, 2);
-      const m = massif * (1350 + slopeLimitedFbm(nMtn, wx, wz, 1300, 11000, 8, 0.5, 0.66));
-      range = rangeMask * farAmp * smaxPos(m, 150) * (mountainHeight / 2780);
+      // two ridged octaves: arêtes and pointed peaks; the rest eroded detail
+      const m = massif * (1400 + slopeLimitedFbm(nMtn, wx, wz, 1000, 11000, 8, 0.5, 0.65, 2, 0.08));
+      range = rangeMask * farAmp * smaxPos(m, 150) * (mountainHeight / 2500);
     }
 
     out.h = plains + foot + range;

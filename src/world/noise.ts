@@ -278,9 +278,14 @@ const _sd: NoiseDeriv = { v: 0, dx: 0, dy: 0 };
 /**
  * Slope-limited fBm, in world units (metres in, metres out). Each octave is
  * damped by the world-space slope already accumulated by the coarser octaves
- * (factor 1 / (1 + (|∇h| / maxSlope)²)), so fine detail fades out on steep
- * faces and gathers on ridges, shoulders and valley floors — the look of
- * eroded mountains — while the slope stays near `maxSlope` (no cliffs).
+ * (factor 1 / (1 + (S / maxSlope)²), S = Σ |octave gradient|), so fine detail
+ * fades out on steep faces and gathers on ridges, shoulders and valley floors —
+ * the look of eroded mountains — while the slope stays near `maxSlope` (no cliffs).
+ *
+ * The first `ridgeOctaves` octaves are ridged (1 − 2·|n|, crest softened over
+ * `ridgeSoftness` of a wavelength): sharp arêtes and pointed peaks with smooth
+ * troughs. S sums per-octave slope bounds (gradient magnitudes), which are
+ * continuous everywhere, so the damping never jumps.
  *
  * @param amp0 amplitude of the first octave (m)
  * @param wavelength wavelength of the first octave (m)
@@ -295,34 +300,37 @@ export function slopeLimitedFbm(
   octaves: number,
   gain = 0.5,
   maxSlope = 0.8,
+  ridgeOctaves = 0,
+  ridgeSoftness = 0.03,
 ): number {
   let h = 0;
   let amp = amp0;
   let f = 1 / wavelength;
-  let gx = 0;
-  let gz = 0;
+  let S = 0;
   let px = x;
   let pz = z;
-  let c = 1; // rotation of this octave's frame relative to the world
-  let s = 0;
   const inv = 1 / (maxSlope * maxSlope);
+  const e2 = ridgeSoftness * ridgeSoftness;
   for (let o = 0; o < octaves; o++) {
     simplex2Deriv(noise, px * f, pz * f, _sd);
-    const k2 = (gx * gx + gz * gz) * inv;
-    const k = 1 / (1 + k2);
-    const a = amp * k;
-    h += _sd.v * a;
-    // octave gradient back to world axes (transpose of the accumulated rotation)
-    gx += (c * _sd.dx + s * _sd.dy) * f * a;
-    gz += (-s * _sd.dx + c * _sd.dy) * f * a;
+    let v = _sd.v;
+    let g = Math.sqrt(_sd.dx * _sd.dx + _sd.dy * _sd.dy);
+    if (o < ridgeOctaves) {
+      // soft |n|: sqrt(n² + ε²) − ε ; ridge value 1 − 2·|n|. Its slope bound 2·|∇n| (not the
+      // instantaneous slope, which vanishes on the crest) feeds the damping, so crests stay clean.
+      const sa = Math.sqrt(v * v + e2);
+      v = 1 - 2 * (sa - ridgeSoftness);
+      g *= 2;
+    }
+    const k2 = S * S * inv;
+    const a = amp / (1 + k2);
+    h += v * a;
+    S += g * f * a;
     amp *= gain;
     f *= 2;
     const nx = RC * px - RS * pz + 1731.3;
     pz = RS * px + RC * pz - 571.9;
     px = nx;
-    const nc = RC * c - RS * s;
-    s = RS * c + RC * s;
-    c = nc;
   }
   return h;
 }

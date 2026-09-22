@@ -85,13 +85,21 @@ instruments → renderer. The renderer never writes physics state.
 
 ## Waves
 
-| Wave | Agents (≤5, file-disjoint) | Status |
+Up to 10 Opus sub-agents at once. Wave-1 agents work in the main tree; later agents each get
+their own git worktree (`.worktrees/<name>`, branch `wt/<name>`, node_modules symlinked, own
+Vite port 81xx) and commit there; the orchestrator merges each branch into `main`.
+
+| Wave | Agents | Status |
 | --- | --- | --- |
-| 0 | Orchestrator: scaffold, types, config, math/frames, shot tool, plan | ✅ |
-| 1 | PHYSICS · INPUT+CAMERA+LOOP · WORLD-TERRAIN · ATMOSPHERE · AIRCRAFT-MODEL | ⏳ |
-| 2 | INSTRUMENTS+HUD · AIRPORT · VEGETATION+TOWNS+ROADS · AUDIO+FX · (orchestrator: integration app.ts) | |
-| 3 | Orchestrator play-tests in Chrome → fix agents; performance pass | |
+| 0 | Orchestrator: scaffold, types, config, math/frames, runway, shot tool, plan, window.sim, app wiring, interim flyable build | ✅ |
+| 1 (main tree) | PHYSICS · INPUT+CAMERA+LOOP ✅ · WORLD-TERRAIN · ATMOSPHERE · AIRCRAFT-MODEL | ⏳ |
+| 2 (worktrees) | hud (8101) · audiofx (8102) · qatests — fuzz/functional/e2e (8103) · airport (8104) · trees (8105) · towns+roads (8106) | ⏳ |
+| 3 | Orchestrator: merge + integrate app.ts, play-test in Chrome → fix agents; performance pass | |
 | 4 | Visual QA at 1440 & 1024, docs, final regression | |
+
+Testing layers (user requirement): unit · fuzz/property (fast-check) · functional (scripted
+flights in pure physics) · e2e (Vite + headless Chrome driving `window.sim` and the keyboard) —
+all inside `npm test`.
 
 ## Rules for every sub-agent
 

@@ -391,10 +391,18 @@ export function createLayout(cfg: Config = CONFIG, regional: Regional = createRe
   const valley = resample(valleyDense, 200);
   const vS = cumulative(valley);
   // Levels: follow a "valley floor" estimate, then force non-increasing downstream.
-  const vLevels = valley.map((p) => {
-    regional.sample(p.x, p.z, rs);
-    return rs.plains + 0.4 * rs.foot + 0.25 * rs.range - 2;
+  // The floor estimate is the lowest ground across a ±300 m band, so the river sits in the
+  // bottom of its valley and never runs above the land beside it.
+  const vNrm = normals(valley);
+  const vRaw = valley.map((p, i) => {
+    let lo = Infinity;
+    for (const off of [-300, -150, 0, 150, 300]) {
+      regional.sample(p.x + vNrm[i].x * off, p.z + vNrm[i].z * off, rs);
+      lo = Math.min(lo, rs.plains + 0.4 * rs.foot + 0.25 * rs.range - 2);
+    }
+    return lo;
   });
+  const vLevels = vRaw.slice();
   // find the coast crossing (first point in the sea)
   let seaIdx = valley.length - 1;
   for (let i = 0; i < valley.length; i++) {
@@ -412,7 +420,7 @@ export function createLayout(cfg: Config = CONFIG, regional: Regional = createRe
     return a / n;
   });
   for (let i = 0; i < valley.length; i++) {
-    let v = sm[i];
+    let v = Math.min(sm[i], vRaw[i]);
     if (i > 0) v = Math.min(v, sm[i - 1] - 0.0004 * (vS[i] - vS[i - 1]));
     // estuary: close to the sea the river is at sea level
     const toSea = vS[seaIdx] - vS[i];
@@ -423,14 +431,23 @@ export function createLayout(cfg: Config = CONFIG, regional: Regional = createRe
   for (let i = 1; i < valley.length; i++) sm[i] = Math.min(sm[i], sm[i - 1]);
   const valleyLevels = sm;
 
-  // Meandering channel.
+  // Meandering channel. Rivers meander on flat flood plains only: the amplitude shrinks where
+  // the valley floor is steep (otherwise a bend would carry the water past lower ground).
   const vN = normals(valleyDense);
   const vDS = cumulative(valleyDense);
   const totalV = vDS[vDS.length - 1];
+  const gradAt = (s: number): number => {
+    let j = 1;
+    while (j < vS.length - 1 && vS[j] < s) j++;
+    const a = Math.max(1, j - 2);
+    const b = Math.min(vS.length - 1, j + 2);
+    return Math.abs(valleyLevels[a - 1] - valleyLevels[b]) / Math.max(1, vS[b] - vS[a - 1]);
+  };
   const meander: XZ[] = valleyDense.map((p, i) => {
     const s = vDS[i];
     const north = -p.z;
-    const amp = lerp(110, 32, smooth(3000, 10000, north)) * smooth(0, 1500, s) * smooth(0, 1800, totalV - s);
+    const flat = 1 - smooth(0.0012, 0.006, gradAt(s));
+    const amp = lerp(110, 32, smooth(3000, 10000, north)) * (0.2 + 0.8 * flat) * smooth(0, 1500, s) * smooth(0, 1800, totalV - s);
     const lambda = lerp(330, 150, smooth(3000, 10000, north));
     const off = amp * Math.sin(s / lambda + 2.2 * nWig(s / 4000, 0.5));
     return { x: p.x + vN[i].x * off, z: p.z + vN[i].z * off };

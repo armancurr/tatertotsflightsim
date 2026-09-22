@@ -57,6 +57,20 @@ describe('cloud field generation', () => {
     }
   });
 
+  it('has no big holes: from any point of the tile a cloud is within 7 km (the airport is at the origin)', () => {
+    for (let x = -36000; x <= 36000; x += 6000) {
+      for (let z = -36000; z <= 36000; z += 6000) {
+        let best = Infinity;
+        for (const c of f.clouds) {
+          const dx = ((c.x - x + 3 * f.tile / 2) % f.tile) - f.tile / 2;
+          const dz = ((c.z - z + 3 * f.tile / 2) % f.tile) - f.tile / 2;
+          best = Math.min(best, Math.hypot(dx, dz));
+        }
+        expect(best, `hole at ${x},${z}`).toBeLessThan(7000);
+      }
+    }
+  });
+
   it('coverage 0 means clear sky; more coverage means bigger clouds', () => {
     expect(generateCloudField({ ...opts, coverage: 0 }).clouds.length).toBe(0);
     const avg = (cov: number) => {
