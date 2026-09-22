@@ -39,6 +39,10 @@ export interface AircraftVisualState {
   cameraMode: CameraMode;
   /** Live panel gauges, or null for a dark/zeroed panel. */
   instruments: InstrumentReadings | null;
+  /** The aircraft has crashed: show the wreck (bent prop, folded wing, collapsed gear, skewed tail, no glass). */
+  crashed?: boolean;
+  /** Seconds since the crash (the soot spreads over the first few seconds). */
+  crashAge?: number;
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */
@@ -66,6 +70,8 @@ export function createDefaultVisualState(): AircraftVisualState {
     time: 0,
     cameraMode: 'chase',
     instruments: null,
+    crashed: false,
+    crashAge: 0,
   };
 }
 

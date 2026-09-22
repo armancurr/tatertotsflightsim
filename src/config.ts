@@ -242,7 +242,7 @@ export const CONFIG = {
       wingTaperStart: 2.5,
       dihedralDeg: 1.7,
       horizontalTail: { x: 0, y: -0.02, z: 5.35, span: 3.45, chord: 1.1 },
-      verticalTailTop: { x: 0, y: 1.5, z: 5.95 },
+      verticalTailTop: { x: 0, y: 1.5, z: 5.45 },
       /**
        * Structural points that must never touch the ground. Touching the ground with any of
        * these is a crash (the gear-up belly points only matter when the gear is not down).
@@ -253,7 +253,7 @@ export const CONFIG = {
         { name: 'leftWingtip', x: -5.46, y: 1.05, z: 0.35 },
         { name: 'rightWingtip', x: 5.46, y: 1.05, z: 0.35 },
         { name: 'tailcone', x: 0, y: -0.1, z: 5.0 },
-        { name: 'finTop', x: 0, y: 1.5, z: 5.95 },
+        { name: 'finTop', x: 0, y: 1.5, z: 5.45 },
         { name: 'cabinRoof', x: 0, y: 1.1, z: 0.0 },
         { name: 'bellyFront', x: 0, y: -0.55, z: -0.9 },
         { name: 'bellyMid', x: 0, y: -0.5, z: 0.6 },
@@ -270,9 +270,9 @@ export const CONFIG = {
       /** Flap aft slide (m) and drop (m) at full 30° — the slotted flap runs out on its tracks. */
       flapSlideM: 0.12,
       flapDropM: 0.035,
-      /** Blades fade into the blurred disc between these rpm. */
-      propBlurStartRpm: 200,
-      propBlurFullRpm: 800,
+      /** Blades fade into the blurred disc between these rpm (idle ≈ 700 still shows the blades, strobing). */
+      propBlurStartRpm: 350,
+      propBlurFullRpm: 1300,
       /** Wingtip strobes: one flash of `strobeFlashS` every `strobePeriodS`. Beacon: one sweep per `beaconPeriodS`. */
       strobePeriodS: 1.2,
       strobeFlashS: 0.07,

@@ -111,6 +111,53 @@ export function propBlurBlend(rpm: number): number {
   return smoothstep(m.propBlurStartRpm, m.propBlurFullRpm, rpm);
 }
 
+export interface PropDisc {
+  /** 0 = crisp blades … 1 = full blur (propBlurBlend). */
+  blend: number;
+  bladeOpacity: number;
+  /** Peak alpha of the time-averaged disc, and of the painted-tip ring. */
+  discAlpha: number;
+  tipAlpha: number;
+  /** How far the tip ring leans toward the tip paint colour (0 = plain disc tone). */
+  tipTint: number;
+  /** Strength of the stroboscopic two-blade ghost in the disc. */
+  ghost: number;
+  /** Draw the blades at the aliased (stroboscopic) angle instead of the true one. */
+  strobe: boolean;
+}
+
+export function createPropDisc(): PropDisc {
+  return { blend: 0, bladeOpacity: 1, discAlpha: 0, tipAlpha: 0, tipTint: 0, ghost: 0, strobe: false };
+}
+
+/**
+ * How the spinning propeller reads: stopped → crisp blades; around idle the
+ * blades flicker stroboscopically (drawn at a slowly drifting aliased angle, with
+ * a ghost in the disc); at speed a faint, slightly dark translucent disc with a
+ * barely-there tip ring. From the cockpit the disc is nearly invisible, as it is
+ * to a real pilot.
+ */
+export function propDiscParams(rpm: number, cockpit: boolean, out: PropDisc): PropDisc {
+  const r = Number.isFinite(rpm) ? Math.max(0, rpm) : 0;
+  const idle = CONFIG.aircraft.engine.idleRpm;
+  const b = propBlurBlend(r);
+  const view = cockpit ? 0.3 : 1;
+  out.blend = b;
+  out.bladeOpacity = 1 - b;
+  out.discAlpha = b * 0.075 * view;
+  out.tipAlpha = out.discAlpha * 1.25;
+  out.tipTint = cockpit ? 0.1 : 0.2;
+  out.ghost = Math.min(2 * b, 0.45 * (1 - smoothstep(0.9 * idle, 1800, r))) * view;
+  out.strobe = r > CONFIG.aircraft.model.propBlurStartRpm;
+  return out;
+}
+
+/** Apparent (aliased) rotation rate of the blades, rad/s: a slow wagon-wheel drift that changes with rpm. */
+export function strobeRate(rpm: number): number {
+  const r = Number.isFinite(rpm) ? Math.max(0, Math.min(rpm, 5000)) : 0;
+  return 2 * Math.PI * 0.4 * Math.sin(r * 0.0021);
+}
+
 /** Wingtip strobe brightness at time t: a short full-brightness flash once per period. */
 export function strobeIntensity(time: number): number {
   const m = CONFIG.aircraft.model;

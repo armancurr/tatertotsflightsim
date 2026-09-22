@@ -42,7 +42,8 @@ export const GEAR_PART = {
 
 export interface GearRig {
   group: THREE.Group;
-  update(anim: AircraftAnimation, v: AircraftVisualState, dt: number): void;
+  /** `crashed` shows the collapsed gear of a wreck (nose folded, mains splayed and bent back, a door torn off). */
+  update(anim: AircraftAnimation, v: AircraftVisualState, dt: number, crashed?: boolean): void;
 }
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
@@ -350,6 +351,19 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
   const _Y = new THREE.Vector3(0, 1, 0);
   const wrap = (a: number) => a % (Math.PI * 2);
 
+  /** Wreck: a main leg splayed up/out and swept back about its pivot. */
+  const _sq = new THREE.Quaternion();
+  const _se = new THREE.Euler();
+  const _sp = new THREE.Vector3();
+  function splay(side: -1 | 1, pose: typeof mp) {
+    _sq.setFromEuler(_se.set(0, -side * 0.35, side * 0.5, 'YXZ'));
+    _sp.set(side * MAIN_GEAR.pivot.x, MAIN_GEAR.pivot.y, MAIN_GEAR.pivot.z);
+    pose.foot.sub(_sp).applyQuaternion(_sq).add(_sp);
+    pose.wheel.sub(_sp).applyQuaternion(_sq).add(_sp);
+    pose.legQuat.premultiply(_sq);
+    pose.axleQuat.premultiply(_sq);
+  }
+
   /** Stretch a unit link mesh (local 0→+Y) from a to b. */
   function link(m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) {
     _dir.copy(b).sub(a);
@@ -361,12 +375,16 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
 
   return {
     group,
-    update(anim, v, dt) {
+    update(anim, v, dt, crashed = false) {
       const step = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.25)) : 0;
       const c = v.wheelCompression;
       const rs = v.wheelRollSpeed;
-      // Nose.
-      noseGearPose(anim.noseGearRetract, c[0], anim.noseSteerRad, npz);
+      // Nose (a wreck's nose leg is folded back under the cowl and twisted).
+      if (crashed) {
+        noseGearPose(0.62, 0, 0, npz);
+        npz.steerRad = 0.45;
+        npz.slide = G.strutTravel;
+      } else noseGearPose(anim.noseGearRetract, c[0], anim.noseSteerRad, npz);
       noseSwing.rotation.x = npz.swingRad;
       noseSteer.rotation.y = -npz.steerRad;
       noseLower.position.y = npz.slide;
@@ -381,11 +399,13 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
       link(braceU, anchor, npz.braceKnee);
       link(braceL, npz.braceKnee, npz.braceAttach);
       doors[0].rotation.z = -anim.gearDoorRad;
-      doors[1].rotation.z = anim.gearDoorRad;
+      doors[1].rotation.z = crashed ? 2.2 : anim.gearDoorRad;
+      doors[0].visible = !crashed;
       // Mains.
       for (let i = 0; i < 2; i++) {
         const m = mains[i];
-        mainGearPose(m.side, anim.mainGearRetract, c[i + 1], mp);
+        mainGearPose(m.side, crashed ? 0 : anim.mainGearRetract, crashed ? 0 : c[i + 1], mp);
+        if (crashed) splay(m.side, mp);
         m.leg.quaternion.copy(mp.legQuat);
         m.leg.scale.set(1, mp.legScale, 1);
         m.axle.position.copy(mp.wheel);
@@ -393,7 +413,7 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
       }
       // Wheel spin: follows the ground roll while down and locked; the snubbers stop it once the gear moves.
       for (let i = 0; i < 3; i++) {
-        const retract = i === 0 ? anim.noseGearRetract : anim.mainGearRetract;
+        const retract = crashed ? 1 : i === 0 ? anim.noseGearRetract : anim.mainGearRetract;
         if (retract > 0) spinRate[i] = retract >= 0.999 ? 0 : spinRate[i] * Math.exp(-step / 0.35);
         else spinRate[i] = Number.isFinite(rs[i]) ? rs[i] / radii[i] : 0;
         spinAngle[i] = wrap(spinAngle[i] - spinRate[i] * step);
