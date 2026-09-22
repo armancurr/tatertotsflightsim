@@ -9,6 +9,7 @@
  *   positions Float32 ×3 — x, z relative to the tile centre (precision); y absolute (m MSL)
  *   normals   Int16 ×3 (normalised)
  *   lc0, lc1  Uint8 ×4 (normalised) — landcover weights in LANDCOVER_KEYS order
+ *   lcp0, lcp1 Uint8 ×4 — the same weights on the parent LOD's grid (landcover morph target)
  *   morph     Float32 ×3 — (Δy to the parent LOD's surface, water level, tile size)
  * The index buffer is identical for every tile (createChunkIndex) and shared.
  * Triangulation uses the anti-diagonal of each quad everywhere, so a tile fully
@@ -35,6 +36,9 @@ export interface ChunkData {
   normals: Int16Array;
   lc0: Uint8Array;
   lc1: Uint8Array;
+  /** Landcover interpolated on the parent LOD grid (morph target, so colours don't pop). */
+  lcp0: Uint8Array;
+  lcp1: Uint8Array;
   morph: Float32Array;
   /** Height range including skirts (for bounding volumes). */
   minY: number;
@@ -147,6 +151,8 @@ export function buildChunk(hf: Heightfield, lc: Landcover, req: ChunkRequest): C
   const normals = new Int16Array(nv * 3);
   const lc0 = new Uint8Array(nv * 4);
   const lc1 = new Uint8Array(nv * 4);
+  const lcp0 = new Uint8Array(nv * 4);
+  const lcp1 = new Uint8Array(nv * 4);
   const morph = new Float32Array(nv * 3);
 
   // Heights on a grid with a one-vertex border (for central-difference normals); full terrain
@@ -257,6 +263,24 @@ export function buildChunk(hf: Heightfield, lc: Landcover, req: ChunkRequest): C
       else if (!oi && oj) coarse = (Hg(i, j - 1) + Hg(i, j + 1)) / 2;
       else if (oi && oj) coarse = (Hg(i + 1, j - 1) + Hg(i - 1, j + 1)) / 2;
       morph[(j * n + i) * 3] = coarse - Hg(i, j);
+      // landcover on the parent grid, same interpolation
+      const v = (j * n + i) * 4;
+      let a = v;
+      let b = v;
+      if (oi && !oj) {
+        a = (j * n + i - 1) * 4;
+        b = (j * n + i + 1) * 4;
+      } else if (!oi && oj) {
+        a = ((j - 1) * n + i) * 4;
+        b = ((j + 1) * n + i) * 4;
+      } else if (oi && oj) {
+        a = ((j - 1) * n + i + 1) * 4;
+        b = ((j + 1) * n + i - 1) * 4;
+      }
+      for (let k = 0; k < 4; k++) {
+        lcp0[v + k] = (lc0[a + k] + lc0[b + k] + 1) >> 1;
+        lcp1[v + k] = (lc1[a + k] + lc1[b + k] + 1) >> 1;
+      }
     }
   // Skirts: copies of the edge vertices, lowered.
   const base = n * n;
@@ -270,6 +294,8 @@ export function buildChunk(hf: Heightfield, lc: Landcover, req: ChunkRequest): C
     for (let k = 0; k < 4; k++) {
       lc0[dst * 4 + k] = lc0[src * 4 + k];
       lc1[dst * 4 + k] = lc1[src * 4 + k];
+      lcp0[dst * 4 + k] = lcp0[src * 4 + k];
+      lcp1[dst * 4 + k] = lcp1[src * 4 + k];
     }
     morph[dst * 3] = morph[src * 3];
     morph[dst * 3 + 1] = morph[src * 3 + 1];
@@ -286,6 +312,8 @@ export function buildChunk(hf: Heightfield, lc: Landcover, req: ChunkRequest): C
     normals,
     lc0,
     lc1,
+    lcp0,
+    lcp1,
     morph,
     minY: minY - skirt,
     maxY,

@@ -78,6 +78,30 @@ describe('terrain chunk builder', () => {
       }
   });
 
+  it('stores the parent LOD landcover as a morph target (no colour pop at LOD switches)', () => {
+    expect(c.lcp0.length).toBe(nv * 4);
+    expect(c.lcp1.length).toBe(nv * 4);
+    const L = (a: Uint8Array, i: number, j: number, k: number) => a[(j * (res + 1) + i) * 4 + k];
+    for (let j = 0; j <= res; j++)
+      for (let i = 0; i <= res; i++)
+        for (const [own, par] of [
+          [c.lc0, c.lcp0],
+          [c.lc1, c.lcp1],
+        ])
+          for (let k = 0; k < 4; k++) {
+            const oi = i % 2 === 1;
+            const oj = j % 2 === 1;
+            let want = L(own, i, j, k);
+            if (oi && !oj) want = (L(own, i - 1, j, k) + L(own, i + 1, j, k)) / 2;
+            if (!oi && oj) want = (L(own, i, j - 1, k) + L(own, i, j + 1, k)) / 2;
+            if (oi && oj) want = (L(own, i + 1, j - 1, k) + L(own, i - 1, j + 1, k)) / 2;
+            expect(Math.abs(L(par, i, j, k) - want)).toBeLessThanOrEqual(0.5);
+          }
+    // skirts copy their edge vertex
+    const grid = (res + 1) * (res + 1);
+    for (let i = 0; i <= res; i++) for (let k = 0; k < 4; k++) expect(c.lcp0[(grid + i) * 4 + k]).toBe(c.lcp0[i * 4 + k]);
+  });
+
   it('builds a shared index buffer whose triangles face up (grid) and outward (skirts)', () => {
     const idx = createChunkIndex(res);
     expect(idx.length).toBe((res * res * 2 + 4 * res * 2) * 3);

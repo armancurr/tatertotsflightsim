@@ -30,5 +30,5 @@ ctx.onmessage = (e) => {
   }
   if (m.type !== 'build') return;
   const c = buildChunk(hf, lc, m);
-  ctx.postMessage({ type: 'built', id: m.id, chunk: c }, [c.positions.buffer, c.normals.buffer, c.lc0.buffer, c.lc1.buffer, c.morph.buffer]);
+  ctx.postMessage({ type: 'built', id: m.id, chunk: c }, [c.positions.buffer, c.normals.buffer, c.lc0.buffer, c.lc1.buffer, c.lcp0.buffer, c.lcp1.buffer, c.morph.buffer]);
 };
