@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HUD preview</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0a1320; }
+      #scene { position: fixed; inset: -50%; transform-origin: 50% 50%; }
+      #panel { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: contain; background: #111; display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="scene"></div>
+    <canvas id="panel"></canvas>
+    <div id="hud"></div>
+    <script type="module" src="/src/preview/hud.ts"></script>
+  </body>
+</html>
