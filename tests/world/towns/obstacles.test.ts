@@ -34,7 +34,8 @@ describe('obstacleTop', () => {
         const z = r.z + r.az * r.hw * u * s + r.fz * r.hd * v * s;
         const t = top(x, z);
         expect(t).toBeCloseTo(roofTopAt(b, x, z), 9);
-        expect(t).toBeGreaterThanOrEqual(b.y + b.wallHeight - 1e-9);
+        // a setback tower's terrace is at the tier (plus parapet), everything else at least at the wall top
+        expect(t).toBeGreaterThanOrEqual(b.y + (b.tierHeight ? b.tierHeight + b.roofHeight : b.wallHeight) - 1e-9);
         expect(t).toBeLessThanOrEqual(b.y + b.wallHeight + b.roofHeight + 1e-9);
       }),
       { numRuns: 500 },
