@@ -7,10 +7,24 @@ const mod: SystemModule = {
   order: 20,
   create(ctx) {
     const water = createWater(ctx.scene);
+    // ?waterGpu=1: time the water draws on the GPU (window.sim.debug().water.gpuMs)
+    try {
+      if (new URLSearchParams(location.search).get('waterGpu') === '1') water.setGpuTimer(ctx.renderer);
+    } catch {
+      /* no location (tests) */
+    }
+    const env = { timeOfDay: ctx.atmosphere.timeOfDay, viewportHeight: 900 };
     return {
-      update(f) {
-        water.update(f.camera, f.time, ctx.atmosphere.sunDirection);
+      async ready(camera) {
+        water.update(camera, 0, ctx.atmosphere.sunDirection, env);
+        await water.ready(camera);
       },
+      update(f) {
+        env.timeOfDay = ctx.atmosphere.timeOfDay;
+        env.viewportHeight = ctx.renderer.domElement.height;
+        water.update(f.camera, f.time, ctx.atmosphere.sunDirection, env);
+      },
+      stats: () => water.stats(),
       dispose: () => water.dispose(),
     };
   },

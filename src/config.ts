@@ -667,6 +667,41 @@ export const CONFIG = {
         contrailMaxAge: 170,
       },
     },
+    /** Sea, bay, river and lakes (owned by src/world/water). */
+    water: {
+      /** Surface wind over the water: speed (kt) and the direction it blows FROM (deg true). */
+      windKt: 12,
+      windFromDeg: 215,
+      /** Analytic (Gerstner) wave trains shared by the shader and waterSurfaceAt; seed of their phases/directions. */
+      waveCount: 12,
+      waveSeed: 7,
+      /** Gerstner choppiness (0 = sine waves, 1 = sharpest crests without loops). */
+      choppiness: 0.55,
+      /** Whitecap amount (1 ≈ Monahan's coverage for the wind speed). */
+      whitecaps: 1,
+      /** Bathymetry clipmap around the camera: texels per side, extents of the near/far levels (m). */
+      bathymetryRes: 256,
+      bathymetryNear: 4096,
+      bathymetryFar: 36864,
+      /** Re-bake a level when the camera is this fraction of its extent from the level centre. */
+      bathymetryRecenter: 0.14,
+      /** Surf: foam bands this far out from the shoreline (m) and the breaker period (s). */
+      surfWidth: 60,
+      surfPeriod: 7.5,
+      /** River flow speed in the plains and in steep reaches (m/s), and the slope where rapids (foam) begin. */
+      riverSpeed: 0.8,
+      riverSpeedSteep: 3.2,
+      rapidsSlope: 0.004,
+      /** River ribbon: depth pull toward the camera (fraction of the view distance) and lift per km of distance (m). */
+      riverDepthPull: 0.006,
+      riverLiftPerKm: 1.2,
+      /** Rivers stay at least this many pixels wide at any distance (coverage-faded, never dashed). */
+      riverMinPixels: 1.4,
+      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = as windy as midday. */
+      lakeMorningCalm: 0.85,
+      /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
+      detailTileSize: 256,
+    },
   },
 
   // ─── Sky, sun, fog, lighting (owned by src/render) ───────────────────────────
