@@ -551,6 +551,41 @@ export const CONFIG = {
     vsiLagTau: 0.8,
     /** Instrument needle smoothing time constant, seconds. */
     needleTau: 0.12,
+    /** Turn coordinator gyro smoothing, seconds. */
+    turnTau: 0.3,
+    /** Inclinometer ball damping (it sits in a liquid-filled tube), seconds. */
+    ballTau: 0.3,
+    /** Tilt of the apparent gravity (deg) that puts the ball at the end of its tube. */
+    ballRangeDeg: 12,
+    /** Toe-brake input above this lights the BRAKE lamp. */
+    brakeLampThreshold: 0.05,
+    /** Readings are clamped to these (the gauges peg there). */
+    maxAirspeedKt: 250,
+    maxVsiFpm: 6000,
+    maxTurnRateDegPerSec: 30,
+    maxG: 12,
+    /** Altimeter setting shown in the Kollsman window, inHg. */
+    kollsmanInHg: 29.92,
+    /** Tachometer green arc (the 172RG's normal operating range), rpm. */
+    tachGreenLowRpm: 2100,
+    tachGreenHighRpm: 2700,
+    /** Gauge diameter (CSS px) at 1024 and 1440 px viewport width, linear in between; clamped to min/max. */
+    gaugeSize1024: 96,
+    gaugeSize1440: 126,
+    gaugeMin: 72,
+    gaugeMax: 150,
+    /** A gauge is never taller than this fraction of the viewport height. */
+    gaugeMaxHeightFraction: 0.16,
+    /** Cap on the HUD canvases' devicePixelRatio. */
+    maxPixelRatio: 2,
+    /** In cockpit view the 3D panel shows the six-pack: 'hidden' drops the HUD clusters, 'compact' keeps small ones. */
+    cockpitGauges: 'hidden' as 'hidden' | 'compact',
+    /** Seconds the landing toast, a generic flash and the start hint stay up. */
+    landingToastSeconds: 7,
+    flashSeconds: 2.2,
+    startHintSeconds: 12,
+    /** STALL annunciator blink rate, Hz. */
+    stallBlinkHz: 2.5,
   },
 };
 
