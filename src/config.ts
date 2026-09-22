@@ -44,7 +44,7 @@ export const CONFIG = {
 
     aero: {
       /** Lift coefficient at zero body angle of attack (wing incidence + camber). */
-      cl0: 0.25,
+      cl0: 0.34,
       /** Lift curve slope, per radian. */
       clAlpha: 4.9,
       /** Clean stall angle of attack (positive), degrees. */
@@ -52,7 +52,7 @@ export const CONFIG = {
       /** Negative stall angle of attack, degrees. */
       stallAlphaNegDeg: -13,
       /** Width of the rounded top of the lift curve just before the stall, degrees. */
-      stallRoundingDeg: 3,
+      stallRoundingDeg: 2.5,
       /** How far past the stall angle (deg) lift has collapsed to the post-stall (flat-plate) curve. */
       stallBreakWidthDeg: 5,
       /** Post-stall flat-plate lift: CL = k · sin(2α). */
@@ -60,13 +60,13 @@ export const CONFIG = {
       /** Post-stall flat-plate drag: CD = k · sin²(α). */
       flatPlateDrag: 1.3,
       /** Zero-lift drag, clean, gear up. */
-      cd0: 0.027,
+      cd0: 0.024,
       /** Extra zero-lift drag with gear fully down. */
-      cdGear: 0.008,
+      cdGear: 0.01,
       /** Extra zero-lift drag at full flaps (30°); scales ~linearly with deflection. */
       cdFlapsFull: 0.055,
       /** Extra lift coefficient at full flaps (30°); scales ~linearly with deflection. */
-      clFlapsFull: 0.62,
+      clFlapsFull: 0.85,
       /** Stall angle change at full flaps, degrees (flaps stall at a slightly lower AoA). */
       stallAlphaFlapsShiftDeg: -2,
       /** Pitch moment from full flaps (C172 pitches up a little as flaps come down). */
@@ -80,14 +80,14 @@ export const CONFIG = {
       cyRudder: -0.06,
 
       // Pitch (moments are per unit control in THIS sim's convention, see types.ts)
-      cm0: 0.04,
+      cm0: 0.025,
       cmAlpha: -0.89,
       cmQ: -12.4,
       cmAlphaDot: -5.2,
       /** Pitch moment coefficient at full up elevator (+1). */
-      cmElevator: 0.3,
+      cmElevator: 0.5,
       /** Pitch moment coefficient at full nose-up trim (+1). */
-      cmTrim: 0.1,
+      cmTrim: 0.12,
 
       // Roll
       clBeta: -0.089,
@@ -103,20 +103,35 @@ export const CONFIG = {
       cnP: -0.03,
       cnR: -0.099,
       /** Yaw moment at full right aileron (+1) — adverse yaw, so negative. */
-      cnAileron: -0.018,
+      cnAileron: -0.006,
       /** Yaw moment at full right rudder (+1). */
       cnRudder: 0.032,
 
       /** Past the stall, roll damping reverses by this fraction (wing drop / autorotation tendency). */
       stallRollDampingLoss: 1.6,
+      /**
+       * In a coordinated stall only this fraction of the damping loss applies (the wing drops only when
+       * the aircraft is yawing/slipping, so a coordinated stall breaks straight).
+       */
+      stallCoordinatedDampingFraction: 0.35,
+      /** Sideslip (deg, plus yaw-rate equivalent) at which the full stall damping loss / autorotation applies. */
+      stallAsymmetryRefDeg: 4,
+      /** The autorotative roll moment saturates above this non-dimensional roll rate p̂ = p·b/2V (bounded spin rate). */
+      stallAutorotationRateLimit: 0.25,
+      /** Past the stall the flaps keep this fraction of their lift increment (flapped stalls are gentler). */
+      postStallFlapLiftFraction: 0.5,
       /** Past the stall, extra roll moment per radian of sideslip/yaw (uncoordinated stalls drop a wing). */
       stallWingDrop: 0.12,
+      /** Weight of the yaw rate (non-dimensional r̂ = r·b/2V) relative to sideslip in the stall wing drop. */
+      stallWingDropYawGain: 2,
       /** Past the stall, extra nose-down pitch moment coefficient (the "break"). */
       stallPitchBreak: -0.08,
+      /** Past the stall the tail sits in the stalled wing's wake: elevator/trim effectiveness drops by this fraction. */
+      stallTailBlanking: 0.4,
       /** Extra dynamic pressure over the tail from the propeller slipstream, as a fraction of thrust/(½ρ·disc area). */
-      propwashTail: 0.35,
+      propwashTail: 0.45,
       /** P-factor/torque: yaw moment coefficient (nose left) per unit (thrust/weight · alpha). */
-      pFactor: 0.02,
+      pFactor: 0.08,
     },
 
     engine: {
@@ -125,7 +140,7 @@ export const CONFIG = {
       /** Static (zero airspeed) full-throttle thrust, N. */
       staticThrustN: 2500,
       /** Peak propeller efficiency (cruise). */
-      propEfficiency: 0.8,
+      propEfficiency: 0.85,
       /** Engine power follows the throttle with this time constant when spooling up, seconds. */
       spoolUpTau: 0.9,
       /** …and this one when spooling down. */
@@ -138,6 +153,16 @@ export const CONFIG = {
       startTime: 1.4,
       /** Windmilling RPM per knot of airspeed with the engine off. */
       windmillRpmPerKt: 8,
+      /** Starter cranking RPM. */
+      crankRpm: 180,
+      /** RPM follows its target with these time constants (running / spinning down), seconds. */
+      rpmTau: 0.35,
+      spinDownTau: 1.5,
+      /**
+       * Drag of a propeller that is not being driven hard (windmilling), as a drag coefficient on the
+       * disc area, scaled by (1 − power fraction)²: an idle or dead engine makes the glide steeper.
+       */
+      windmillDragCoeff: 0.18,
     },
 
     flaps: {
@@ -155,6 +180,8 @@ export const CONFIG = {
       transitTime: 5,
       /** Max gear extended speed, knots. */
       vleKt: 140,
+      /** Squat switch: the gear will not retract while the aircraft sits on its wheels. */
+      squatSwitch: true,
     },
 
     /** Control surface travel, for rendering and for any per-radian derivatives. */
@@ -218,6 +245,34 @@ export const CONFIG = {
       ],
     },
 
+    /** Visual-only tuning of the 3D model and its animation (owned by src/aircraft; physics ignores it). */
+    model: {
+      /** Down-going aileron travel as a fraction of the up travel (C172: 20° up / 15° down). */
+      aileronDownRatio: 0.75,
+      /** Flap aft slide (m) and drop (m) at full 30° — the slotted flap runs out on its tracks. */
+      flapSlideM: 0.12,
+      flapDropM: 0.035,
+      /** Blades fade into the blurred disc between these rpm. */
+      propBlurStartRpm: 200,
+      propBlurFullRpm: 800,
+      /** Wingtip strobes: one flash of `strobeFlashS` every `strobePeriodS`. Beacon: one sweep per `beaconPeriodS`. */
+      strobePeriodS: 1.2,
+      strobeFlashS: 0.07,
+      beaconPeriodS: 1.1,
+      /** Yoke push/pull travel (m), yoke turn at full aileron (deg), rudder pedal travel (m). */
+      yokeTravelM: 0.07,
+      yokeRollMaxDeg: 45,
+      pedalTravelM: 0.05,
+      /** Nose leg swings aft this far into its well; nose doors open this far. */
+      noseGearRetractDeg: 90,
+      gearDoorOpenDeg: 75,
+      /** Instrument panel texture redraw rate in the cockpit view (Hz), and outside it. */
+      panelRedrawHz: 30,
+      panelRedrawHzExterior: 4,
+      /** Landing light: position in the left wing leading edge (body frame), beam, strength. */
+      landingLight: { x: -1.72, y: 0.965, z: -0.56, angleDeg: 10, penumbra: 0.45, range: 320, decay: 1.2, intensity: 600, aimDownDeg: 3 },
+    },
+
     ground: {
       springMain: 60000,
       damperMain: 6000,
@@ -233,6 +288,14 @@ export const CONFIG = {
       frictionSmoothing: 0.25,
       /** Nosewheel steering authority fades out above this ground speed, m/s. */
       steeringFadeSpeed: 30,
+      /** Nosewheel steering keeps at least this fraction of its authority at speed. */
+      steeringMinFraction: 0.15,
+      /** Speed scale (m/s) of the tanh smoothing for rolling/braking friction (small = firm static hold). */
+      longitudinalSmoothing: 0.05,
+      /** Past strutTravel the strut bottoms out: spring × this factor. */
+      bottomOutStiffness: 10,
+      /** Sliding friction of the tail skid/tailcone on a gentle scrape. */
+      tailSkidFriction: 0.4,
     },
 
     limits: {
@@ -248,6 +311,10 @@ export const CONFIG = {
       gLimitNeg: -1.52,
       /** Beyond this load factor the airframe fails (crash). */
       structuralFailureG: 6.5,
+      /** Negative load factor beyond which the airframe fails (crash). */
+      structuralFailureNegG: -3,
+      /** Safety net: body angular rates are clamped to this magnitude, rad/s (≈ 460°/s). */
+      maxAngularRate: 8,
     },
 
     stall: {
@@ -273,15 +340,27 @@ export const CONFIG = {
       /** Touching water at more than this ground speed (or at all with the engine running) is a crash. */
       ditchSpeedKt: 0,
       /** Speed at which impact with a structural point is a crash rather than a scrape. */
-      scrapeSpeedMs: 0,
+      scrapeSpeedMs: 1.5,
+      /** A structural point (or the gear) hitting the surface faster than this (m/s) is "Hit terrain". */
+      terrainImpactMs: 8,
+      /** A structural point found deeper than this below the surface flew into it ("Hit terrain"), m. */
+      terrainPenetrationM: 0.3,
+      /** Collision broad phase: skip ground/structure checks when the CG is higher than this above the surface, m. */
+      nearGroundAglM: 30,
+      /** …and skip obstacle checks above this height over the terrain, m. */
+      obstacleCheckAglM: 400,
     },
 
     /** Where resets put the aircraft (see src/world/layout for the runway itself). */
     spawn: {
       /** Distance past the runway 36 threshold at which the takeoff reset places the main wheels, m. */
       runwayStartOffset: 45,
-      /** Final approach reset: distance before the threshold (m), height above the runway (m), IAS (kt), flap notch. */
-      approach: { distance: 4200, height: 320, speedKt: 72, flapsNotch: 2, throttle: 0.42 },
+      /**
+       * Final approach reset: distance before the threshold (m), height above the runway (m), IAS (kt), flap notch,
+       * throttle (initial guess — the trim solver finds the exact value), aim point past the threshold (m).
+       * height ≈ tan(3°) × (distance + aimPointM), so the spawn sits on a 3° glide to the aim point.
+       */
+      approach: { distance: 4200, height: 236, speedKt: 72, flapsNotch: 2, throttle: 0.42, aimPointM: 300 },
     },
   },
 
@@ -305,6 +384,9 @@ export const CONFIG = {
     /** Keyboard deflection limits (keyboard can't go past these; mouse/gamepad can reach 1). */
     keyboardMaxDeflection: 1,
     gamepadDeadzone: 0.08,
+    /** Seconds for the toe brakes to go 0 → 1 while the brake key is held, and 1 → 0 when released. */
+    brakeApplyTime: 0.15,
+    brakeReleaseTime: 0.1,
     /** Key bindings (KeyboardEvent.code). */
     keys: {
       pitchDown: ['ArrowUp'],
@@ -345,13 +427,32 @@ export const CONFIG = {
     near: 0.08,
     far: 90000,
     transitionTime: 0.9,
-    cockpit: { fov: 68, lookDownDeg: 7, headLookMaxYawDeg: 150, headLookMaxPitchDeg: 70, headLookReturnRate: 2.5 },
-    chase: { fov: 60, distance: 15, height: 3.6, lookAhead: 6, positionStiffness: 5, rotationStiffness: 6, bankFollow: 0.35 },
-    external: { fov: 45, leadDistance: 280, sideOffset: 30, heightOffset: 6, maxDistance: 520, minFov: 12 },
-    orbit: { fov: 55, distance: 22, minDistance: 8, maxDistance: 160, pitchDeg: 12, autoRotateDegPerSec: 6, dragSensitivity: 0.3 },
+    /** A target jump larger than this (m) in one update is a reset/teleport: the camera snaps, no lag. */
+    snapDistance: 300,
+    /**
+     * dragSensitivity = degrees per pixel of mouse drag. headLookReturnRate = 1/s (1/time constant).
+     * Wheel zooms the cockpit FOV between minFov and maxFov (zoomPerNotch = fraction per wheel notch).
+     */
+    cockpit: { fov: 68, lookDownDeg: 7, headLookMaxYawDeg: 150, headLookMaxPitchDeg: 70, headLookReturnRate: 2.5, dragSensitivity: 0.25, minFov: 30, maxFov: 90, zoomPerNotch: 0.08 },
+    /** Drag orbits the chase camera temporarily (springs back with dragReturnTau s); wheel zooms the distance by minZoom..maxZoom. */
+    chase: { fov: 60, distance: 15, height: 3.6, lookAhead: 6, positionStiffness: 5, rotationStiffness: 6, bankFollow: 0.35, dragSensitivity: 0.3, dragReturnTau: 0.5, maxDragPitchDeg: 60, minZoom: 0.5, maxZoom: 4, zoomPerNotch: 0.1 },
+    /**
+     * Fly-by camera. The anchor is leadDistance ahead along the velocity (at least minLead, at most
+     * leadTime seconds of flight). FOV narrows so a box framingSize metres wide stays in view.
+     * On the ground below spotterSpeed (m/s) it becomes a spotter spotterDistance m off the side.
+     */
+    external: { fov: 45, leadDistance: 280, sideOffset: 30, heightOffset: 6, maxDistance: 520, minFov: 12, framingSize: 60, fovTau: 0.25, minLead: 60, leadTime: 6, spotterDistance: 40, spotterSpeed: 10, spotterEyeHeight: 1.7 },
+    orbit: { fov: 55, distance: 22, minDistance: 8, maxDistance: 160, pitchDeg: 12, autoRotateDegPerSec: 6, dragSensitivity: 0.3, minPitchDeg: -10, maxPitchDeg: 85, autoRotateDelay: 3, zoomPerNotch: 0.12 },
     /** Never let a camera go below the ground + this clearance (m). */
     groundClearance: 1.2,
-    shake: { groundRoll: 0.012, stall: 0.03, crash: 0.25, decay: 3 },
+    /**
+     * Camera shake ("trauma" model). CameraInput.shake is an intensity 0..1; the visible amplitude is
+     * intensity² × amplitudeDeg (rotation) / amplitudeM (translation), so small values stay subtle.
+     * Intensities per source for shakeTarget(): groundRoll at groundRollSpeed (m/s ground speed, scales
+     * linearly below it), stall, crash (decays at `decay` 1/s after the impact). The rig also decays
+     * sudden drops in the input at `decay` so shake never cuts off abruptly. frequency = noise Hz.
+     */
+    shake: { groundRoll: 0.35, groundRollSpeed: 36, stall: 0.5, crash: 1, decay: 3, amplitudeDeg: 3, amplitudeM: 0.12, frequency: 9 },
   },
 
   // ─── World (owned by src/world) ─────────────────────────────────────────────
@@ -394,17 +495,32 @@ export const CONFIG = {
       { name: 'Dawn', elevationDeg: 4, azimuthDeg: 95 },
     ],
     exposure: 0.62,
+    /** Top-of-atmosphere sun illuminance in three.js light units; the sun light, sky and haze all scale with it. */
     sunIntensity: 3.2,
+    /** Sunlight colour above the atmosphere (linear RGB) — effectively the camera white balance. */
+    sunColor: [1.0, 1.0, 1.0] as [number, number, number],
+    /** Multiplier on scene.environment (the PMREM sky) = the sky-ambient light on PBR materials. */
     skyAmbientIntensity: 0.9,
-    /** Aerial perspective: exponential fog density at sea level (per metre) and its height falloff (per metre). */
-    fogDensity: 0.000055,
-    fogHeightFalloff: 0.00032,
+    /**
+     * Aerial perspective = the aerosol (Mie) haze of the sky model: extinction at sea level (per metre)
+     * and its height falloff (per metre, 1/scale height). Rayleigh (blue) scattering is added on top.
+     */
+    fogDensity: 0.00005,
+    fogHeightFalloff: 0.0006,
     /** Distance at which things are fully hazed out (m) — also the terrain draw distance. */
     visibility: 60000,
+    /** Multiplier on Earth's Rayleigh scattering (1 = standard atmosphere). */
+    rayleighScale: 1.0,
+    /** Aerosol single-scattering albedo. */
+    mieAlbedo: 0.9,
+    /** Aerosol phase-function asymmetry: how tight/bright the glow around the sun is. */
+    mieDirectionalG: 0.8,
+    /** Isotropic multiple-scattering approximation strength (brightens/whitens the horizon). */
+    multiScatter: 0.5,
+    /** Legacy Preetham parameters (unused by the physical sky; kept for compatibility). */
     turbidity: 3.2,
     rayleigh: 1.4,
     mieCoefficient: 0.004,
-    mieDirectionalG: 0.82,
     shadowMapSize: 2048,
     /** Half-size of the sun shadow frustum around the aircraft, m. */
     shadowExtent: 160,
