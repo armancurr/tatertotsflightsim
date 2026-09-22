@@ -180,7 +180,7 @@ PLAN.md, how the parts fit — architecture diagram), finish RECORD.md, update P
 ### 4.8 Final regression (done line 7)
 `npm test` + `npx tsc --noEmit -p .` + `npm run build`, one more flight (take-off, stall, landing,
 every camera), console checked, commit. Delete `~/Desktop/.playwright-mcp/` (tool cache outside the
-project) and prune merged worktrees (`git worktree prune`; branches `wt/*` are merged and can be deleted).
+project). (At handoff all `wt/*` branches were merged, their worktrees removed and branches deleted — `main` is the only branch.)
 
 ## 5. How to run the team (what worked)
 
