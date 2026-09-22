@@ -504,7 +504,51 @@ export const CONFIG = {
       /** Smallest tile size, m. */
       minTileSize: 256,
     },
-    vegetation: { treeDensity: 1, treeViewDistance: 4500, maxTrees: 160000 },
+    /** Trees and forests (owned by src/world/vegetation). */
+    vegetation: {
+      /** Global multiplier on the landcover tree density (0 = no trees). */
+      treeDensity: 1,
+      /** Beyond this distance (m, camera → tree) no tree is drawn; the terrain colour takes over. */
+      treeViewDistance: 4500,
+      /** Hard cap on tree instances submitted to the GPU per frame (all LODs). */
+      maxTrees: 160000,
+      /** Placement cell (m): the unit of deterministic generation, streaming work and the obstacle hash. */
+      cellSize: 64,
+      /** Jittered-grid candidates per cell side (cellSize / gridPerCell = tree spacing in full forest, m). */
+      gridPerCell: 10,
+      /** Streaming chunk (m, a multiple of cellSize): one impostor draw call per visible chunk. */
+      chunkSize: 1024,
+      /** Full 3D meshes out to this distance (m); impostors beyond. */
+      meshDistance: 300,
+      /** Width of the dithered mesh ↔ impostor cross-fade band (m), ending at meshDistance. */
+      lodFadeBand: 60,
+      /** Near trees closer than this cast sun shadows (m). */
+      shadowDistance: 200,
+      /** Impostors fade out over this band (m) ending at treeViewDistance. */
+      farFadeBand: 1100,
+      /** Beyond this distance impostors thin out (keep ∝ (d0/d)^exp) and grow to keep the canopy closed. */
+      thinStartDistance: 1100,
+      thinExponent: 1.5,
+      /** Maximum impostor enlargement compensating for thinning. */
+      thinCompensationMax: 1.6,
+      /** Preallocated near-mesh instances per species (the near pool). */
+      nearCapacity: 12000,
+      /** Rebuild the near-mesh set after the camera moves this far (m). */
+      nearRebuildDistance: 12,
+      /** Time budget for generating tree cells per frame (ms) — streaming never hitches. */
+      frameBudgetMs: 1.5,
+      /** Budget when the camera's own chunk has no trees yet (first frame / teleport), ms. */
+      urgentBudgetMs: 30,
+      /** Hard cap on cells generated per frame (in addition to the time budget). */
+      maxCellsPerFrame: 48,
+      /** Placement cells kept for obstacle queries (LRU). */
+      obstacleCacheCells: 256,
+      /** Impostor atlas tile size (px); the atlas is 4 view elevations × 4 species. */
+      impostorTileSize: 256,
+      /** Wind sway: strength multiplier and gust speed multiplier. */
+      windStrength: 1,
+      windSpeed: 1,
+    },
   },
 
   // ─── Sky, sun, fog, lighting (owned by src/render) ───────────────────────────
