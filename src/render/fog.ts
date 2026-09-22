@@ -46,6 +46,24 @@
  * such materials and disposes them so they re-link with the uniform.
  * Materials need nothing else: `fog: true` (the default for built-ins) and
  * scene.fog set to a FogExp2 (createAtmosphere does that) is all it takes.
+ *
+ * ─── Cloud shadows ───────────────────────────────────────────────────────────
+ * The same chunk darkens every fog material under the cumulus: the fragment's
+ * world position is projected along the sun onto the cloud base plane and the
+ * shared `cloudShadowTexture` (sun-ray opacity of the cloud layer, rendered by
+ * volumetricClouds.ts, periodic over the cloud tile, drifting with the wind)
+ * is sampled there; the lit colour is scaled by 1 − strength·opacity (direct
+ * sun is most of the light, so ~0.6 inside a shadow). Faded out for a low sun
+ * and above the layer. The texture uniform is cloned per built-in material,
+ * but the clones share its Source → one GL texture, filled on the GPU with
+ * copyTextureToTexture (it is created here at import with its final size).
+ * Materials can opt out with `defines.ATMO_NO_CLOUD_SHADOW`.
+ *
+ * ─── Shadow-map penumbra ─────────────────────────────────────────────────────
+ * three r186's PCF filter rotates a 5-tap Vogel disc by interleaved gradient
+ * noise per pixel, which (without TAA) shows as hatching in soft shadow
+ * edges. `installAtmosphericFog` swaps it for a fixed 3×3 tent of hardware
+ * bilinear PCF taps: smooth penumbrae, no pattern.
  */
 import * as THREE from 'three';
 import type { Vec3 } from '../types';
@@ -53,9 +71,24 @@ import type { AtmosphereParams, RGB } from './atmosphereModel';
 import { phaseMie, phaseRayleigh, skyRadiance, sunIlluminanceAt } from './atmosphereModel';
 import { CONFIG } from '../config';
 
-export const ATMO_FOG_VEC4S = 6;
+export const ATMO_FOG_VEC4S = 7;
 /** The one shared uniform array every fog-enabled material reads (see header). */
 export const atmoFogData = new Float32Array(ATMO_FOG_VEC4S * 4);
+
+/** Texels per side of the shared cloud-shadow map. */
+export const CLOUD_SHADOW_SIZE = CONFIG.atmosphere.cloudShadows.size;
+/**
+ * The shared cloud-shadow map (R8: opacity of the cloud layer along the sun
+ * ray through each point of the cloud base plane; periodic over the cloud
+ * tile). Zero (no shadow) until the atmosphere renders it.
+ */
+export const cloudShadowTexture = new THREE.DataTexture(new Uint8Array(CLOUD_SHADOW_SIZE * CLOUD_SHADOW_SIZE), CLOUD_SHADOW_SIZE, CLOUD_SHADOW_SIZE, THREE.RedFormat, THREE.UnsignedByteType);
+cloudShadowTexture.wrapS = cloudShadowTexture.wrapT = THREE.RepeatWrapping;
+cloudShadowTexture.minFilter = cloudShadowTexture.magFilter = THREE.LinearFilter;
+cloudShadowTexture.generateMipmaps = false;
+cloudShadowTexture.unpackAlignment = 1;
+cloudShadowTexture.name = 'cloud shadows';
+cloudShadowTexture.needsUpdate = true;
 
 export interface FogState {
   /** 1 = aerial perspective, 0 = classic FogExp2 fallback, -1 = fog off. */
@@ -85,6 +118,7 @@ export const ATMO_FOG_GLSL = /* glsl */ `
 uniform vec4 atmoFog[ ${ATMO_FOG_VEC4S} ];
 // [0] sunDir.xyz, mode   [1] betaR.rgb, kR   [2] betaM, kM, mieG, visibility
 // [3] sunRadiance.rgb, mieAlbedo   [4] ambient.rgb, referenceHeight
+// [5] cloud shadow: strength, plane y, 1/tile, -   [6] uv offset.xy, fade-out y0, y1
 float atmoOD( float k, float yc, float dy ) {
 	float kd = k * dy;
 	float f = abs( kd ) > 1e-4 ? ( 1.0 - exp( - kd ) ) / kd : 1.0 - 0.5 * kd;
@@ -136,6 +170,7 @@ const FOG_VERTEX = /* glsl */ `
 const FOG_PARS_FRAGMENT = /* glsl */ `
 #ifdef USE_FOG
 	uniform vec3 fogColor;
+	uniform sampler2D atmoCloudShadow;
 	varying float vFogDepth;
 	varying vec3 vFogWorldRel;
 	#ifdef FOG_EXP2
@@ -150,6 +185,17 @@ const FOG_PARS_FRAGMENT = /* glsl */ `
 
 const FOG_FRAGMENT = /* glsl */ `
 #ifdef USE_FOG
+	#ifndef ATMO_NO_CLOUD_SHADOW
+	if ( atmoFog[ 5 ].x > 0.0 ) {
+		// cloud shadow: project along the sun onto the cloud base plane
+		vec3 csP = cameraPosition + vFogWorldRel;
+		vec3 csS = atmoFog[ 0 ].xyz;
+		vec2 csQ = csP.xz + csS.xz * ( ( atmoFog[ 5 ].y - csP.y ) / max( csS.y, 0.02 ) );
+		float csO = texture2D( atmoCloudShadow, csQ * atmoFog[ 5 ].z + atmoFog[ 6 ].xy ).r;
+		float csK = atmoFog[ 5 ].x * csO * smoothstep( 0.0, 0.1, csS.y ) * ( 1.0 - smoothstep( atmoFog[ 6 ].z, atmoFog[ 6 ].w, csP.y ) );
+		gl_FragColor.rgb *= 1.0 - csK;
+	}
+	#endif
 	if ( atmoFog[ 0 ].w > 0.5 ) {
 		vec3 atmoT;
 		vec3 atmoIns = atmoFogScatter( vFogWorldRel, cameraPosition.y, atmoT );
@@ -170,31 +216,66 @@ const FOG_FRAGMENT = /* glsl */ `
 #endif
 `;
 
+/** Smooth 3×3 tent of bilinear hardware-PCF taps (replaces three's IGN-rotated Vogel disc; see header). */
+const PCF_TENT = /* glsl */ `vec2 pcfT = vec2( 1.0 ) / shadowMapSize * max( shadowRadius, 1.0 ) * 0.5;
+				vec2 pcfX = vec2( pcfT.x, 0.0 );
+				vec2 pcfY = vec2( 0.0, pcfT.y );
+				shadow = (
+					texture( shadowMap, vec3( shadowCoord.xy, shadowCoord.z ) ) * 4.0 +
+					( texture( shadowMap, vec3( shadowCoord.xy + pcfX, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy - pcfX, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + pcfY, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy - pcfY, shadowCoord.z ) ) ) * 2.0 +
+					texture( shadowMap, vec3( shadowCoord.xy + pcfX + pcfY, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + pcfX - pcfY, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy - pcfX + pcfY, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy - pcfX - pcfY, shadowCoord.z ) )
+				) * ( 1.0 / 16.0 );`;
+
+/** Replace the first (directional/spot) PCF sampling block of three's shadow chunk. Returns the patched chunk (unchanged if not found). */
+export function patchPcfChunk(chunk: string): string {
+  if (chunk.includes('pcfT')) return chunk;
+  const re = /float phi = interleavedGradientNoise\( gl_FragCoord\.xy \) \* PI2;\s*shadow = \([\s\S]*?\) \* 0\.2;/;
+  return chunk.replace(re, PCF_TENT);
+}
+
 let installed = false;
 
-/** Install the atmospheric fog chunks + shared uniform globally. Idempotent. */
+/** Install the atmospheric fog chunks + shared uniforms globally. Idempotent. */
 export function installAtmosphericFog(): void {
   const chunks = THREE.ShaderChunk as Record<string, string>;
   chunks.fog_pars_vertex = FOG_PARS_VERTEX;
   chunks.fog_vertex = FOG_VERTEX;
   chunks.fog_pars_fragment = FOG_PARS_FRAGMENT;
   chunks.fog_fragment = FOG_FRAGMENT;
+  chunks.shadowmap_pars_fragment = patchPcfChunk(chunks.shadowmap_pars_fragment);
   if (installed) return;
   installed = true;
-  (THREE.UniformsLib.fog as Record<string, THREE.IUniform>).atmoFog = { value: atmoFogData };
+  const fogLib = THREE.UniformsLib.fog as Record<string, THREE.IUniform>;
+  fogLib.atmoFog = { value: atmoFogData };
+  fogLib.atmoCloudShadow = { value: cloudShadowTexture };
   const lib = THREE.ShaderLib as unknown as Record<string, { uniforms: Record<string, THREE.IUniform> }>;
   for (const key of Object.keys(lib)) {
     const u = lib[key].uniforms;
     if (u && 'fogColor' in u && !('atmoFog' in u)) u.atmoFog = { value: atmoFogData };
+    if (u && 'fogColor' in u && !('atmoCloudShadow' in u)) u.atmoCloudShadow = { value: cloudShadowTexture };
   }
 }
 
-/** Add the shared uniform to a fog-enabled ShaderMaterial that lacks it. Returns true if patched. */
+/** Add the shared uniforms to a fog-enabled ShaderMaterial that lacks them. Returns true if patched. */
 export function ensureAtmosphericFogUniforms(material: THREE.Material): boolean {
   const m = material as THREE.ShaderMaterial;
-  if (!m.isShaderMaterial || !m.fog || !m.uniforms || 'atmoFog' in m.uniforms) return false;
-  m.uniforms.atmoFog = { value: atmoFogData };
-  return true;
+  if (!m.isShaderMaterial || !m.fog || !m.uniforms) return false;
+  let patched = false;
+  if (!('atmoFog' in m.uniforms)) {
+    m.uniforms.atmoFog = { value: atmoFogData };
+    patched = true;
+  }
+  if (!('atmoCloudShadow' in m.uniforms)) {
+    m.uniforms.atmoCloudShadow = { value: cloudShadowTexture };
+    patched = true;
+  }
+  return patched;
 }
 
 /**
@@ -354,6 +435,23 @@ export function fogStateFromAtmosphere(p: AtmosphereParams, sunDir: Vec3, camera
   s.ambient.b = Math.max(0, skyB - a0B) / Math.max(wB, 1e-9);
   s.mode = mode;
   return s;
+}
+
+/**
+ * Cloud-shadow parameters into the shared array: strength (0 = off), the cloud
+ * base plane the shadow map is defined on, the tile size and the wind offset.
+ */
+export function packCloudShadowUniforms(strength: number, planeY: number, tile: number, windX: number, windZ: number, out: Float32Array = atmoFogData): void {
+  out[20] = strength;
+  out[21] = planeY;
+  out[22] = 1 / tile;
+  out[23] = 0;
+  const u = 0.5 - windX / tile;
+  const v = 0.5 - windZ / tile;
+  out[24] = u - Math.floor(u);
+  out[25] = v - Math.floor(v);
+  out[26] = planeY + 200;
+  out[27] = planeY + 900;
 }
 
 /** Write a fog state into the shared uniform array (or `out`). Allocation-free. */

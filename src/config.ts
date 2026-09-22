@@ -709,8 +709,37 @@ export const CONFIG = {
     shadowMapSize: 2048,
     /** Half-size of the sun shadow frustum around the aircraft, m. */
     shadowExtent: 160,
-    /** Cumulus field: `count` clouds in a square tile of half-size `areaRadius` that wraps around the camera. */
-    clouds: { coverage: 0.42, baseAltitude: 1500, thickness: 900, count: 420, areaRadius: 38000 },
+    /**
+     * Fair-weather cumulus field: `count` clouds in a square tile of half-size `areaRadius` that repeats
+     * around the camera. Bases at `baseAltitude` (m MSL, ±100 m), tops up to base + `thickness`.
+     * `wind` = drift of the whole field (m/s, +x east, +z south): clouds and their shadows move with it.
+     */
+    clouds: {
+      coverage: 0.42,
+      baseAltitude: 1500,
+      thickness: 2000,
+      count: 420,
+      areaRadius: 38000,
+      wind: [5, 2] as [number, number],
+      /**
+       * Raymarched clouds (render.cloudMode 'volumetric'): extinction at full density (1/m), erosion of the
+       * base shape by the shape (150–600 m lobes) and detail (25–200 m billows) noise, light calibration of
+       * the multiple-scattering approximation, max march distance (m), weather-map resolution (texels per
+       * tile side) and the temporal accumulation weight of each new frame.
+       */
+      volumetric: {
+        sigma: 0.05,
+        shapeErosion: 0.85,
+        detailErosion: 0.35,
+        sunScale: 8,
+        ambientScale: 1,
+        maxDistance: 50000,
+        weatherSize: 2048,
+        temporalAlpha: 0.12,
+      },
+    },
+    /** Cloud shadows on every material (fog-chunk override): strength = 1 − brightness in full shadow; map texels per tile side. */
+    cloudShadows: { enabled: true, strength: 0.42, size: 1024 },
     /** High thin cirrus wisps drawn in the sky shader. */
     cirrus: { altitude: 9000, coverage: 0.45, opacity: 0.55, scale: 1 / 45000 },
     /** Apparent sun radius (the real sun is 0.2666°). */
@@ -752,6 +781,16 @@ export const CONFIG = {
     vignette: 0.16,
     saturation: 1.0,
     lensFlare: { enabled: true, glare: 1.0, ghosts: 0.015, starburst: 0.06 },
+    /**
+     * Clouds: 'volumetric' (raymarched, falls back to billboards automatically when over budget),
+     * 'billboard' (instanced puff sprites) or 'off'. URL override: ?clouds=volumetric|billboard|off.
+     */
+    // Volumetric is opt-in until its pass fits the budget (measured 3–5 ms at 0.5 res on the M2 Max; see RESUME/report).
+    cloudMode: 'billboard' as 'volumetric' | 'billboard' | 'off',
+    /** Volumetric cloud buffer size per axis relative to the CSS resolution (0.5 = quarter the pixels). */
+    cloudResolution: 0.5,
+    /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
+    cloudBudgetMs: 2.5,
   },
 
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────

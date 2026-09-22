@@ -66,6 +66,8 @@ export interface Clouds {
   /** Wrap, sort and upload; update the in-cloud density at the camera. */
   update(camera: THREE.Camera, dt: number): void;
   setLighting(l: CloudLighting): void;
+  /** Wind drift of the whole field (m): matches the volumetric clouds and the cloud shadows. */
+  setWind(x: number, z: number): void;
   /** 0..1 smoothed cloud density at the camera. */
   readonly immersion: number;
   dispose(): void;
@@ -283,6 +285,8 @@ export function createClouds(o: CloudsOptions): Clouds {
   let framesSinceSort = 1e9;
   let dirty = true;
   let immersion = 0;
+  let windX = 0;
+  let windZ = 0;
   const camPos = new THREE.Vector3();
 
   function sortAndUpload(cx: number, cy: number, cz: number) {
@@ -362,8 +366,8 @@ export function createClouds(o: CloudsOptions): Clouds {
     const cz = camPos.z;
     for (let ci = 0; ci < nClouds; ci++) {
       const c = field.clouds[ci];
-      const nx = wrapCoord(c.x, cx, field.tile);
-      const nz = wrapCoord(c.z, cz, field.tile);
+      const nx = wrapCoord(c.x + windX, cx, field.tile);
+      const nz = wrapCoord(c.z + windZ, cz, field.tile);
       if (nx !== wx[ci] || nz !== wz[ci]) {
         const moved = !(Math.abs(nx - wx[ci]) < 1 && Math.abs(nz - wz[ci]) < 1);
         wx[ci] = nx;
@@ -384,7 +388,7 @@ export function createClouds(o: CloudsOptions): Clouds {
       framesSinceSort = 0;
       dirty = false;
     }
-    const target = cloudDensityAt(field, cx, cy, cz, cx, cz, lift);
+    const target = cloudDensityAt(field, cx - windX, cy, cz - windZ, cx - windX, cz - windZ, lift);
     const k = 1 - Math.exp(-Math.max(0, dt) / 0.25);
     immersion += (target - immersion) * k;
   }
@@ -408,6 +412,11 @@ export function createClouds(o: CloudsOptions): Clouds {
     field,
     update,
     setLighting,
+    setWind(x: number, z: number) {
+      const t = field.tile;
+      windX = x - Math.floor(x / t) * t;
+      windZ = z - Math.floor(z / t) * t;
+    },
     get immersion() {
       return immersion;
     },

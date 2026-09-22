@@ -4,6 +4,26 @@
  * call renderer.render(scene, camera).
  */
 import * as THREE from 'three';
+import type { DepthMode } from './renderer';
+
+/**
+ * The volumetric cloud pass as the renderer sees it: rendered after the scene
+ * (with the resolved scene depth), composited by the output pass.
+ */
+export interface CloudPassHook {
+  /** Render + composite volumetric clouds this frame. */
+  readonly active: boolean;
+  render(renderer: THREE.WebGLRenderer, depth: THREE.Texture, camera: THREE.Camera, targetW: number, targetH: number, pixelRatio: number, depthMode: DepthMode): void;
+  readonly outputA: THREE.Texture;
+  readonly outputB: THREE.Texture;
+  readonly size: THREE.Vector2;
+  readonly layerBottom: number;
+  readonly layerTop: number;
+  /** Measured GPU ms of the last timed cloud pass (written by the renderer; NaN without a timer). */
+  gpuMs: number;
+  /** The renderer's pixel ratio is at its dynamic-resolution minimum (written by the renderer). */
+  atMinQuality: boolean;
+}
 
 export interface AtmosphereFrameData {
   sunDirection: THREE.Vector3;
@@ -18,6 +38,8 @@ export interface AtmosphereFrameData {
   immersionColor: THREE.Color;
   /** Draw the lens flare this frame. */
   flare: boolean;
+  /** Volumetric clouds (null = none / billboard mode). */
+  clouds: CloudPassHook | null;
 }
 
 const KEY = '__atmosphereFrame';

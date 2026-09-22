@@ -12,6 +12,16 @@
  * Everything is derived from one physical sky model (atmosphereModel.ts), so
  * the sunlight colour, the sky, the haze on distant terrain, the environment
  * lighting and the cloud lighting always agree with each other.
+ *
+ * Clouds (config.render.cloudMode, URL ?clouds=volumetric|billboard|off):
+ * 'volumetric' raymarches the cumulus field (volumetricClouds.ts) and falls
+ * back to the instanced billboard puffs of the SAME field (clouds.ts) while
+ * the noise volumes are still being generated (time-sliced, jobQueue.ts) and
+ * whenever the budget controller (cloudBudget.ts) finds the pass over budget.
+ * Both drift with the wind, and the cloud-shadow map (fog.ts chunk) is
+ * rendered from the same density whenever the sun moves.
+ * QA/profiling URL switches: ?clouds=…, ?cloudshadows=0, ?cloudres=0.35,
+ * ?cloudbudget=0 (never fall back).
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config';
@@ -19,16 +29,32 @@ import { defaultAtmosphereParams, luminance, type AtmosphereParams } from './atm
 import { computeAtmosphereState, type AtmosphereState } from './atmosphereState';
 import { createClouds, type Clouds } from './clouds';
 import { createEnvBaker } from './envmap';
-import { ensureSceneFogUniforms, hazeColor, installAtmosphericFog, packFogUniforms } from './fog';
-import { setAtmosphereFrameData, type AtmosphereFrameData } from './frameData';
+import { ensureSceneFogUniforms, hazeColor, installAtmosphericFog, packCloudShadowUniforms, packFogUniforms } from './fog';
+import { setAtmosphereFrameData, type AtmosphereFrameData, type CloudPassHook } from './frameData';
+import { createJobQueue, type JobQueue } from './jobQueue';
+import { createVolumetricClouds, type VolumetricClouds } from './volumetricClouds';
+import { createCloudBudget, type CloudBudget, type CloudQuality } from './cloudBudget';
+import { cloudColumnDensity, shadowOpacityAt, projectAlongSun } from './cloudWeather';
 import { createSky } from './sky';
 import { snapShadowCenter, sunDirectionFromAngles } from './sun';
+
+export type CloudMode = 'volumetric' | 'billboard' | 'off';
+
+/** Cloud mode from a URL query (?clouds=…), else the config. */
+export function cloudModeFromQuery(search: string | undefined, fallback: CloudMode): CloudMode {
+  const v = search ? new URLSearchParams(search).get('clouds') : null;
+  return v === 'volumetric' || v === 'billboard' || v === 'off' ? v : fallback;
+}
 
 export interface AtmosphereOptions {
   /** Initial time-of-day preset index (default 0 = morning). */
   timeOfDay?: number;
-  /** Cumulus clouds (default true). */
+  /** Cumulus clouds (default true). false = 'off'. */
   clouds?: boolean;
+  /** Cloud renderer (default: URL ?clouds=, else config.render.cloudMode). */
+  cloudMode?: CloudMode;
+  /** Cloud shadows on materials (default config.atmosphere.cloudShadows.enabled, URL ?cloudshadows=0). */
+  cloudShadows?: boolean;
   /** Cirrus wisps in the sky shader (default true). */
   cirrus?: boolean;
   /** Sun shadows (default true). */
@@ -54,8 +80,15 @@ export interface Atmosphere {
   /** The current CPU lighting state (sun/sky/haze/cloud colours). */
   readonly state: AtmosphereState;
   readonly clouds: Clouds | null;
+  readonly volumetric: VolumetricClouds | null;
+  /** What is drawing the clouds right now. */
+  readonly cloudQuality: CloudQuality | 'off';
   /** 0..1 in-cloud density at the camera (smoothed). */
   readonly cloudImmersion: number;
+  /** Background generation (noise volumes, weather map) still running. */
+  readonly loading: boolean;
+  /** Debug numbers (cloud mode, budget, env re-bakes, jobs). */
+  stats(): Record<string, unknown>;
   dispose(): void;
 }
 
@@ -75,6 +108,8 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
   scene.add(sky.mesh);
   scene.background = null;
   const env = createEnvBaker(renderer, sky.envMesh);
+  const search = typeof location !== 'undefined' ? location.search : '';
+  const query = new URLSearchParams(search);
   scene.environmentIntensity = ac.skyAmbientIntensity;
 
   // ── Fog (scene.fog makes three compile the fog chunks; values = fallback) ─
@@ -104,15 +139,75 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
   scene.add(sunLight.target);
 
   // ── Clouds ───────────────────────────────────────────────────────────────
-  const clouds: Clouds | null =
-    opts.clouds === false
-      ? null
-      : createClouds({
-          seed: opts.seed ?? CONFIG.world.seed,
-          ...ac.clouds,
-          groundHeight: opts.groundHeight,
-        });
+  const cc = ac.clouds;
+  const vc = cc.volumetric;
+  const cloudMode: CloudMode = opts.clouds === false ? 'off' : (opts.cloudMode ?? cloudModeFromQuery(search, CONFIG.render.cloudMode));
+  const seed = opts.seed ?? CONFIG.world.seed;
+  const layout = {
+    seed,
+    count: cc.count,
+    coverage: cc.coverage,
+    baseAltitude: cc.baseAltitude,
+    thickness: cc.thickness,
+    areaRadius: cc.areaRadius,
+    groundHeight: opts.groundHeight,
+  };
+  const clouds: Clouds | null = cloudMode === 'off' ? null : createClouds(layout);
   if (clouds) scene.add(clouds.mesh);
+  const jobs: JobQueue = createJobQueue({ onError: (name, err) => console.warn(`[atmosphere] job ${name} failed`, err) });
+  const field = clouds ? clouds.field : null;
+  const baseMin = cc.baseAltitude - 150;
+  const volumetric: VolumetricClouds | null =
+    field && cloudMode !== 'off'
+      ? createVolumetricClouds({
+          field,
+          seed,
+          jobs,
+          weatherSize: vc.weatherSize,
+          baseMin,
+          baseRange: Math.max(1600, (field.clouds.reduce((m, c) => Math.max(m, c.base), 0) - baseMin) * 1.02),
+          maxThickness: cc.thickness + 50,
+          resolution: Number(query.get('cloudres')) || CONFIG.render.cloudResolution,
+          sigma: vc.sigma,
+          maxDistance: vc.maxDistance,
+          shapeErosion: vc.shapeErosion,
+          detailErosion: vc.detailErosion,
+          sunScale: vc.sunScale,
+          ambientScale: vc.ambientScale,
+          temporalAlpha: vc.temporalAlpha,
+          shadowSize: ac.cloudShadows.size,
+        })
+      : null;
+  const budget: CloudBudget = createCloudBudget({
+    budgetMs: CONFIG.render.cloudBudgetMs,
+    targetFps: CONFIG.render.targetFps,
+    // ?cloudbudget=0 pins the volumetric renderer (QA / profiling)
+    forced: cloudMode === 'billboard' ? 'billboard' : query.get('cloudbudget') === '0' ? 'volumetric' : undefined,
+  });
+  const baseResolution = volumetric ? volumetric.resolution : 1;
+  const shadowsWanted = opts.cloudShadows ?? (query.get('cloudshadows') !== '0' && ac.cloudShadows.enabled);
+  jobs.startIdleLoop(6);
+  // The cloud pass as the renderer sees it (frameData.ts).
+  let volumetricOn = false;
+  const cloudHook: CloudPassHook | null = volumetric
+    ? {
+        get active() {
+          return volumetricOn;
+        },
+        render: (r, depth, camera, w, h, pr, mode) => volumetric.render(r, depth, camera, w, h, pr, mode),
+        get outputA() {
+          return volumetric.outputA;
+        },
+        get outputB() {
+          return volumetric.outputB;
+        },
+        size: volumetric.size,
+        layerBottom: volumetric.layerBottom,
+        layerTop: volumetric.layerTop,
+        gpuMs: NaN,
+        atMinQuality: false,
+      }
+    : null;
 
   // ── Shared per-frame data for the output pass ────────────────────────────
   const frame: AtmosphereFrameData = {
@@ -123,6 +218,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     immersion: 0,
     immersionColor: new THREE.Color(1, 1, 1),
     flare: opts.flare ?? CONFIG.render.lensFlare.enabled,
+    clouds: cloudHook,
   };
   setAtmosphereFrameData(scene, frame);
 
@@ -132,7 +228,17 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
   let stateY = 2;
   let envY = -1e9;
   let envAge = 1e9;
+  let envBakes = 0;
   let frameNo = 0;
+  let windX = 0;
+  let windZ = 0;
+  let shadowSunX = NaN;
+  let shadowSunY = NaN;
+  let shadowSunZ = NaN;
+  let shadowFocus = 0;
+  let immersion = 0;
+  let quality: CloudQuality | 'off' = cloudMode === 'off' ? 'off' : 'billboard';
+  const q3 = { x: 0, y: 0, z: 0 };
   const cam = new THREE.Vector3();
   const snapped = new THREE.Vector3();
   const hz = { r: 0, g: 0, b: 0 };
@@ -160,6 +266,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     // no direct light (and no shadows) once the sun is below the horizon
     sunLight.visible = sunDirection.y > -0.01;
     clouds?.setLighting({ sunDir: sunDirection, sun: s.cloud.sun, ambientTop: s.cloud.ambientTop, ambientBottom: s.cloud.ambientBottom });
+    volumetric?.setLighting({ sunDir: sunDirection, sun: s.cloud.sun, ambientTop: s.cloud.ambientTop, ambientBottom: s.cloud.ambientBottom });
     frame.sunDirection.copy(sunDirection);
     frame.sunColor.setRGB(s.sunAtCamera.r, s.sunAtCamera.g, s.sunAtCamera.b, THREE.LinearSRGBColorSpace);
     frame.sunDiscLuminance = s.sunDiscLuminance;
@@ -170,6 +277,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     scene.environment = env.bake();
     envY = state.cameraY;
     envAge = 0;
+    envBakes++;
   }
 
   function recompute(cameraY: number) {
@@ -187,12 +295,80 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     bakeEnv();
   }
 
+  function updateClouds(camera: THREE.PerspectiveCamera, dt: number) {
+    // wind drift (clouds, their shadows and the billboard fallback move together)
+    windX += cc.wind[0] * dt;
+    windZ += cc.wind[1] * dt;
+    if (field) {
+      const t = field.tile;
+      windX -= Math.floor(windX / t) * t;
+      windZ -= Math.floor(windZ / t) * t;
+    }
+    clouds?.setWind(windX, windZ);
+    volumetric?.setWind(windX, windZ);
+
+    // which renderer draws the clouds
+    let next: CloudQuality | 'off' = cloudMode === 'off' ? 'off' : 'billboard';
+    if (volumetric && volumetric.ready && cloudMode === 'volumetric') {
+      if (cloudHook) cloudHook.gpuMs = volumetricOn ? cloudHook.gpuMs : NaN;
+      budget.update(dt, volumetricOn && cloudHook ? cloudHook.gpuMs : null, cloudHook?.atMinQuality ?? false);
+      next = budget.quality;
+      volumetric.resolution = next === 'volumetric-low' ? baseResolution * 0.7 : baseResolution;
+    }
+    if (next !== quality) {
+      volumetric?.resetHistory();
+      quality = next;
+    }
+    volumetricOn = quality === 'volumetric' || quality === 'volumetric-low';
+    if (clouds) {
+      clouds.mesh.visible = quality === 'billboard';
+      if (clouds.mesh.visible) clouds.update(camera, dt);
+    }
+
+    // cloud shadows: re-render the shadow map when the sun moved
+    if (volumetric && volumetric.ready && shadowsWanted && (sunDirection.x !== shadowSunX || sunDirection.y !== shadowSunY || sunDirection.z !== shadowSunZ)) {
+      volumetric.renderShadowMap(renderer, sunDirection);
+      shadowSunX = sunDirection.x;
+      shadowSunY = sunDirection.y;
+      shadowSunZ = sunDirection.z;
+    }
+    const shadowsOnNow = shadowsWanted && volumetric !== null && !Number.isNaN(shadowSunX);
+    if (volumetric) packCloudShadowUniforms(shadowsOnNow ? ac.cloudShadows.strength : 0, volumetric.weather.baseMin, volumetric.weather.tile, windX, windZ);
+
+    // in-cloud immersion: billboards use their own estimate; the volumetric march does its own whiteout
+    let target = 0;
+    if (quality === 'billboard' && clouds) target = clouds.immersion;
+    else if (volumetric && volumetric.ready) target = cloudColumnDensity(volumetric.weather, cam.x, cam.y, cam.z, windX, windZ);
+    immersion += (target - immersion) * (1 - Math.exp(-Math.max(0, dt) / 0.25));
+    frame.immersion = quality === 'billboard' ? Math.min(1, immersion * 1.15) : 0;
+
+    // the aircraft's shadow fades inside a cloud shadow (no direct sun there)
+    if (volumetric && volumetric.ready && shadowsOnNow && sunLight.castShadow && ++shadowFocus % 8 === 0) {
+      projectAlongSun(cam.x, Math.max(cam.y, 0), cam.z, sunDirection, volumetric.weather.baseMin, q3);
+      const op = cam.y < volumetric.weather.baseMin + 600 ? shadowOpacityAt(volumetric.weather, q3.x, q3.z, sunDirection, windX, windZ, 32) : 0;
+      sunLight.shadow.intensity += (1 - 0.85 * op - sunLight.shadow.intensity) * 0.5;
+    }
+  }
+
   function update(camera: THREE.PerspectiveCamera, dt: number, focus: THREE.Vector3) {
     frameNo++;
     envAge += dt;
     camera.getWorldPosition(cam);
     if (Math.abs(cam.y - stateY) > 25) recompute(cam.y);
-    if (Math.abs(cam.y - envY) > ac.envRebakeAltitudeStep && envAge > 2) bakeEnv();
+    // background generation: a small slice every frame (the idle loop does the rest between frames)
+    if (jobs.pending > 0) jobs.step(2);
+    // altitude-driven environment re-bake, one slice per frame (no hitch)
+    if (env.busy) {
+      const tex = env.step();
+      if (tex) {
+        scene.environment = tex;
+        envBakes++;
+      }
+    } else if (Math.abs(cam.y - envY) > ac.envRebakeAltitudeStep && envAge > 2) {
+      env.beginBake();
+      envY = cam.y;
+      envAge = 0;
+    }
 
     // sky follows the camera
     sky.uniforms.uCamY.value = cam.y;
@@ -212,10 +388,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
       sunLight.target.position.copy(focus);
     }
 
-    if (clouds) {
-      clouds.update(camera, dt);
-      frame.immersion = Math.min(1, clouds.immersion * 1.15);
-    }
+    if (clouds || volumetric) updateClouds(camera, dt);
 
     // late-created ShaderMaterials without the shared fog uniform (see fog.ts)
     if (frameNo === 2 || frameNo % 120 === 0) ensureSceneFogUniforms(scene);
@@ -238,10 +411,33 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
       return state;
     },
     clouds,
+    volumetric,
+    get cloudQuality() {
+      return quality;
+    },
     get cloudImmersion() {
-      return frame.immersion;
+      return immersion;
+    },
+    get loading() {
+      return jobs.pending > 0;
+    },
+    stats() {
+      return {
+        cloudMode,
+        cloudQuality: quality,
+        cloudGpuMs: cloudHook ? Math.round(cloudHook.gpuMs * 100) / 100 : null,
+        cloudResolution: volumetric?.resolution ?? null,
+        cloudBuffer: volumetric ? `${volumetric.size.x}x${volumetric.size.y}` : null,
+        jobs: jobs.pending,
+        job: jobs.current,
+        envBakes,
+        cloudShadows: shadowsWanted,
+        immersion: Math.round(immersion * 100) / 100,
+      };
     },
     dispose() {
+      jobs.dispose();
+      volumetric?.dispose();
       scene.remove(sky.mesh);
       scene.remove(sunLight);
       scene.remove(sunLight.target);
