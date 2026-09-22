@@ -1,21 +1,28 @@
 /**
  * The simulator application: wires the pure simulation (input → controls →
- * fixed-step physics) to the renderer (world, atmosphere, aircraft, cameras,
- * HUD, audio). This is the only module that knows about all the others.
+ * fixed-step physics) to the renderer (atmosphere, aircraft, cameras) and to
+ * the auto-discovered systems in src/game/systems (terrain, water, airport,
+ * roads, towns, vegetation, traffic, fx, audio, HUD).
  *
  * Frame:
  *   input.frame() → updateControls → actions
  *   FixedStepLoop.advance(dt): step(state, controls, 1/120, env)   (physics at 120 Hz)
  *   interpolatePose(prev, state, alpha) → aircraft root + camera target
- *   camera rig → three camera; world/atmosphere/water update; HUD; audio; render
+ *   camera rig → three camera; atmosphere; systems.update; render
  *   window.sim ← snapshot
+ *
+ * Dev/QA URL parameters:
+ *   ?spawn=x,z,aglFt,headingDeg[,speedKt]   start airborne, trimmed, at a world position
+ *   ?cam=cockpit|chase|external|orbit        initial camera
+ *   ?tod=0..3                                time-of-day preset
+ *   ?pause=1                                 start paused (the world still streams and renders)
+ *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
  */
 import * as THREE from 'three';
-import { CONFIG } from '../config';
-import type { AircraftState, CameraMode, Controls, Environment } from '../types';
-import { createInitialState, createApproachState, approachControls, step } from '../physics';
+import { CONFIG, FT_TO_M } from '../config';
+import type { AircraftState, CameraMode, Controls } from '../types';
+import { createInitialState, createApproachState, approachControls, createTrimmedState, step } from '../physics';
 import { createEnvironment } from '../world/environment';
-import { createTerrain, createWater } from '../world/terrainIndex';
 import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
 import { createAircraft } from '../aircraft';
@@ -28,45 +35,70 @@ import { FixedStepLoop } from './loop';
 import { createFpsMeter, recordFrame, fpsStats } from './fps';
 import { interpolatePose } from './interpolate';
 import { buildSimSnapshot, installSimApi } from './simApi';
-import { createExtras, type Extras } from './extras';
+import { createSystems } from './systems';
 
 export interface App {
   dispose(): void;
 }
 
+export interface TeleportRequest {
+  x: number;
+  z: number;
+  /** Height above the ground/water, ft (default 1500). */
+  aglFt?: number;
+  headingDeg?: number;
+  speedKt?: number;
+  gearDown?: boolean;
+  flapsNotch?: number;
+}
+
+const CAMERA_MODES: CameraMode[] = ['cockpit', 'chase', 'external', 'orbit'];
+
 export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Promise<App> {
   const cfg = CONFIG;
+  const params = new URLSearchParams(location.search);
 
   // ── Renderer, scene, camera ───────────────────────────────────────────────
   const rend = createRenderer(container);
   const renderer = rend.renderer;
+  renderer.info.autoReset = false;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(cfg.camera.chase.fov, innerWidth / innerHeight, cfg.camera.near, cfg.camera.far);
   scene.add(camera);
 
-  // ── World ─────────────────────────────────────────────────────────────────
+  // ── World, sky, aircraft ──────────────────────────────────────────────────
   const env = createEnvironment();
   const atmosphere = createAtmosphere(renderer, scene, { groundHeight: (x: number, z: number) => env.groundHeight(x, z) });
-  const terrain = createTerrain(renderer, scene);
-  const water = createWater(scene);
-
-  // ── Aircraft ──────────────────────────────────────────────────────────────
   const aircraft = createAircraft({ quality: 'high' });
   scene.add(aircraft.root);
+
+  const surfaceHeight = (x: number, z: number) => {
+    const g = env.groundHeight(x, z);
+    const w = env.waterLevel(x, z);
+    return w === null ? g : Math.max(g, w);
+  };
 
   // ── Simulation state ──────────────────────────────────────────────────────
   let state: AircraftState = createInitialState(env);
   let prev: AircraftState = state;
   let controlState = createControlState();
-  let camRig: CameraRigState = createCameraRig('chase');
-  let paused = false;
+  const camParam = params.get('cam') as CameraMode | null;
+  let camRig: CameraRigState = createCameraRig(camParam && CAMERA_MODES.includes(camParam) ? camParam : 'chase');
+  let paused = params.get('pause') === '1';
   let timeOfDay = 0;
   const loop = new FixedStepLoop(cfg.sim.fixedDt, cfg.sim.maxSubSteps, cfg.sim.maxFrameDt);
   const fpsMeter = createFpsMeter();
   const input = createInputManager(renderer.domElement, window);
 
-  // Wave-2 systems (HUD, audio, airport, vegetation, towns, fx) plug in here.
-  const extras: Extras = await createExtras({ renderer, scene, camera, env, hudRoot, aircraft, atmosphere });
+  const setTimeOfDay = (i: number) => {
+    const n = cfg.atmosphere.timeOfDay.length;
+    timeOfDay = ((Math.round(i) % n) + n) % n;
+    atmosphere.setTimeOfDay(timeOfDay);
+  };
+  if (params.has('tod')) setTimeOfDay(Number(params.get('tod')));
+
+  // Systems: terrain, water, airport, roads, towns, vegetation, traffic, fx, audio, HUD (auto-discovered).
+  const systems = await createSystems({ renderer, scene, camera, env, hudRoot, aircraft, atmosphere });
 
   const resetTo = (which: 'runway' | 'approach') => {
     state = which === 'runway' ? createInitialState(env) : createApproachState(env);
@@ -74,7 +106,21 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     controlState = resetControls(controlState, which === 'approach' ? approachControls() : undefined);
     camRig = snapCamera(camRig);
     loop.reset();
-    extras.onReset?.(which);
+    systems.onReset(which);
+  };
+  const teleport = (t: TeleportRequest) => {
+    const ground = surfaceHeight(t.x, t.z);
+    const agl = (t.aglFt ?? 1500) * FT_TO_M;
+    const trimmed = createTrimmedState(
+      { altitudeM: ground + agl, iasKt: t.speedKt ?? 95, headingDeg: t.headingDeg ?? 0, x: t.x, z: t.z, gearDown: t.gearDown ?? false, flapsNotch: t.flapsNotch ?? 0 },
+      env,
+    );
+    state = trimmed.state;
+    prev = state;
+    controlState = resetControls(controlState, trimmed.controls);
+    camRig = snapCamera(camRig);
+    loop.reset();
+    systems.onReset('teleport');
   };
   const setCamera = (mode: CameraMode) => {
     camRig = setCameraMode(camRig, mode);
@@ -88,6 +134,18 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       paused = p;
     },
   });
+  Object.assign(simApi.object, {
+    teleport,
+    setTimeOfDay,
+    systems: () => systems.names(),
+    debug: () => ({ systems: systems.stats(), timings: systems.timings() }),
+  });
+
+  const spawn = params.get('spawn');
+  if (spawn) {
+    const [x, z, agl, hdg, kt] = spawn.split(',').map(Number);
+    if (Number.isFinite(x) && Number.isFinite(z)) teleport({ x, z, aglFt: Number.isFinite(agl) ? agl : 1500, headingDeg: Number.isFinite(hdg) ? hdg : 0, speedKt: Number.isFinite(kt) ? kt : 95 });
+  }
 
   const handleAction = (a: SimAction) => {
     switch (a) {
@@ -99,13 +157,10 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       case 'camera:chase': setCamera('chase'); break;
       case 'camera:external': setCamera('external'); break;
       case 'camera:orbit': setCamera('orbit'); break;
-      case 'timeOfDay':
-        timeOfDay = (timeOfDay + 1) % cfg.atmosphere.timeOfDay.length;
-        atmosphere.setTimeOfDay(timeOfDay);
-        break;
+      case 'timeOfDay': setTimeOfDay(timeOfDay + 1); break;
       default: break;
     }
-    extras.onAction?.(a);
+    systems.onAction(a);
   };
 
   // ── Resize ────────────────────────────────────────────────────────────────
@@ -113,23 +168,17 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     rend.resize();
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    extras.onResize?.();
+    systems.onResize();
   };
   addEventListener('resize', onResize);
 
-  // Build the tiles around the runway before the first frame so the aircraft never sits in the void.
+  // Build what's around the aircraft before the first frame so it never sits in the void.
   camera.position.set(state.position.x, state.position.y + 5, state.position.z + 20);
   camera.updateMatrixWorld();
-  terrain.update(camera);
-  await Promise.race([terrain.ready(), new Promise((r) => setTimeout(r, 8000))]);
+  await systems.ready(camera, 8000);
 
   // ── Frame loop ────────────────────────────────────────────────────────────
   const clock = { last: performance.now() / 1000, time: 0 };
-  const groundHeight = (x: number, z: number) => {
-    const g = env.groundHeight(x, z);
-    const w = env.waterLevel(x, z);
-    return w === null ? g : Math.max(g, w);
-  };
   const focus = new THREE.Vector3();
   const visual: AircraftVisualState = {
     elevator: 0, aileron: 0, rudder: 0, trim: 0, flapsDeg: 0, gearPos: 1,
@@ -138,12 +187,14 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     lights: { nav: true, strobe: true, beacon: true, landing: true, taxi: true },
     time: 0, cameraMode: 'chase', instruments: null,
   };
+  const renderStats = { calls: 0, triangles: 0, points: 0, lines: 0, geometries: 0, textures: 0 };
 
   const frame = () => {
     const now = performance.now() / 1000;
     const frameDt = Math.min(now - clock.last, cfg.sim.maxFrameDt);
     clock.last = now;
     clock.time += frameDt;
+    renderer.info.reset();
 
     // Input → smoothed controls + discrete actions.
     const inFrame = input.frame();
@@ -158,7 +209,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     if (!paused) {
       const r = loop.advance(frameDt, (h) => {
         prev = state;
-        state = step(state, controls, h, env as Environment);
+        state = step(state, controls, h, env);
       });
       alpha = r.alpha;
     }
@@ -166,7 +217,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     aircraft.root.position.set(pose.position.x, pose.position.y, pose.position.z);
     aircraft.root.quaternion.set(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
 
-    // Aircraft animation.
+    // Instruments + aircraft animation.
+    const readings = systems.readings(state, controls, paused ? 0 : frameDt);
     visual.elevator = controls.elevator;
     visual.aileron = controls.aileron;
     visual.rudder = controls.rudder;
@@ -183,11 +235,12 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.lights.taxi = controlState.landingLight;
     visual.time = clock.time;
     visual.cameraMode = camRig.mode;
-    visual.instruments = extras.readings?.(state, controls, frameDt) ?? null;
+    visual.instruments = readings;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.
-    const shake = extras.cameraShake?.(state) ??
+    const shake =
+      systems.cameraShake(state) ??
       shakeTarget({
         onGround: state.onGround,
         groundSpeed: state.derived.groundSpeed,
@@ -199,23 +252,32 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       { position: pose.position, orientation: pose.orientation, velocity: state.velocity, onGround: state.onGround },
       { dx: inFrame.mouse.dx, dy: inFrame.mouse.dy, wheel: inFrame.mouse.wheel, dragging: inFrame.mouse.dragging, shake },
       frameDt,
-      groundHeight,
+      surfaceHeight,
     );
     camRig = cam.state;
     applyCameraPose(camera, cam.pose);
     camera.updateMatrixWorld();
 
-    // World.
+    // Sky, world systems, render.
     focus.copy(aircraft.root.position);
     atmosphere.update(camera, frameDt, focus);
-    terrain.update(camera);
-    water.update(camera, clock.time, atmosphere.sunDirection);
-    extras.update?.({ state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps: fpsStats(fpsMeter) });
+    const fps = fpsStats(fpsMeter);
+    systems.update({ state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings });
 
     renderer.render(scene, camera);
 
+    const info = renderer.info;
+    renderStats.calls = info.render.calls;
+    renderStats.triangles = info.render.triangles;
+    renderStats.points = info.render.points;
+    renderStats.lines = info.render.lines;
+    renderStats.geometries = info.memory.geometries;
+    renderStats.textures = info.memory.textures;
     recordFrame(fpsMeter, frameDt, now);
     simApi.update(buildSimSnapshot({ state, controls, fps: fpsStats(fpsMeter), cameraMode: camRig.mode, paused }));
+    simApi.object.render = renderStats;
+    simApi.object.timeOfDay = atmosphere.timeOfDayName;
+    (simApi.object.perf as Record<string, unknown>).systems = systems.timings();
   };
   renderer.setAnimationLoop(frame);
 
@@ -224,9 +286,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       renderer.setAnimationLoop(null);
       removeEventListener('resize', onResize);
       input.dispose();
-      extras.dispose?.();
-      terrain.dispose();
-      water.dispose();
+      systems.dispose();
       atmosphere.dispose();
       aircraft.dispose();
       rend.dispose();
