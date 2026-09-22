@@ -126,3 +126,16 @@ Findings → agents: cockpit prop ring / door post / panel gear text (aircraft, 
 after a crash → wreck state (aircraft); cartoonish flames (ux); cobblestone town-ground texture
 (terrain). Open question: approach trim solves to 53 % nose-down with flaps 20 at 72 kt and pitch
 −3…−4° on the glide path — plausible with the flap model but unusual for a 172; revisit.
+
+## 2026-09-22 — Automation hijacked JT's Chrome (fixed)
+
+JT: clicking Chrome in the Dock didn't open his normal profile. Cause: every automated browser —
+the Playwright MCP window, `scripts/shot.mjs` and the e2e harness (`channel: 'chrome'`) — launched
+`/Applications/Google Chrome.app` itself (with separate throwaway profiles); with 10 agents taking
+screenshots, an automation instance of Chrome was almost always running, so the Dock icon
+activated it instead of starting JT's profile. Fix: all automation now uses **Google Chrome for
+Testing** (separate app bundle in `~/Library/Caches/ms-playwright/chromium-*`, or `TEST_BROWSER`);
+`shot.mjs` and `tests/support/e2e.ts` refuse to fall back to the user's Chrome; the Playwright MCP
+browser (which launches Google Chrome) is no longer used; automation instances were killed.
+(The shared node_modules copy of playwright-core also maps channel 'chrome' to Chrome for Testing
+as a stop-gap for agent worktrees still on the old scripts — it reverts on `npm install`.)

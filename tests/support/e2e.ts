@@ -11,8 +11,8 @@ import { createServer, type ViteDevServer } from 'vite';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import { createHash } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
-import { realpathSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { realpathSync, existsSync, readdirSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,10 +58,30 @@ export async function startViteServer(root = ROOT): Promise<E2EServer> {
   return { url: `http://127.0.0.1:${port}/`, close: () => server.close() };
 }
 
-/** Headless Google Chrome with GPU WebGL (same flags as scripts/shot.mjs). */
+/**
+ * The browser binary for automated tests: "Google Chrome for Testing" from the Playwright cache,
+ * or TEST_BROWSER. NEVER the user's own /Applications/Google Chrome.app — an automation instance
+ * of it hijacks the Dock icon so JT's normal profile won't open (see RECORD.md).
+ */
+export function testBrowserPath(): string {
+  if (process.env.TEST_BROWSER) return process.env.TEST_BROWSER;
+  const cache = join(homedir(), 'Library/Caches/ms-playwright');
+  const dirs = existsSync(cache)
+    ? readdirSync(cache).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]))
+    : [];
+  for (const d of dirs) {
+    for (const rel of ['chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+      const p = join(cache, d, rel);
+      if (existsSync(p)) return p;
+    }
+  }
+  throw new Error("No Chrome for Testing in ~/Library/Caches/ms-playwright — set TEST_BROWSER (never the user's Google Chrome).");
+}
+
+/** Headless Chrome for Testing with GPU WebGL (same flags as scripts/shot.mjs). */
 export function launchChrome(): Promise<Browser> {
   return chromium.launch({
-    channel: process.env.E2E_CHANNEL || 'chrome',
+    executablePath: testBrowserPath(),
     headless: true,
     args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'],
   });
