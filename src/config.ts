@@ -549,6 +549,50 @@ export const CONFIG = {
       windStrength: 1,
       windSpeed: 1,
     },
+    /** Buildings, farmsteads and roads (owned by src/world/towns + src/world/roads). */
+    towns: {
+      /** Building chunk size, m: one InstancedMesh per archetype per chunk (frustum-culled as a unit). */
+      chunkSize: 1024,
+      /** Detailed geometry (pitched roofs, facade shader) while a chunk is nearer than this, m. */
+      nearDistance: 1600,
+      /** Simple boxes beyond nearDistance, hidden past midDistance (the terrain's urban colour takes over)… */
+      midDistance: 7500,
+      /** …except tall buildings (towers, spires, silos), which stay visible as boxes out to farDistance, m. */
+      farDistance: 16000,
+      /** A box is drawn at distance d only while its size (m) ≥ d × this (≈ 1.5 px at 1440×900). */
+      minAngularSize: 0.0016,
+      /** LOD switch hysteresis, as a fraction of the switch distance. */
+      hysteresis: 0.06,
+      /** Farmsteads: one candidate per jittered grid cell of this size (m), kept with this probability. */
+      farmsteadSpacing: 900,
+      farmsteadChance: 0.62,
+      /** Farmsteads/rural houses need ground below this height (m MSL) and gentler than this slope. */
+      farmMaxHeight: 420,
+      maxSlope: 0.16,
+      /** Scattered houses along country roads outside towns: probability per 45 m of road side. */
+      roadsideHouseChance: 0.035,
+      roads: {
+        /** Road chunk size, m (one merged mesh per chunk for major roads, one for streets). */
+        chunkSize: 2048,
+        /** Terrain sampling step along roads before simplification, m; tolerance of the simplified drape, m. */
+        sampleSpacing: 4,
+        drapeTolerance: 0.05,
+        /** Longest ribbon segment after simplification, m. */
+        maxSegment: 48,
+        /** Height of the ribbon above the terrain, m (plus polygonOffset + view-space depth pull). */
+        lift: 0.12,
+        /** Fraction of the view distance the road vertices are pulled toward the camera (depth only). */
+        depthPull: 0.0012,
+        viewDistance: 18000,
+        streetViewDistance: 6500,
+        /** Bridge deck clearance above the water (m) and approach ramp length (m). */
+        bridgeClearance: 4,
+        bridgeRamp: 70,
+        /** Moving cars on the highway and main roads (instanced), drawn within carViewDistance of the camera. */
+        cars: 90,
+        carViewDistance: 3500,
+      },
+    },
   },
 
   // ─── Sky, sun, fog, lighting (owned by src/render) ───────────────────────────
