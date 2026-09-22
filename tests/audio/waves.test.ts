@@ -1,0 +1,128 @@
+import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
+import {
+  fourierSeries, engineCycleWaveform, propWaveform, pulseWaveform, hornWaveform, noiseSamples, mulberry32,
+} from '../../src/audio/waves';
+import { rms, goertzelAmplitude, dominantFrequency } from '../../src/audio/analysis';
+
+const harmonicEnergy = (w: { real: Float32Array; imag: Float32Array }, k: number) => w.real[k] ** 2 + w.imag[k] ** 2;
+const allFinite = (a: ArrayLike<number>) => Array.from(a).every(Number.isFinite);
+
+describe('fourierSeries', () => {
+  it('recovers the harmonics of a known waveform (PeriodicWave convention)', () => {
+    const n = 512;
+    const s = new Float32Array(n);
+    for (let j = 0; j < n; j++) {
+      const t = j / n;
+      s[j] = 0.7 * Math.cos(2 * Math.PI * 3 * t) + 0.25 * Math.sin(2 * Math.PI * 5 * t) + 0.3; // DC dropped
+    }
+    const w = fourierSeries(s, 16);
+    expect(w.real.length).toBe(17);
+    expect(w.real[0]).toBe(0);
+    expect(w.imag[0]).toBe(0);
+    expect(w.real[3]).toBeCloseTo(0.7, 4);
+    expect(w.imag[5]).toBeCloseTo(0.25, 4);
+    expect(Math.abs(w.real[4]) + Math.abs(w.imag[4])).toBeLessThan(1e-4);
+  });
+  it('fuzz: always finite, length harmonics+1', () => {
+    fc.assert(fc.property(fc.array(fc.double({ min: -10, max: 10, noNaN: true }), { minLength: 4, maxLength: 200 }), fc.integer({ min: 1, max: 64 }), (arr, h) => {
+      const w = fourierSeries(Float32Array.from(arr), h);
+      expect(w.real.length).toBe(h + 1);
+      expect(allFinite(w.real) && allFinite(w.imag)).toBe(true);
+    }));
+  });
+});
+
+describe('engine cycle waveform (one 4-stroke cycle = 2 revolutions)', () => {
+  const s = engineCycleWaveform(1024);
+  const w = fourierSeries(s, 48);
+  it('is finite and normalised', () => {
+    expect(allFinite(s)).toBe(true);
+    expect(Math.max(...Array.from(s, Math.abs))).toBeLessThanOrEqual(1 + 1e-6);
+  });
+  it('its strongest low harmonic is the 4th = the firing frequency (4 cylinders per cycle)', () => {
+    const e4 = harmonicEnergy(w, 4);
+    for (const k of [1, 2, 3, 5, 6, 7]) expect(e4).toBeGreaterThan(harmonicEnergy(w, k));
+  });
+  it('has the half-order "lumpiness" of an aero engine (uneven cylinders → harmonics 1–3 present)', () => {
+    const e4 = harmonicEnergy(w, 4);
+    for (const k of [1, 2, 3]) {
+      expect(harmonicEnergy(w, k)).toBeGreaterThan(e4 * 0.004);
+      expect(harmonicEnergy(w, k)).toBeLessThan(e4 * 0.6);
+    }
+  });
+  it('is rich in harmonics (pulse train, not a sine)', () => {
+    expect(harmonicEnergy(w, 8)).toBeGreaterThan(harmonicEnergy(w, 4) * 0.05);
+    expect(harmonicEnergy(w, 16)).toBeGreaterThan(0);
+  });
+});
+
+describe('other waveforms', () => {
+  it('prop blade pulse, AM pulse and horn are finite, normalised and non-trivial', () => {
+    for (const s of [propWaveform(512), pulseWaveform(512, 0.25), hornWaveform(512)]) {
+      expect(allFinite(s)).toBe(true);
+      const peak = Math.max(...Array.from(s, Math.abs));
+      expect(peak).toBeLessThanOrEqual(1 + 1e-6);
+      expect(rms(s)).toBeGreaterThan(0.05);
+    }
+  });
+  it('the horn waveform is buzzy (strong upper harmonics like a reed)', () => {
+    const w = fourierSeries(hornWaveform(1024), 12);
+    expect(harmonicEnergy(w, 2) + harmonicEnergy(w, 3)).toBeGreaterThan(harmonicEnergy(w, 1) * 0.15);
+  });
+});
+
+describe('noise', () => {
+  it('is deterministic per seed and bounded', () => {
+    const a = noiseSamples('white', 4096, 7);
+    const b = noiseSamples('white', 4096, 7);
+    const c = noiseSamples('white', 4096, 8);
+    expect(Array.from(a)).toEqual(Array.from(b));
+    expect(Array.from(a)).not.toEqual(Array.from(c));
+    for (const kind of ['white', 'pink', 'brown'] as const) {
+      const s = noiseSamples(kind, 8192, 3);
+      expect(allFinite(s)).toBe(true);
+      expect(Math.max(...Array.from(s, Math.abs))).toBeLessThanOrEqual(1);
+      expect(Math.abs(s.reduce((x, y) => x + y, 0) / s.length)).toBeLessThan(0.1);
+    }
+  });
+  it('brown < pink < white in high-frequency content', () => {
+    const hf = (s: Float32Array) => {
+      let d = 0;
+      for (let i = 1; i < s.length; i++) d += (s[i] - s[i - 1]) ** 2;
+      return d / rms(s) ** 2;
+    };
+    const w = hf(noiseSamples('white', 16384, 1));
+    const p = hf(noiseSamples('pink', 16384, 1));
+    const b = hf(noiseSamples('brown', 16384, 1));
+    expect(b).toBeLessThan(p);
+    expect(p).toBeLessThan(w);
+  });
+  it('mulberry32 is in [0,1)', () => {
+    const r = mulberry32(99);
+    for (let i = 0; i < 1000; i++) {
+      const v = r();
+      expect(v >= 0 && v < 1).toBe(true);
+    }
+  });
+});
+
+describe('analysis', () => {
+  const sr = 8000;
+  const sine = (f: number, amp: number, n = 8000) => Float32Array.from({ length: n }, (_, i) => amp * Math.sin((2 * Math.PI * f * i) / sr));
+  it('rms of a sine is amp/√2; of silence 0; of empty 0', () => {
+    expect(rms(sine(440, 0.5))).toBeCloseTo(0.5 / Math.SQRT2, 3);
+    expect(rms(new Float32Array(100))).toBe(0);
+    expect(rms(new Float32Array(0))).toBe(0);
+  });
+  it('goertzel measures the amplitude at a frequency', () => {
+    const s = sine(90, 0.4);
+    expect(goertzelAmplitude(s, sr, 90)).toBeCloseTo(0.4, 2);
+    expect(goertzelAmplitude(s, sr, 140)).toBeLessThan(0.02);
+  });
+  it('dominantFrequency finds the peak', () => {
+    const s = sine(1780, 0.3);
+    for (let i = 0; i < s.length; i++) s[i] += 0.05 * Math.sin((2 * Math.PI * 300 * i) / sr);
+    expect(dominantFrequency(s, sr, 100, 3000, 10)).toBeCloseTo(1780, -1);
+  });
+});

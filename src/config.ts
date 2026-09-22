@@ -598,6 +598,52 @@ export const CONFIG = {
     engineVolume: 0.55,
     windVolume: 0.35,
     stallHornVolume: 0.4,
+    /** Tyre rumble on the ground and brake scrub. */
+    rollingVolume: 0.32,
+    /** One-shots: touchdown chirp/thump, gear clunk, crash boom and debris. */
+    effectsVolume: 0.7,
+    /** Gear hydraulic pump hum and flap motor whine (cabin sounds). */
+    motorVolume: 0.16,
+    /** Lycoming O-360 (4 cylinders, 4-stroke → 2 firings per revolution) and a 2-blade McCauley prop. */
+    cylinders: 4,
+    propBlades: 2,
+    /** Engine exhaust loudness at idle power, relative to full power. */
+    idleLoudness: 0.32,
+    /** Below this rpm the running engine fades out (it is not firing yet). */
+    firingMinRpm: 250,
+    /** Low-pass cutoff of the "cabin" (cockpit view) and of the open exterior sound, Hz. */
+    cabinCutoffHz: 850,
+    exteriorCutoffHz: 16000,
+    /** Exterior views: full level within refDistanceM, inverse-distance beyond; the high end is absorbed with distance. */
+    refDistanceM: 15,
+    /** Distance at which the exterior cutoff has halved (air absorption), m. */
+    absorptionHalfM: 350,
+    /** Gain of cabin-only sounds (horn, motors, whistle) heard from outside the aircraft. */
+    exteriorCabinGain: 0.1,
+    speedOfSoundMs: 340,
+    /** Wind noise: full level at windFullKt; band-pass centre sweeps windMinHz → windMaxHz up to windTopKt. */
+    windFullKt: 140,
+    windMinHz: 260,
+    windMaxHz: 2400,
+    windTopKt: 180,
+    /** Cockpit door-seal whistle: narrow band at whistleHz, fading in between whistleStartKt and whistleFullKt. */
+    whistleHz: 2650,
+    whistleStartKt: 55,
+    whistleFullKt: 135,
+    whistleVolume: 0.05,
+    /** Rolling rumble reaches full level at rollingFullKt; relative roughness per surface. */
+    rollingFullKt: 60,
+    surfaceRumble: { runway: 0.45, asphalt: 0.5, grass: 0.85, dirt: 0.9, field: 1, forest: 1, rock: 1, snow: 0.55, sand: 0.8, urban: 0.6, water: 0.7 },
+    /** Stall warning: a pneumatic reed horn (~1600–2000 Hz, nasal) through a band-pass. Needs airflow to sound. */
+    stallHornHz: 1780,
+    stallHornQ: 4.5,
+    stallHornMinKt: 12,
+    /** Touchdown chirp/thump: faint at touchdownMinFpm, full at touchdownFullFpm (magnitudes). */
+    touchdownMinFpm: 40,
+    touchdownFullFpm: 700,
+    /** Gain/filter ramp time constants for setTargetAtTime, seconds (no clicks). */
+    rampTau: 0.045,
+    cameraRampTau: 0.12,
   },
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────
@@ -641,6 +687,84 @@ export const CONFIG = {
     startHintSeconds: 12,
     /** STALL annunciator blink rate, Hz. */
     stallBlinkHz: 2.5,
+  },
+
+  // ─── Effects: particles, camera shake, speed FOV (owned by src/fx) ─────────
+  fx: {
+    /** Seed of the effects RNG (deterministic bursts for tests and screenshots). */
+    seed: 1721,
+    /** Preallocated pools: smoke/dust, fire/embers (one sorted draw call together) and solid debris chunks. */
+    smokeCapacity: 1400,
+    fireCapacity: 700,
+    debrisCapacity: 48,
+    /** Particles fade out when the camera is closer than size × nearFade (no screen-filling sprites). */
+    nearFade: 0.55,
+    /** Fire: HDR emission scale and how much a fully hot particle still occludes what is behind it (0 = pure additive). */
+    fireIntensity: 3.2,
+    fireOcclusion: 0.22,
+    /** A single point light flickers at the fire (lights the ground and the wreck). Always present (intensity 0 when idle) so no shader recompiles. */
+    fireLight: true,
+    fireLightIntensity: 2400,
+    fireLightDistance: 220,
+    crash: {
+      /** Below this impact speed there is no fireball (fuel tanks survive) — only dust, debris and a little smoke. */
+      fireMinKt: 25,
+      fireballCount: 90,
+      fireballLife: [1.4, 3.0] as [number, number],
+      fireballSize: [3, 16] as [number, number],
+      fireballSpeed: 15,
+      /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
+      smokeDuration: 20,
+      smokeRate: 20,
+      smokeLife: [10, 16] as [number, number],
+      smokeSize: [5, 34] as [number, number],
+      smokeRise: 9,
+      smokeBuoyancy: 3.2,
+      smokeBuoyancyTau: 8,
+      /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
+      smokeDrag: 0.35,
+      /** Thick oily smoke albedo near the fire, lightening with age (×(1 + smokeLighten·t)). */
+      smokeAlbedo: 0.045,
+      smokeLighten: 4,
+      groundFireDuration: 16,
+      groundFireRate: 34,
+      debrisCount: 30,
+      emberCount: 70,
+    },
+    touchdown: {
+      /** Puffs per main wheel at a feather-light and at a hard touchdown. */
+      minPuffs: 3,
+      maxPuffs: 16,
+      life: [1.6, 3.4] as [number, number],
+      /** Final puff diameter at a soft / hard touchdown, m. */
+      softSize: 1.8,
+      hardSize: 6,
+      /** Tyre smoke on pavement; dust on soft ground; spray on water. */
+      smokeAlbedo: [0.72, 0.72, 0.7] as [number, number, number],
+      dustAlbedo: [0.46, 0.38, 0.28] as [number, number, number],
+      grassAlbedo: [0.38, 0.4, 0.27] as [number, number, number],
+      sprayAlbedo: [0.85, 0.88, 0.9] as [number, number, number],
+      /** fpm (magnitude) at which the puffs reach full size/count. */
+      fullFpm: 700,
+    },
+    /** Camera shake intensities (0..1, fed to CameraInput.shake — the rig squares it). */
+    shake: {
+      rollMax: 0.42,
+      rollFullKt: 65,
+      surfaceRoughness: { runway: 0.45, asphalt: 0.5, grass: 0.85, dirt: 0.9, field: 1, forest: 1, rock: 1, snow: 0.6, sand: 0.8, urban: 0.65, water: 0.7 },
+      /** Stall buffet begins buffetMarginDeg below the stall AoA and is full buffetPastDeg past it. */
+      buffetMax: 0.55,
+      buffetMarginDeg: 3,
+      buffetPastDeg: 2,
+      /** Airframe vibration between overspeedStart·Vne and overspeedFull·Vne. */
+      overspeedMax: 0.4,
+      overspeedStart: 0.9,
+      overspeedFull: 1.08,
+      /** Crash shake starts at 1 and decays at this rate, 1/s. */
+      crashDecay: 1.6,
+    },
+    /** Subtle FOV widening with airspeed (degrees added to the camera FOV). */
+    fov: { startKt: 55, fullKt: 170, maxDeg: 3.5 },
   },
 };
 
