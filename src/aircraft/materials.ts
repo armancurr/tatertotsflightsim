@@ -24,7 +24,51 @@ export interface AircraftMaterials {
   cabin: THREE.MeshStandardMaterial;
   panel: THREE.MeshStandardMaterial;
   gearLights: THREE.MeshBasicMaterial;
+  /** Wreck soot coverage 0..1 (shared uniform of every painted/parts material). */
+  char: { value: number };
   all: THREE.Material[];
+}
+
+/**
+ * Soot for the wreck: blackened, matte, clear-coat burnt off, spreading from the
+ * engine aft with a noisy front as `char.value` goes 0 → 1. Costs one uniform
+ * test per fragment while intact (no recompile when it starts).
+ */
+const SOOT_GLSL = /* glsl */ `
+uniform float uChar;
+varying vec3 vSootPos;
+float sootHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float sootNoise(vec3 x) {
+  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(sootHash(i), sootHash(i + vec3(1, 0, 0)), f.x), mix(sootHash(i + vec3(0, 1, 0)), sootHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(sootHash(i + vec3(0, 0, 1)), sootHash(i + vec3(1, 0, 1)), f.x), mix(sootHash(i + vec3(0, 1, 1)), sootHash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float sootAmount(vec3 p) {
+  if (uChar <= 0.0) return 0.0;
+  float n = sootNoise(p * 3.1) * 0.6 + sootNoise(p * 9.3) * 0.4;
+  float d = length(p - vec3(0.0, -0.1, -1.6));
+  float front = uChar * 8.5 - d + (n - 0.5) * 2.4;
+  return smoothstep(0.0, 1.3, front) * (0.72 + 0.28 * n);
+}
+`;
+
+export function addSoot<T extends THREE.MeshStandardMaterial>(m: T, char: { value: number }): T {
+  const prev = m.onBeforeCompile;
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.onBeforeCompile = (shader, renderer) => {
+    prev.call(m, shader, renderer);
+    shader.uniforms.uChar = char;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vSootPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSootPos = position;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + SOOT_GLSL)
+      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat wSoot = sootAmount(vSootPos);\ndiffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.028, 0.025, 0.023), wSoot);')
+      .replace('#include <normal_fragment_begin>', 'roughnessFactor = mix(roughnessFactor, 0.97, wSoot);\nmetalnessFactor = mix(metalnessFactor, 0.0, wSoot);\n#include <normal_fragment_begin>')
+      .replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n#ifdef USE_CLEARCOAT\nmaterial.clearcoat *= 1.0 - wSoot;\n#endif');
+  };
+  m.customProgramCacheKey = () => prevKey() + '|soot';
+  return m;
 }
 
 /** Adds per-vertex roughness/metalness (attribute `rm`) to a standard/physical material. */
@@ -104,10 +148,17 @@ export function createMaterials(tex: FuselageTextures | null): AircraftMaterials
   glass.customProgramCacheKey = () => 'ac-glass';
   glass.name = 'ac.glass';
 
+  // Propeller blur disc: the time average of two twisted blades — faint, slightly darker than
+  // what is behind it, denser mid-span where the chord is widest, fine radial banding from the
+  // twist, a barely-there ring where the painted tips sweep, and a stroboscopic two-blade ghost
+  // near idle. The back (black blade faces) is what the pilot sees: darker and fainter still.
   const disc = new THREE.ShaderMaterial({
     name: 'ac.propDisc',
     uniforms: {
-      uBlend: { value: 0 },
+      uAlpha: { value: 0 },
+      uTip: { value: 0 },
+      uTint: { value: 0 },
+      uGhost: { value: 0 },
       uAngle: { value: 0 },
       uRadius: { value: 0.96 },
     },
@@ -118,7 +169,10 @@ export function createMaterials(tex: FuselageTextures | null): AircraftMaterials
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: /* glsl */ `
-      uniform float uBlend;
+      uniform float uAlpha;
+      uniform float uTip;
+      uniform float uTint;
+      uniform float uGhost;
       uniform float uAngle;
       uniform float uRadius;
       varying vec2 vP;
@@ -126,23 +180,16 @@ export function createMaterials(tex: FuselageTextures | null): AircraftMaterials
         float r = length(vP) / uRadius;
         if (r > 1.0) discard;
         float a = atan(vP.y, vP.x);
-        // Blade coverage: blades are widest mid-span; soft root and tip.
-        float cover = smoothstep(0.12, 0.3, r) * (1.0 - smoothstep(0.96, 1.0, r));
-        // A faint two-blade ghost that turns slowly, plus fine concentric banding.
-        float ghost = pow(0.5 + 0.5 * cos(2.0 * (a - uAngle)), 8.0);
-        float bands = 0.92 + 0.08 * sin(r * 60.0);
-        vec3 front = vec3(0.42, 0.43, 0.45);
-        vec3 back = vec3(0.03);
-        vec3 col = gl_FrontFacing ? front : back;
-        float alpha = cover * (0.16 + 0.1 * ghost) * bands;
-        // Painted tip bands (red / white / red) show as faint coloured rings.
-        if (r > 0.86) {
-          float k = (r - 0.86) / 0.14;
-          vec3 tip = (k < 0.33 || k > 0.66) ? vec3(0.62, 0.06, 0.05) : vec3(0.85);
-          col = mix(col, tip, 0.8);
-          alpha = cover * 0.15;
-        }
-        gl_FragColor = vec4(col, alpha * uBlend);
+        float cover = smoothstep(0.15, 0.32, r) * (1.0 - smoothstep(0.975, 1.0, r));
+        float chord = 0.72 + 0.28 * sin(3.14159 * clamp((r - 0.12) / 0.86, 0.0, 1.0));
+        float bands = 1.0 + 0.07 * sin(r * 71.0) + 0.05 * sin(r * 23.0 + 1.3);
+        float ghost = pow(0.5 + 0.5 * cos(2.0 * (a - uAngle)), 30.0) * uGhost;
+        vec3 col = gl_FrontFacing ? vec3(0.28, 0.29, 0.31) : vec3(0.02);
+        float alpha = cover * (uAlpha * chord * bands + ghost * 0.5);
+        float k = smoothstep(0.85, 0.875, r) * (1.0 - smoothstep(0.965, 0.99, r));
+        col = mix(col, vec3(0.62, 0.36, 0.34), uTint * k);
+        alpha = mix(alpha, cover * uTip + ghost * 0.4, k);
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
@@ -220,10 +267,13 @@ export function createMaterials(tex: FuselageTextures | null): AircraftMaterials
 
   const gearLights = new THREE.MeshBasicMaterial({ color: 0x18ff40, name: 'ac.gearLights' });
 
+  const char = { value: 0 };
+  for (const m of [skin, fin, paint, parts, blades]) addSoot(m, char);
+
   const all: THREE.Material[] = [
     skin, fin, paint, parts, blades, glass, disc, nav, strobe, beacon, lamp, glow, cabin, panel, gearLights,
   ];
-  return { skin, fin, paint, parts, blades, glass, disc, nav, strobe, beacon, lamp, glow, cabin, panel, gearLights, all };
+  return { skin, fin, paint, parts, blades, glass, disc, nav, strobe, beacon, lamp, glow, cabin, panel, gearLights, char, all };
 }
 
 // ─── Geometry helpers for the `parts` material ───────────────────────────────

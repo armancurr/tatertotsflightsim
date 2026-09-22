@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import { CABIN_Z0, CABIN_Z1 } from './fuselage';
+import { wellCutDistance } from './gearKinematics';
 import {
   DOOR_OUTLINE,
   DOOR_WINDOW,
@@ -270,15 +271,14 @@ function paintSkin(
   t.a = 255;
   const side = Math.abs(nx) > 0.3;
 
-  // Gear wells and bays on the belly (dark, matte).
-  if (ny < -0.2) {
-    let k = 0;
-    if (ny < -0.5 && z > -1.4 && z < -0.3) k = Math.max(k, cov(Math.min(0.125 - ax, z + 1.33, -0.37 - z)));
-    k = Math.max(k, cov(0.2 - Math.hypot(ax - 0.23, z - 1.36)));
-    k = Math.max(k, cov(0.042 - segDist(ax, z, 0.46, 0.33, 0.23, 1.36)));
-    if (k > 0) {
-      mix(t, COLORS.well, 0, 0.9, k);
-      if (k >= 1) return;
+  // Belly openings (main wheel wells, leg slots, nose well): holes in the skin (alpha) with a
+  // slightly darker, worn edge lip; the recessed liners behind them come from wells.ts.
+  if (y < sec.widthY - 0.05 && ny < -0.2) {
+    const d = wellCutDistance(x, z);
+    if (d > -0.02) {
+      mix(t, [150, 152, 150], 0.3, 0.6, cov(d + 0.006) * 0.6);
+      t.a = Math.round(255 * (1 - cov(d)));
+      if (t.a === 0) return;
     }
   }
 

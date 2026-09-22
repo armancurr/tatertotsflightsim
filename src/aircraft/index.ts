@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { InstrumentReadings } from '../types';
-import { computeAnimation, createAnimation } from './animate';
+import { computeAnimation, createAnimation, createPropDisc, propDiscParams, strobeRate } from './animate';
 import { buildCockpit } from './cockpit';
 import { buildFuselage } from './fuselage';
 import { buildGear, GEAR_PART } from './gear';
@@ -22,6 +22,8 @@ import { drawPlaceholderPanel, PANEL } from './panel';
 import { buildProp, PROP_PART } from './prop';
 import { FUSE_Z0, fuselageSection, type SectionParams } from './shape';
 import { buildTail } from './tail';
+import { buildWells } from './wells';
+import { bendBladePoint, charProgress, deformWreckGeometry, deformWreckPoint, tailSkewTransform, wingFoldTransform } from './wreck';
 import { createRestReadings, type AircraftVisualState, type PanelDrawer } from './types';
 import { buildWing } from './wing';
 
@@ -215,7 +217,8 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const finGroup = new THREE.Group();
   finGroup.name = PART.fin;
   exterior.add(finGroup);
-  finGroup.add(shadowed(new THREE.Mesh(tail.fin, mats.fin)));
+  const finMesh = shadowed(new THREE.Mesh(tail.fin, mats.fin));
+  finGroup.add(finMesh);
   const rud = hingedPivot(PART.rudder, tail.rudder.position, tail.rudder.quaternion);
   rud.rot.add(shadowed(new THREE.Mesh(tail.rudder.geometry, mats.fin)));
   finGroup.add(rud.pivot);
@@ -224,9 +227,16 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const prop = buildProp(mats, quality);
   exterior.add(prop.hub);
 
-  // Gear.
+  // Gear, and the well liners behind the belly openings.
   const gear = buildGear(mats, quality);
   exterior.add(gear.group);
+  const wellMat = createPartsMaterial('ac-wells');
+  wellMat.side = THREE.DoubleSide;
+  mats.all.push(wellMat);
+  const wells = new THREE.Mesh(buildWells(quality), wellMat);
+  wells.name = 'gearWells';
+  wells.receiveShadow = true;
+  exterior.add(wells);
 
   // Static details (one merged mesh): wing details, fuselage details, beacon pod.
   const bb = tail.beaconBase;
@@ -361,10 +371,58 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   };
   redrawPanel(rest);
 
+  // ── Wreck (after a crash) ─────────────────────────────────────────────────
+  // Deformed clones of the static geometry (built on the first crash, then cached) and the
+  // matching rigid transforms of the hinged/separate parts; everything restores exactly.
+  interface Saved { o: THREE.Object3D; p: THREE.Vector3; q: THREE.Quaternion; m: THREE.Matrix4 }
+  const tailXf = tailSkewTransform();
+  const foldXf = wingFoldTransform();
+  const leftAileron = aileronRig[Math.max(0, wing.ailerons.findIndex((a) => a.side < 0))];
+  const rigid: Saved[] = [
+    [tailplane, tailXf],
+    [rud.pivot, tailXf],
+    [beaconMesh, tailXf],
+    [leftAileron.pivot, foldXf],
+  ].map(([o, m]) => ({ o: o as THREE.Object3D, p: (o as THREE.Object3D).position.clone(), q: (o as THREE.Object3D).quaternion.clone(), m: m as THREE.Matrix4 }));
+  const hubRest = { p: prop.hub.position.clone(), q: prop.hub.quaternion.clone() };
+  const hubWreck = { p: deformWreckPoint(hubRest.p.clone(), new THREE.Vector3()), q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.17, 0.07, 0.12)) };
+  const swaps = [
+    { mesh: skin, intact: skin.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
+    { mesh: wingMesh, intact: wingMesh.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
+    { mesh: details, intact: details.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
+    { mesh: finMesh, intact: finMesh.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
+    { mesh: prop.blades, intact: prop.blades.geometry, wreck: null as THREE.BufferGeometry | null, fn: bendBladePoint },
+  ];
+  let wrecked = false;
+  const _wm = new THREE.Matrix4();
+  const _ws = new THREE.Vector3();
+  const ONE = new THREE.Vector3(1, 1, 1);
+  function setWrecked(on: boolean) {
+    if (on === wrecked) return;
+    wrecked = on;
+    for (const sw of swaps) {
+      if (on && !sw.wreck) sw.wreck = deformWreckGeometry(sw.intact.clone(), sw.fn);
+      sw.mesh.geometry = on && sw.wreck ? sw.wreck : sw.intact;
+    }
+    for (const r of rigid) {
+      if (on) _wm.compose(r.p, r.q, ONE).premultiply(r.m).decompose(r.o.position, r.o.quaternion, _ws);
+      else {
+        r.o.position.copy(r.p);
+        r.o.quaternion.copy(r.q);
+      }
+    }
+    prop.hub.position.copy(on ? hubWreck.p : hubRest.p);
+    prop.hub.quaternion.copy(on ? hubWreck.q : hubRest.q);
+    glass.visible = !on;
+    glows.visible = !on;
+    strobeMesh.visible = !on;
+  }
+
   // ── Animation state ───────────────────────────────────────────────────────
   const anim = createAnimation();
   let propAngle = 0;
   let ghostAngle = 0;
+  const pd = createPropDisc();
   let lastMode: string | null = null;
   const fullColor = new THREE.Color(0xffffff);
   const dimInterior = new THREE.Color(0x6a6a6a);
@@ -381,6 +439,9 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   function setVisualState(v: AircraftVisualState, dt: number) {
     const step = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.25)) : 0;
     computeAnimation(v, anim);
+    const crashed = v.crashed === true;
+    setWrecked(crashed);
+    mats.char.value = crashed ? charProgress(Number(v.crashAge ?? 0)) : 0;
 
     // Control surfaces.
     elev.rot.rotation.x = anim.elevatorRad;
@@ -393,28 +454,37 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
       f.rot.rotation.x = anim.flapRad;
     }
 
-    gear.update(anim, v, step);
+    gear.update(anim, v, step, crashed);
 
-    // Propeller: clockwise from the cockpit = negative about +Z.
-    const rpm = Number.isFinite(v.propRpm) ? Math.max(0, v.propRpm) : 0;
+    // Propeller: clockwise from the cockpit = negative about +Z. Above the blur threshold the
+    // blades are drawn at a slowly drifting aliased angle (the stroboscopic look of a real prop).
+    // A wreck's prop is stopped (and bent) whatever the engine model still reports.
+    const rpm = crashed ? 0 : Number.isFinite(v.propRpm) ? Math.max(0, v.propRpm) : 0;
+    const inCockpitView = v.cameraMode === 'cockpit';
+    propDiscParams(rpm, inCockpitView, pd);
     propAngle = (propAngle + (rpm / 60) * Math.PI * 2 * step) % (Math.PI * 2);
-    prop.spin.rotation.z = -propAngle;
-    ghostAngle = (ghostAngle + Math.min(rpm, 2700) * 0.0009 * step) % (Math.PI * 2);
-    const blend = anim.propBlend;
-    prop.blades.visible = blend < 0.999;
+    ghostAngle = (ghostAngle + strobeRate(rpm) * step) % (Math.PI * 2);
+    prop.spin.rotation.z = pd.strobe ? -ghostAngle : -propAngle;
+    const blend = pd.blend;
+    prop.blades.visible = pd.bladeOpacity > 0.001;
     const bladesTransparent = blend > 0.001;
     if (mats.blades.transparent !== bladesTransparent) {
       mats.blades.transparent = bladesTransparent;
       mats.blades.depthWrite = !bladesTransparent;
       mats.blades.needsUpdate = true;
     }
-    mats.blades.opacity = 1 - blend;
+    mats.blades.opacity = pd.bladeOpacity;
     prop.blades.castShadow = blend < 0.5;
     prop.disc.visible = blend > 0.001;
-    mats.disc.uniforms.uBlend.value = blend;
-    mats.disc.uniforms.uAngle.value = -ghostAngle;
+    const du = mats.disc.uniforms;
+    du.uAlpha.value = pd.discAlpha;
+    du.uTip.value = pd.tipAlpha;
+    du.uTint.value = pd.tipTint;
+    du.uGhost.value = pd.ghost;
+    du.uAngle.value = -ghostAngle;
 
-    // Lights.
+    // Lights (a wreck's electrics are dead).
+    if (crashed) anim.nav = anim.strobe = anim.beacon = anim.landing = anim.taxi = 0;
     navMesh.visible = anim.nav > 0;
     tailLightMesh.visible = anim.nav > 0;
     mats.strobe.color.copy(strobeOffColor).lerp(strobeOnColor, anim.strobe);
