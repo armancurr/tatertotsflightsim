@@ -578,25 +578,41 @@ export const CONFIG = {
       /** Scattered houses along country roads outside towns: probability per 45 m of road side. */
       roadsideHouseChance: 0.035,
       roads: {
-        /** Road chunk size, m (one merged mesh per chunk for major roads, one for streets). */
+        /** Near-LOD chunk size, m: one merged mesh (ribbons + bridges + guard rails) per chunk, built on demand. */
         chunkSize: 2048,
+        /** Far-LOD super-chunk size, m (coarse ribbons of the major roads + streets, no farm tracks). */
+        farChunkSize: 8192,
+        /** Near LOD within this camera distance, far LOD beyond (split per fragment, seamless), m. */
+        nearDistance: 3000,
         /** Terrain sampling step along roads before simplification, m; tolerance of the simplified drape, m. */
         sampleSpacing: 4,
         drapeTolerance: 0.05,
         /** Longest ribbon segment after simplification, m. */
         maxSegment: 48,
-        /** Height of the ribbon above the terrain, m (plus polygonOffset + view-space depth pull). */
+        /** Far LOD: every n-th sample, drape tolerance and longest segment. */
+        farStride: 3,
+        farTolerance: 0.25,
+        farMaxSegment: 160,
+        /** Height of the paved ribbon above the terrain, m (+1.2 cm per kind rank; plus the LOD lift and depth pull). */
         lift: 0.12,
-        /** Fraction of the view distance the road vertices are pulled toward the camera (depth only). */
+        /**
+         * LOD lift per kind (m per m of camera distance): keeps roads above the coarse far terrain mesh
+         * (measured against the heightfield, see src/world/roads/depth.ts and its test).
+         */
+        lodLift: { highway: 0.0008, road: 0.0009, access: 0.0008, lane: 0.003, street: 0.0015, drive: 0.0013 },
+        /** View-space depth pull toward the camera (fraction of the view depth; screen position unchanged). */
         depthPull: 0.0012,
         viewDistance: 18000,
         streetViewDistance: 6500,
         /** Bridge deck clearance above the water (m) and approach ramp length (m). */
         bridgeClearance: 4,
         bridgeRamp: 70,
-        /** Moving cars on the highway and main roads (instanced), drawn within carViewDistance of the camera. */
-        cars: 90,
-        carViewDistance: 3500,
+        /** Street lights along town streets: spacing (m) and draw distance (m). */
+        streetLightSpacing: 38,
+        streetLightDistance: 2600,
+        /** Worker-less fallback: chunk build budget per frame (ms), and when nothing near is built yet. */
+        frameBudgetMs: 3,
+        urgentBudgetMs: 30,
       },
     },
   },
