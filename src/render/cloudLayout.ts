@@ -101,8 +101,9 @@ export function generateCloudField(o: CloudLayoutOptions): CloudField {
     // Clumping: favour a low-frequency "convection" field, but never leave big holes.
     const n = fbm2(x / 10000 + 50, z / 10000 + 50, 3, o.seed);
     if (rng() > 0.3 + 0.7 * smoothstep(lo, hi, n) && attempts < count * 300) continue;
+    // power-law sizes: many small cumulus humilis, a few big mediocris
     const u = rng();
-    const radius = Math.min(1400, (260 + 740 * Math.pow(u, 1.8)) * sizeScale);
+    const radius = Math.min(1700, (280 + 1150 * Math.pow(u, 2.2)) * sizeScale);
     // keep clouds from merging into one blob
     let tooClose = false;
     for (const c of clouds) {
@@ -114,8 +115,8 @@ export function generateCloudField(o: CloudLayoutOptions): CloudField {
       }
     }
     if (tooClose && attempts < count * 300) continue;
-    const r01 = Math.min(1, radius / 1300);
-    const height = Math.min(o.thickness, Math.max(150, o.thickness * (0.3 + 0.7 * r01) * (0.8 + 0.3 * rng())));
+    // depth ≈ 0.5–0.85 × width (fair-weather cumulus are about as deep as they are wide), capped by the layer
+    const height = Math.min(o.thickness, Math.max(200, 2 * radius * (0.5 + 0.35 * rng())));
     let base = o.baseAltitude + (rng() * 200 - 80);
     if (o.groundHeight) base = Math.max(base, maxGroundUnder(o.groundHeight, x, z, radius) + clearance);
 

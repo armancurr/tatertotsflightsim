@@ -16,6 +16,13 @@
  * or three's AgX / ACES / Neutral — config.render.toneMapping) and encodes sRGB to the canvas. Fog and the sky are therefore
  * composited in linear light, before tone mapping.
  *
+ * Volumetric clouds: when the atmosphere's frame data carries an active cloud
+ * pass (frameData.ts), the MSAA depth is resolved too, the cloud pass marches
+ * its low-resolution buffer against that depth right after the scene, and the
+ * output pass composites it (post.ts). The scene, cloud and output passes are
+ * timed on the GPU when EXT_disjoint_timer_query_webgl2 exists
+ * (`handle.gpuTimings()`), which also feeds the cloud budget controller.
+ *
  * Integration: `renderer.render(scene, camera)` is transparently routed
  * through that pipeline whenever it targets the screen (no render target set),
  * so app code keeps calling renderer.render; renders into explicit render
@@ -29,6 +36,7 @@ import { createDynamicResolution, type DynamicResolution } from './dynamicResolu
 import { createOutputPass, type OutputPass, type PostSettings } from './post';
 import { getAtmosphereFrameData } from './frameData';
 import { installFilmicNeutral } from './toneMapping';
+import { createGpuTimer, type GpuTimer } from './gpuTimer';
 
 export type DepthMode = 'reversed' | 'logarithmic' | 'standard';
 
@@ -102,6 +110,11 @@ export interface RendererHandle {
   dynamicResolution: boolean;
   /** Output-pass settings (flare, vignette, grade), live-editable. */
   post: PostSettings;
+  /** Smoothed GPU ms per pass ('scene', 'clouds', 'post'); empty without a timer query extension. */
+  gpuTimings(): Record<string, number>;
+  /** Pixel ratio is at the dynamic-resolution minimum (nothing left to lower). */
+  readonly atMinQuality: boolean;
+  readonly gpuTimer: GpuTimer;
 }
 
 export function createRenderer(container: HTMLElement, opts: RendererOptions = {}): RendererHandle {
@@ -185,6 +198,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   }
 
   const baseRender = renderer.render.bind(renderer);
+  const timer = createGpuTimer(renderer.getContext() as WebGL2RenderingContext);
   let lastFrame = 0;
   const handle: RendererHandle = {
     renderer,
@@ -199,6 +213,11 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     },
     dynamicResolution: opts.dynamicResolution ?? rc.dynamicResolution,
     post,
+    gpuTimings: () => timer.snapshot(),
+    get atMinQuality() {
+      return pixelRatio <= Math.min(rc.minPixelRatio, maxRatio) + 1e-3;
+    },
+    gpuTimer: timer,
   };
 
   function renderPipeline(scene: THREE.Scene, camera: THREE.Camera) {
@@ -212,12 +231,29 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
       baseRender(scene, camera);
       return;
     }
+    timer.poll();
+    const frame = getAtmosphereFrameData(scene);
+    const clouds = frame?.clouds && frame.clouds.active ? frame.clouds : null;
+    // the cloud march needs the scene depth: resolve it from the MSAA buffer only then
+    target.resolveDepthBuffer = clouds !== null;
     renderer.info.reset();
     renderer.setRenderTarget(target);
+    timer.begin('scene');
     baseRender(scene, camera);
+    timer.end();
+    const depth = target.depthTexture;
+    if (clouds && depth) {
+      timer.begin('clouds');
+      clouds.render(renderer, depth, camera, target.width, target.height, pixelRatio, depthMode);
+      timer.end();
+      clouds.gpuMs = timer.get('clouds');
+    }
+    if (frame?.clouds) frame.clouds.atMinQuality = handle.atMinQuality;
     renderer.setRenderTarget(null);
-    output.update(getAtmosphereFrameData(scene), camera, post);
+    output.update(frame, camera, post, clouds, depth, depthMode);
+    timer.begin('post');
     baseRender(output.scene, output.camera);
+    timer.end();
   }
 
   if (hdr) {
@@ -237,6 +273,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
 
   function dispose() {
     ro?.disconnect();
+    timer.dispose();
     renderer.render = baseRender;
     target?.depthTexture?.dispose();
     target?.dispose();

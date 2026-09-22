@@ -1,6 +1,8 @@
 /**
  * HDR → display output pass: one full-screen triangle that applies, in order,
- * the lens flare (lensflare.ts), the in-cloud whiteout, a mild optical
+ * the volumetric clouds (depth-aware upsampling of the low-resolution cloud
+ * buffer, composited as scene·T + L; see volumetricClouds.ts), the lens flare
+ * (lensflare.ts, occluded by the clouds too), the in-cloud whiteout, a mild optical
  * vignette and saturation grade, filmic tone mapping (renderer.toneMapping),
  * sRGB encoding and a triangular dither against banding in sky gradients.
  * All of it costs one texture read per pixel plus ALU (≈0.2 ms at 1440×900).
@@ -9,7 +11,8 @@
  */
 import * as THREE from 'three';
 import { FLARE_FRAGMENT_GLSL, FLARE_VERTEX_GLSL, flareEdgeFade, sunScreenPosition, type SunScreen } from './lensflare';
-import type { AtmosphereFrameData } from './frameData';
+import type { AtmosphereFrameData, CloudPassHook } from './frameData';
+import type { DepthMode } from './renderer';
 
 export interface PostSettings {
   /** 0..1 corner darkening. */
@@ -26,11 +29,19 @@ export interface PostSettings {
 const VERTEX = /* glsl */ `
 uniform sampler2D tHDR;
 uniform vec2 uTexel;
+uniform sampler2D tCloudA;
+uniform vec4 uCloudOn;   // on, layer bottom, layer top, camera y
+uniform mat4 uInvProj;
 varying vec2 vUv;
+varying vec3 vViewDir;
 ${FLARE_VERTEX_GLSL}
 void main() {
 	vUv = position.xy * 0.5 + 0.5;
+	vec4 vp = uInvProj * vec4( position.xy, 1.0, 1.0 );
+	vViewDir = vp.xyz / vp.w;
 	vSunVis = sunVisibility( tHDR, uTexel );
+	// the sun behind a cloud: its transmittance at the sun's position
+	if ( uCloudOn.x > 0.5 && vSunVis > 0.0 ) vSunVis *= textureLod( tCloudA, uFlareSun.xy, 0.0 ).a;
 	gl_Position = vec4( position.xy, 0.0, 1.0 );
 }
 `;
@@ -39,10 +50,69 @@ const FRAGMENT = /* glsl */ `
 uniform sampler2D tHDR;
 uniform vec4 uImmersion;
 uniform vec3 uGrade; // saturation, vignette, dither
+uniform sampler2D tCloudA;
+uniform sampler2D tCloudB;
+uniform sampler2D tDepth;
+uniform vec4 uCloudOn;    // on, layer bottom, layer top, camera y
+uniform vec2 uCloudSize;
+uniform vec4 uDepth;      // near, far, mode (0 std, 1 reversed, 2 log), log2(far + 1)
+uniform mat4 uCamWorld;
 varying vec2 vUv;
+varying vec3 vViewDir;
 ${FLARE_FRAGMENT_GLSL}
+float linDepth( float d ) {
+	if ( uDepth.z > 0.5 && uDepth.z < 1.5 ) {
+		if ( d <= 0.0 ) return 1e9;
+		return uDepth.x * uDepth.y / ( d * ( uDepth.y - uDepth.x ) + uDepth.x );
+	}
+	if ( d >= 1.0 ) return 1e9;
+	if ( uDepth.z > 1.5 ) return exp2( d * uDepth.w ) - 1.0;
+	float ndc = d * 2.0 - 1.0;
+	return 2.0 * uDepth.x * uDepth.y / ( uDepth.y + uDepth.x - ndc * ( uDepth.y - uDepth.x ) );
+}
+// Depth-aware upsampling of the cloud buffer: bilinear weights × similarity of the
+// scene distance each cloud texel was marched against to this pixel's distance.
+vec4 cloudComposite( vec2 uv ) {
+	vec3 vd = normalize( vViewDir );
+	float dist = min( linDepth( texture2D( tDepth, uv ).r ) / max( 1e-4, - vd.z ), 1e6 );
+	vec3 rd = mat3( uCamWorld ) * vd;
+	float camY = uCloudOn.w;
+	float entry = 0.0;
+	if ( camY < uCloudOn.y ) entry = rd.y > 1e-5 ? ( uCloudOn.y - camY ) / rd.y : 1e9;
+	else if ( camY > uCloudOn.z ) entry = rd.y < -1e-5 ? ( camY - uCloudOn.z ) / - rd.y : 1e9;
+	if ( dist <= entry ) return vec4( 0.0, 0.0, 0.0, 1.0 ); // entirely in front of the cloud layer
+	float distKm = dist * 0.001;
+	vec2 p = uv * uCloudSize - 0.5;
+	vec2 f = fract( p );
+	ivec2 i0 = ivec2( floor( p ) );
+	ivec2 mx = ivec2( uCloudSize ) - 1;
+	vec4 acc = vec4( 0.0 );
+	float wsum = 0.0;
+	float best = 1e9;
+	vec4 bestA = vec4( 0.0, 0.0, 0.0, 1.0 );
+	for ( int k = 0; k < 4; k ++ ) {
+		ivec2 o = ivec2( k & 1, k >> 1 );
+		ivec2 ij = clamp( i0 + o, ivec2( 0 ), mx );
+		vec4 A = texelFetch( tCloudA, ij, 0 );
+		float clipKm = texelFetch( tCloudB, ij, 0 ).g;
+		float wb = ( o.x == 1 ? f.x : 1.0 - f.x ) * ( o.y == 1 ? f.y : 1.0 - f.y );
+		float rel = abs( clipKm - distKm ) / max( 1e-4, min( clipKm, distKm ) );
+		float w = wb * exp( - rel * 25.0 );
+		acc += A * w;
+		wsum += w;
+		if ( rel < best ) {
+			best = rel;
+			bestA = A;
+		}
+	}
+	return wsum > 1e-4 ? acc / wsum : bestA;
+}
 void main() {
 	vec3 c = texture2D( tHDR, vUv ).rgb;
+	if ( uCloudOn.x > 0.5 ) {
+		vec4 cl = cloudComposite( vUv );
+		c = c * cl.a + cl.rgb;
+	}
 	c += lensFlare( vUv );
 	c = mix( c, uImmersion.rgb, uImmersion.a );
 	vec2 q = ( vUv - 0.5 ) * vec2( uFlareParams.w, 1.0 );
@@ -66,8 +136,8 @@ export interface OutputPass {
   material: THREE.ShaderMaterial;
   /** Point the pass at the resolved HDR image of this frame. */
   setInput(texture: THREE.Texture, width: number, height: number): void;
-  /** Per-frame uniforms from the atmosphere + the scene camera. */
-  update(frame: AtmosphereFrameData | undefined, camera: THREE.Camera, settings: PostSettings): void;
+  /** Per-frame uniforms from the atmosphere + the scene camera (+ the cloud pass and scene depth when volumetric clouds are on). */
+  update(frame: AtmosphereFrameData | undefined, camera: THREE.Camera, settings: PostSettings, clouds?: CloudPassHook | null, depth?: THREE.Texture | null, depthMode?: DepthMode): void;
   dispose(): void;
 }
 
@@ -86,6 +156,14 @@ export function createOutputPass(): OutputPass {
       uFlareSampleRadius: { value: 2 },
       uFlareColor: { value: new THREE.Vector3() },
       uFlareParams: { value: new THREE.Vector4(1, 1, 1, 1.6) },
+      tCloudA: { value: null },
+      tCloudB: { value: null },
+      tDepth: { value: null },
+      uCloudOn: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uCloudSize: { value: new THREE.Vector2(1, 1) },
+      uDepth: { value: new THREE.Vector4(0.1, 90000, 1, 1) },
+      uInvProj: { value: new THREE.Matrix4() },
+      uCamWorld: { value: new THREE.Matrix4() },
     },
     vertexShader: VERTEX,
     fragmentShader: FRAGMENT,
@@ -100,6 +178,13 @@ export function createOutputPass(): OutputPass {
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const sun: SunScreen = { x: 0, y: 0, inFront: false };
   let texH = 1;
+  const camPos = new THREE.Vector3();
+  // 1×1 placeholders so the samplers are always bound to something valid
+  const blank = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+  blank.needsUpdate = true;
+  material.uniforms.tCloudA.value = blank;
+  material.uniforms.tCloudB.value = blank;
+  material.uniforms.tDepth.value = blank;
 
   return {
     scene,
@@ -110,8 +195,26 @@ export function createOutputPass(): OutputPass {
       material.uniforms.uTexel.value.set(1 / width, 1 / height);
       texH = height;
     },
-    update(frame, cam, s) {
+    update(frame, cam, s, clouds, depth, depthMode) {
       const u = material.uniforms;
+      if (clouds && clouds.active && depth) {
+        const pc = cam as THREE.PerspectiveCamera;
+        cam.getWorldPosition(camPos);
+        u.tCloudA.value = clouds.outputA;
+        u.tCloudB.value = clouds.outputB;
+        u.tDepth.value = depth;
+        u.uCloudOn.value.set(1, clouds.layerBottom, clouds.layerTop, camPos.y);
+        u.uCloudSize.value.copy(clouds.size);
+        const far = pc.far ?? 90000;
+        u.uDepth.value.set(pc.near ?? 0.1, far, depthMode === 'reversed' ? 1 : depthMode === 'logarithmic' ? 2 : 0, Math.log2(far + 1));
+        u.uInvProj.value.copy(cam.projectionMatrixInverse);
+        u.uCamWorld.value.copy(cam.matrixWorld);
+      } else {
+        u.uCloudOn.value.x = 0;
+        u.tCloudA.value = blank;
+        u.tCloudB.value = blank;
+        u.tDepth.value = blank;
+      }
       const aspect = (cam as THREE.PerspectiveCamera).aspect ?? 1;
       u.uFlareParams.value.set(s.flareGlare, s.flareGhosts, s.flareStarburst, aspect);
       u.uGrade.value.set(s.saturation, s.vignette, s.dither ? 1 : 0);
@@ -140,6 +243,7 @@ export function createOutputPass(): OutputPass {
     dispose() {
       geo.dispose();
       material.dispose();
+      blank.dispose();
     },
   };
 }
