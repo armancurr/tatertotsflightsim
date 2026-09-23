@@ -75,6 +75,11 @@ export interface SimSystem {
   /** Camera shake intensity 0..1 (the max over systems is used). */
   cameraShake?(state: AircraftState): number;
   update?(f: SystemFrame): void;
+  /**
+   * After the main scene render (same frame): draw extra views, e.g. the Maverick seeker picture
+   * in a corner viewport (restore the renderer's viewport/scissor/target when done).
+   */
+  postRender?(f: SystemFrame): void;
   onAction?(a: SimAction): void;
   onReset?(which: 'runway' | 'approach' | 'teleport'): void;
   /** The player picked another aircraft (the new model is already in the scene; a reset follows). */

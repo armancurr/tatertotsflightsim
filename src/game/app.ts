@@ -342,9 +342,11 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     focus.copy(aircraft.root.position);
     atmosphere.update(camera, frameDt, focus);
     const fps = fpsStats(fpsMeter);
-    systems.update({ state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings, def, aircraft });
+    const sysFrame = { state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings, def, aircraft };
+    systems.update(sysFrame);
 
     renderer.render(scene, camera);
+    systems.postRender(sysFrame);
 
     const info = renderer.info;
     renderStats.calls = info.render.calls;

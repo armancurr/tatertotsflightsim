@@ -17,6 +17,7 @@ export interface Systems {
   cameraShake(state: AircraftState): number | null;
   adjustControls(controls: Controls, state: AircraftState, dt: number): Controls;
   update(f: SystemFrame): void;
+  postRender(f: SystemFrame): void;
   onAction(a: SimAction): void;
   onReset(which: 'runway' | 'approach' | 'teleport'): void;
   onAircraftChange(def: AircraftDef, model: AircraftModelHandle): void;
@@ -100,6 +101,7 @@ export async function createSystems(ctx: SystemContext, modules: SystemModule[] 
         s.ms += (performance.now() - t0 - s.ms) * 0.05;
       }
     },
+    postRender: (f) => list.forEach((s) => s.sys.postRender && safe(s.name, () => s.sys.postRender!(f))),
     onAction: (a) => list.forEach((s) => s.sys.onAction && safe(s.name, () => s.sys.onAction!(a))),
     onReset: (w) => list.forEach((s) => s.sys.onReset && safe(s.name, () => s.sys.onReset!(w))),
     onAircraftChange: (d, m) => list.forEach((s) => s.sys.onAircraftChange && safe(s.name, () => s.sys.onAircraftChange!(d, m))),
