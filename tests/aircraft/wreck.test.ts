@@ -69,7 +69,7 @@ describe('property: wreck deformation is finite, bounded and continuous', () => 
           const p = P(x, y, z);
           deformWreckPoint(p, a);
           expect(Number.isFinite(a.x) && Number.isFinite(a.y) && Number.isFinite(a.z)).toBe(true);
-          expect(a.distanceTo(p)).toBeLessThan(1.2);
+          expect(a.distanceTo(p)).toBeLessThanOrEqual(1.2 + 1e-9); // the full fold reaches exactly 1.2 m (fuzz found the float edge)
           deformWreckPoint(P(x + 0.004, y - 0.003, z + 0.002), b);
           expect(a.distanceTo(b)).toBeLessThan(0.05);
         },
