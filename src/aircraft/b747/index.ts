@@ -387,7 +387,7 @@ export function createB747Model(): AircraftModelHandle {
     glowIntensity.needsUpdate = true;
     const lamp = Math.max(anim.landing, anim.taxi * 0.6);
     landingLight.visible = lamp > 0;
-    if (landingLight.visible) landingLight.intensity = LL.intensity * 2.5 * lamp;
+    if (landingLight.visible) landingLight.intensity = LL.intensity * 1.3 * lamp;
 
     // Cockpit presentation: from the flight deck the panes are seen from inside at grazing angles.
     if (v.cameraMode !== lastMode) {

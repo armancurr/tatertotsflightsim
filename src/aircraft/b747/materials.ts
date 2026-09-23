@@ -1,7 +1,7 @@
 /**
  * 747 materials. Few materials = few programs: every painted surface shares `paint` (the livery
- * atlas: colour, plus one data texture with the panel-line bump in R and the roughness in G, under
- * a clear coat — airliner gloss), small parts share `parts` (vertex colour + per-vertex
+ * atlas: colour, plus one data texture with the panel-line bump in R and the roughness in G — a
+ * standard material: a clear coat doubled the jumbo's GPU cost for little visible gain), small parts share `parts` (vertex colour + per-vertex
  * roughness/metalness). `surfaces` is the same paint pulled forward in depth (spoilers and
  * Krueger flaps lie on the wing skin). The logo lights wash the fin from the stabiliser (an
  * emissive term with a falloff from the two lamps — no real light, so no shader recompiles), and a
@@ -27,8 +27,8 @@ export interface B747Effects {
 }
 
 export interface B747Materials {
-  paint: THREE.MeshPhysicalMaterial;
-  surfaces: THREE.MeshPhysicalMaterial;
+  paint: THREE.MeshStandardMaterial;
+  surfaces: THREE.MeshStandardMaterial;
   parts: THREE.MeshStandardMaterial;
   glass: THREE.MeshPhysicalMaterial;
   nav: THREE.MeshBasicMaterial;
@@ -102,7 +102,7 @@ export function addB747Effects<T extends THREE.MeshStandardMaterial>(m: T, fx: B
 
 export function createB747Materials(tex: B747Textures | null): B747Materials {
   const fx: B747Effects = { char: { value: 0 }, logo: { value: 0 }, bodyFromWorld: { value: new THREE.Matrix4() } };
-  const paintParams: THREE.MeshPhysicalMaterialParameters = {
+  const paintParams: THREE.MeshStandardMaterialParameters = {
     color: tex ? 0xffffff : 0xe9ecef,
     map: tex?.map ?? null,
     roughness: tex ? 1 : 0.35,
@@ -110,12 +110,11 @@ export function createB747Materials(tex: B747Textures | null): B747Materials {
     bumpMap: tex?.data ?? null,
     bumpScale: 0.9,
     metalness: 0,
-    clearcoat: 0.55,
-    clearcoatRoughness: 0.12,
+    envMapIntensity: 1.15,
   };
-  const paint = new THREE.MeshPhysicalMaterial({ ...paintParams, name: 'b747.paint' });
+  const paint = new THREE.MeshStandardMaterial({ ...paintParams, name: 'b747.paint' });
   addB747Effects(paint, fx, 'b747-paint');
-  const surfaces = new THREE.MeshPhysicalMaterial({ ...paintParams, name: 'b747.surfaces', polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  const surfaces = new THREE.MeshStandardMaterial({ ...paintParams, name: 'b747.surfaces', polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
   addB747Effects(surfaces, fx, 'b747-paint');
   const parts = createPartsMaterial('b747-parts');
   addB747Effects(parts, fx, 'b747-parts');

@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as THREE from 'three';
 import { createB747Model, B747_PART } from '../../../src/aircraft/b747';
-import { GEAR, WING } from '../../../src/aircraft/b747/shape';
+import { GEAR, WING, lowerYAt } from '../../../src/aircraft/b747/shape';
 import { createDefaultVisualState, createRestReadings, type AircraftVisualState } from '../../../src/aircraft/types';
 import { B747_AIRCRAFT } from '../../../src/config';
 
@@ -276,6 +276,21 @@ describe('747 model anchors match B747_AIRCRAFT.geometry', () => {
       expect(Math.max(Math.abs(b.min.x), Math.abs(b.max.x)), name).toBeLessThan(3.6);
     }
     for (const d of B747_PART.doors) expect(part(m, d).visible, d).toBe(false);
+    // Nothing of the stowed gear shows through the belly or the wing-body fairing.
+    for (const name of wheels) {
+      let worst = -9;
+      const v = new THREE.Vector3();
+      part(m, name).traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const p = mesh.geometry.getAttribute('position');
+        for (let i = 0; i < p.count; i += 2) {
+          v.fromBufferAttribute(p, i).applyMatrix4(mesh.matrixWorld);
+          worst = Math.max(worst, lowerYAt(v.z, v.x) - v.y);
+        }
+      });
+      expect(worst, name).toBeLessThan(0.01);
+    }
     apply(m, state({ gearPos: 1 }), 3);
     expect(GEAR.bodyZ).toBeGreaterThan(G.leftMainWheel.z);
   });

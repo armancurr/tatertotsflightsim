@@ -235,18 +235,19 @@ export function xAtY(h: Float64Array, y: number): number {
   return 0;
 }
 
-/** Lower-surface height of the fuselage at station z and half width x (the keel if x is beyond the outline). */
+/** Lower-surface height of the fuselage at station z and half width x (at the widest point if x is beyond the outline). */
 export function lowerYAt(z: number, x: number): number {
   const h = halfOutline(z, 160);
   const n = h.length / 3;
-  let best = h[(n - 1) * 3 + 1];
+  const ax = Math.abs(x);
+  // Walk up from the keel while the outline widens.
   for (let i = n - 1; i > 0; i--) {
     const x0 = h[i * 3];
     const x1 = h[(i - 1) * 3];
-    if ((x0 - x) * (x1 - x) <= 0 && x0 !== x1) return lerp(h[i * 3 + 1], h[(i - 1) * 3 + 1], (x - x0) / (x1 - x0));
-    best = h[(i - 1) * 3 + 1];
+    if (x1 < x0 - 1e-9) return h[i * 3 + 1];
+    if (ax >= x0 - 1e-9 && ax <= x1 + 1e-9) return x1 > x0 ? lerp(h[i * 3 + 1], h[(i - 1) * 3 + 1], (ax - x0) / (x1 - x0)) : h[i * 3 + 1];
   }
-  return best;
+  return h[1];
 }
 
 /** Fuselage loft stations: dense at the nose and tail cone, the physics points and splits included. */
@@ -460,7 +461,7 @@ export const GEAR = {
     axleY: GEO.leftMainWheel.y + R,
     pivot: { x: 5.2, y: -2.05 },
     /** Inward retraction about the body z axis. */
-    swing: 90 * DEG,
+    swing: 99 * DEG,
   },
   /** Boeing: the body gear is 3.07 m behind the wing gear, track 3.84 m. */
   bodyZ: GEO.leftMainWheel.z + 3.07,
