@@ -224,10 +224,19 @@ export function buildEngine(e: EnginePod): EngineBuild {
   spinner.setAttribute('rm', new THREE.BufferAttribute(srm, 2));
   const spinner2 = spinner.clone();
   const bladesGeo = merge([...blades, spinner]);
-  const disc = merge([
-    tint(new THREE.RingGeometry(0.36, FAN.radius, 48, 1).rotateY(Math.PI).translate(0, 0, 0.02), 0x5d6166, 0.45, 0.6),
-    spinner2,
-  ]);
+  // Blurred fan: a metallic disc, lighter mid-span where the wide-chord blades overlap most.
+  const ring = tint(new THREE.RingGeometry(0.36, FAN.radius, 48, 4).rotateY(Math.PI).translate(0, 0, 0.02), 0x7a8086, 0.32, 0.8);
+  {
+    const p = ring.getAttribute('position');
+    const c = ring.getAttribute('color');
+    for (let k = 0; k < p.count; k++) {
+      const r = Math.hypot(p.getX(k), p.getY(k));
+      const u = (r - 0.36) / (FAN.radius - 0.36);
+      const v = 0.34 + 0.16 * Math.sin(Math.PI * u) - 0.1 * u * u;
+      c.setXYZ(k, v, v * 1.02, v * 1.05);
+    }
+  }
+  const disc = merge([ring, spinner2]);
   return { pod: e, nacelle, blades: bladesGeo, disc, fanCentre: V(e.x, e.y, e.lipZ + FAN.dz) };
 }
 

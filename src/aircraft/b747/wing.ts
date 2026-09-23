@@ -148,7 +148,7 @@ function buildFlap(x0: number, x1: number): FlapBuild {
     main: m,
     aft: { geometry: aft, position: localPos, quaternion: localQ },
     runDir: V(0, -0.2, 1).normalize(),
-    run: cMean * (1 - F) * 0.95,
+    run: cMean * (1 - F) * 0.62,
   };
 }
 

@@ -332,7 +332,7 @@ export function createB747Model(): AircraftModelHandle {
     mats.fx.logo.value = anim.logo;
     if (crashed !== wrecked) {
       wrecked = crashed;
-      glass.visible = !crashed;
+      glass.visible = !crashed && v.cameraMode !== 'cockpit';
     }
 
     // Tail surfaces (+ = TE down / TE right about each hinge).
@@ -393,8 +393,8 @@ export function createB747Model(): AircraftModelHandle {
     if (v.cameraMode !== lastMode) {
       lastMode = v.cameraMode;
       const inCockpit = v.cameraMode === 'cockpit';
-      mats.glass.opacity = inCockpit ? 0.05 : 0.55;
-      mats.glass.envMapIntensity = inCockpit ? 0.08 : 1.3;
+      // The flight-deck module owns the view from inside: the outer panes would only glare.
+      glass.visible = !inCockpit && !wrecked;
     }
   }
 
