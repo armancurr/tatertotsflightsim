@@ -313,14 +313,14 @@ export function createShips(opts: ShipsOptions = {}): Ships {
       const az = -Math.cos(hr);
       for (let x = 10; x < tm.pierLen; x += 30) {
         // local +z (terminal frame) = right of the pier direction
-        staticLamps.push({ x: tm.x + ax * x - az * 4.4, y: 11.5, z: tm.z + az * x + ax * 4.4, c: WARM, size: 1.0, flash: 0, phase: 0 });
+        staticLamps.push({ x: tm.x + ax * x - az * 4.4, y: 11.5, z: tm.z + az * x + ax * 4.4, c: WARM, size: 0.5, flash: 0, phase: 0 });
       }
     }
     // marina lamps: quay lamps and the entrance beacons (Fl.R / Fl.G 4 s)
     const q = marina.quay;
     for (let u = q.u0 + 30; u < q.u1; u += 60) {
       const p = toWorld(f, u, q.w0 + 4.3);
-      staticLamps.push({ x: p.x, y: q.top + 6.0, z: p.z, c: WARM, size: 1.0, flash: 0, phase: 0 });
+      staticLamps.push({ x: p.x, y: q.top + 6.0, z: p.z, c: WARM, size: 0.5, flash: 0, phase: 0 });
     }
     for (const b of marina.beacons) {
       const p = toWorld(f, b.u, b.w);
@@ -686,7 +686,7 @@ export function createShips(opts: ShipsOptions = {}): Ships {
         }
         for (const s of staticLamps) {
           if (Math.abs(s.x - cx) > 15000 || Math.abs(s.z - cz) > 15000) continue;
-          let k = 1100 * night;
+          let k = (s.flash > 0 ? 1100 : 380) * night;
           if (s.flash > 0) {
             const ph = (((f.waveTime + s.phase) % s.flash) + s.flash) % s.flash;
             k *= ph < 0.5 ? 1.6 : 0;

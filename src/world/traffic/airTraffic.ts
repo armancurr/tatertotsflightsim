@@ -376,8 +376,10 @@ export function createAirTraffic(opts: AirTrafficOptions): AirTraffic {
         const p = e.pose;
         const d = Math.hypot(p.x - f.camX, p.y - f.camY, p.z - f.camZ);
         s.dist = d;
+        // the model when near or when it spans > 3 px (a telephoto view), else a dot
+        const px = LENGTH[e.kind] / Math.max(d, 1) / pxAngle;
         const md = meshDist(e.kind);
-        const mode: Slot['mode'] = !p.visible || d > ac.dotDistance * (e.kind === 'a320' ? 2 : 1) ? 'hidden' : d < md ? 'mesh' : 'dot';
+        const mode: Slot['mode'] = !p.visible || (d > ac.dotDistance * (e.kind === 'a320' ? 2 : 1) && px < 3) ? 'hidden' : d < md || px > 3 ? 'mesh' : 'dot';
         if (mode !== s.mode) batch.setVisibleAt(s.inst, mode === 'mesh');
         s.mode = mode;
         if (e.airliner && writeContrail(na, e.airliner, f, pxAngle)) na++;
@@ -385,7 +387,7 @@ export function createAirTraffic(opts: AirTrafficOptions): AirTraffic {
         poseMatrix(_m, p.x, p.y, p.z, p.heading, p.pitch, p.roll);
         if (mode === 'mesh') {
           counts.meshes++;
-          const lod = d > lod0Dist(e.kind) ? 1 : 0;
+          const lod = d > lod0Dist(e.kind) && px < 60 ? 1 : 0;
           const key = `${e.kind}:${lod}`;
           if (key !== s.geoKey) {
             batch.setGeometryIdAt(s.inst, geo.get(key)!);
@@ -404,7 +406,12 @@ export function createAirTraffic(opts: AirTrafficOptions): AirTraffic {
         } else {
           // far: a sun-lit dot the size of the aircraft (dims out below ~1.6 px)
           counts.dots++;
-          points!.push(p.x, p.y, p.z, 0.75, 0.76, 0.78, 1, LENGTH[e.kind] * 0.6, 1.6, 2);
+          // (the helicopter is painted all over in its livery; the others are white-ish)
+          if (e.kind === 'heli') {
+            const list = LIVERIES.heli;
+            _c.setHex(list[e.livery % list.length]);
+            points!.push(p.x, p.y, p.z, _c.r, _c.g, _c.b, 1, LENGTH[e.kind] * 0.6, 1.6, 2);
+          } else points!.push(p.x, p.y, p.z, 0.75, 0.76, 0.78, 1, LENGTH[e.kind] * 0.6, 1.6, 2);
         }
         writeLights(e.kind, e.id, f.t, f.night, p.strobe, p.landingLight);
       }

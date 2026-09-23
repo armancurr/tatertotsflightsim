@@ -67,11 +67,23 @@ describe('air traffic renderer (functional)', () => {
     }
   }, 60_000);
 
+  it('a telephoto view draws the real model instead of the dot (mesh whenever it spans > 3 px)', () => {
+    const f = frame({ t: 751, dt: 0.1 });
+    air.update(f);
+    const k = Array.from({ length: air.stats().entities }, (_, i) => air.entityInfo(i)!).findIndex((e) => e.mode === 'dot' && e.kind !== 'a320' && e.dist < 20000);
+    expect(k).toBeGreaterThanOrEqual(0);
+    const e = air.entityInfo(k)!;
+    air.update({ ...f, dt: 0, fovDeg: 1.5 });
+    expect(air.entityInfo(k)!.mode).toBe('mesh');
+    air.update({ ...f, dt: 0, fovDeg: 60 });
+    expect(air.entityInfo(k)!.mode).toBe(e.mode);
+  });
+
   it('the circuit traffic is drawn as meshes from the runway, with spinning props; airliners lay contrails', () => {
     let meshes = 0;
     let discs = 0;
     let trails = 0;
-    for (let t = 0; t < 900; t += 1) {
+    for (let t = 752; t < 1652; t += 1) {
       air.update(frame({ t, dt: 1 }));
       const s = air.stats();
       meshes = Math.max(meshes, s.meshes);
@@ -85,7 +97,7 @@ describe('air traffic renderer (functional)', () => {
 
   it('contrail ribbons: finite, camera-facing strips with bounded opacity', () => {
     let seen = false;
-    for (let t = 1000; t < 1600 && !seen; t += 5) {
+    for (let t = 1660; t < 2300 && !seen; t += 5) {
       air.update(frame({ t, dt: 5 }));
       const mesh = air.group.getObjectByName('traffic.contrails') as THREE.Mesh;
       const n = air.stats().contrails;
@@ -107,7 +119,7 @@ describe('air traffic renderer (functional)', () => {
   }, 30_000);
 
   it('paused: poses and render state frozen', () => {
-    const f = frame({ t: 2000, dt: 0 });
+    const f = frame({ t: 2400, dt: 0 });
     air.update({ ...f, dt: 0.5 });
     const snap = () => JSON.stringify(Array.from({ length: air.stats().entities }, (_, k) => air.entityInfo(k)));
     const a = snap();
@@ -117,8 +129,8 @@ describe('air traffic renderer (functional)', () => {
 
   it('teleport: traffic re-anchors around the new position and keeps its distance', () => {
     const far: PlayerRef = { x: 15000, y: 1800, z: -12000, agl: 900 };
-    air.reanchor(2100, far);
-    for (let t = 2100; t < 2700; t += 0.5) {
+    air.reanchor(2500, far);
+    for (let t = 2500; t < 3100; t += 0.5) {
       air.update(frame({ t, dt: 0.5, camX: far.x, camY: far.y + 3, camZ: far.z + 15, player: far }));
       for (let k = 0; k < air.stats().entities; k++) {
         const e = air.entityInfo(k)!;
