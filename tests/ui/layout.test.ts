@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import { computeHudLayout, type Rect } from '../../src/ui/hud';
 import { systemsStripWidth } from '../../src/ui/gauges';
 import { topBarHeight } from '../../src/ui/topBar';
+import { CONFIG } from '../../src/config';
 
 const overlap = (a: Rect, b: Rect) => a.w > 0 && a.h > 0 && b.w > 0 && b.h > 0 && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const inside = (a: Rect, w: number, h: number) => a.x >= 0 && a.y >= 0 && a.x + a.w <= w + 1e-9 && a.y + a.h <= h + 1e-9;
@@ -43,11 +44,11 @@ describe('HUD layout', () => {
     }
   });
 
-  it('in cockpit view (clusters hidden) the strip is a single row along the bottom', () => {
+  it('in cockpit view (clusters hidden) the strip is a compact two-row block (the 3D panel owns the bottom centre)', () => {
     const l = computeHudLayout(1024, 768, undefined, 'cockpitHidden');
     expect(l.clustersVisible).toBe(false);
-    expect(l.stripRows).toBe(1);
-    expect(l.strip.w).toBeCloseTo(systemsStripWidth(l.strip.h), 0);
+    expect(l.stripRows).toBe(2);
+    expect(l.strip.w).toBeCloseTo(systemsStripWidth(l.strip.h / 2, 2), 0);
   });
 
   it('everything sits below the branding top bar', () => {
@@ -59,9 +60,9 @@ describe('HUD layout', () => {
     }
   });
 
-  it('jet style: no six-pack, no compass tape, a centred head-up display between the annunciators and the strip', () => {
+  it('jet style (cockpit view): no six-pack, no compass tape, a centred head-up display between the annunciators and the strip', () => {
     for (const [w, h] of [[1440, 900], [1024, 768]]) {
-      const l = computeHudLayout(w, h, undefined, 'normal', 'jet');
+      const l = computeHudLayout(w, h, undefined, 'cockpitHidden', 'jet');
       expect(l.clustersVisible).toBe(false);
       expect(l.compassVisible).toBe(false);
       const j = l.jet!;
@@ -100,5 +101,25 @@ describe('HUD layout', () => {
       ),
       { numRuns: 400 },
     );
+  });
+});
+
+describe('HUD layout: cockpit and exterior-jet placement (orchestrator play-test)', () => {
+  it('in the Cessna cockpit the systems strip docks bottom-left, clear of the 3D panel in the centre', () => {
+    for (const [w, h] of [[1440, 900], [1024, 768]] as const) {
+      const L = computeHudLayout(w, h, CONFIG, 'cockpitHidden', 'steam');
+      expect(L.strip.x + L.strip.w).toBeLessThan(w * 0.36);
+      expect(L.strip.y + L.strip.h).toBeLessThanOrEqual(h);
+      expect(L.strip.x).toBeGreaterThanOrEqual(0);
+    }
+  });
+  it('the F-16 HUD is full size in the cockpit and smaller and higher outside, clear of the aircraft', () => {
+    for (const [w, h] of [[1440, 900], [1024, 768]] as const) {
+      const inside = computeHudLayout(w, h, CONFIG, 'cockpitHidden', 'jet').jet!;
+      const outside = computeHudLayout(w, h, CONFIG, 'normal', 'jet').jet!;
+      expect(outside.h).toBeLessThan(inside.h * 0.8);
+      // The chase camera frames the aircraft just below screen centre: keep the HUD above it.
+      expect(outside.y + outside.h).toBeLessThan(h * 0.5);
+    }
   });
 });

@@ -96,7 +96,14 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   const twoRow = systemsStripWidth(1, 2);
   let strip: Rect;
   let stripRows: 1 | 2 = 1;
-  if (!clustersVisible) {
+  if (!clustersVisible && mode === 'cockpitHidden' && !jetStyle) {
+    // Cockpit view: the 3D instrument panel fills the bottom centre, so dock a compact two-row
+    // strip bottom-left, over the side window.
+    stripRows = 2;
+    const cell = Math.max(24, Math.min(cell0, Math.floor((w * 0.34 - margin) / twoRow)));
+    const sw = Math.round(twoRow * cell);
+    strip = { x: margin, y: h - margin - cell * 2, w: sw, h: cell * 2 };
+  } else if (!clustersVisible) {
     const cell = Math.max(24, Math.min(cell0, Math.floor((w - 2 * margin) / oneRow)));
     const sw = Math.round(oneRow * cell);
     strip = { x: Math.round((w - sw) / 2), y: h - margin - cell, w: sw, h: cell };
@@ -135,9 +142,15 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     const j = cfg.hud.jet;
     const minTop = annunciatorY + Math.round(fontSize * 2.8);
     const maxBottom = strip.y - gap;
-    const jh = Math.max(120, Math.min(Math.round(h * j.heightFrac), maxBottom - minTop));
-    const jw = Math.max(120, Math.round(Math.min(clamp(w * j.widthFrac, j.minW, j.maxW), jh * 1.05, w - 2 * margin)));
-    const jy = Math.round(clamp(h * 0.47 - jh / 2, minTop, Math.max(minTop, maxBottom - jh)));
+    // A real HUD lives in the cockpit; from the outside cameras show it smaller and higher so it
+    // never sits on top of the aircraft (the chase camera frames the jet just below centre).
+    const exterior = mode === 'normal';
+    const k = exterior ? 0.62 : 1;
+    const jh = Math.max(96, Math.round(k * Math.min(Math.round(h * j.heightFrac), maxBottom - minTop)));
+    const jw = Math.max(96, Math.round(k * Math.min(clamp(w * j.widthFrac, j.minW, j.maxW), jh / k * 1.05, w - 2 * margin)));
+    const jy = exterior
+      ? Math.round(Math.max(minTop, h * 0.46 - jh))
+      : Math.round(clamp(h * 0.47 - jh / 2, minTop, Math.max(minTop, maxBottom - jh)));
     jet = { x: Math.round((w - jw) / 2), y: jy, w: jw, h: Math.min(jh, Math.max(0, h - jy)) };
   }
   return {
