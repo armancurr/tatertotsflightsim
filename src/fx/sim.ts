@@ -665,7 +665,8 @@ export class FxSim {
           fireLevel = level;
           fx = e.x; fy = Math.max(e.y, e.groundY) + 2; fz = e.z;
         }
-        e.acc += (e.smoky ? e.rate * (0.5 + 0.35 * e.radius) : C.groundFireRate) * e.intensity * env * dt;
+        // flames per second grow with the fire's area (radius²) for part/vehicle fires
+        e.acc += (e.smoky ? e.rate * (0.4 + 0.3 * e.radius + 0.1 * e.radius * e.radius) : C.groundFireRate) * e.intensity * env * dt;
         let guard = 0;
         while (e.acc >= 1 && guard++ < 30) {
           e.acc -= 1;
@@ -739,7 +740,7 @@ export class FxSim {
   /** Flame height scale (m) of a fire: grows with its size and heat release (Heskestad-like), and with its envelope. */
   private flameHeight(e: Emitter, env: number): number {
     const F = FX.fire;
-    const I = Math.min(1, e.intensity);
+    const I = Math.min(1.5, e.intensity);
     return Math.min(F.maxHeight, e.radius * (F.heightPerRadius[0] + F.heightPerRadius[1] * I)) * (0.6 + 0.4 * env);
   }
 
@@ -768,11 +769,11 @@ export class FxSim {
     t.drag = 0.5;
     t.buoyancy = 2.5;
     t.buoyTau = 6;
-    t.alpha = 0.75;
-    t.fadeIn = 0.25;
+    t.alpha = 0.8;
+    t.fadeIn = 0.2;
     t.fadeOut = 0.6;
-    t.heat = 0.3;
-    t.heatTau = 0.4;
+    t.heat = 0.12;
+    t.heatTau = 0.3;
     const shade = C.smokeAlbedo * (0.8 + 0.3 * this.rnd());
     t.r = shade * C.smokeTint[0]; t.g = shade * C.smokeTint[1]; t.b = shade * C.smokeTint[2];
     t.lighten = C.smokeLighten;
@@ -828,8 +829,8 @@ export class FxSim {
     if (u < F.bodyShare) {
       // body: broad, bright, slow
       s = L * (0.4 + 0.3 * this.rnd()) * centre;
-      t.aspect = 0.8 + 0.25 * this.rnd();
-      t.life = 0.7 + 0.6 * this.rnd();
+      t.aspect = 0.75 + 0.3 * this.rnd();
+      t.life = 0.8 + 0.6 * this.rnd();
       t.y = base + s * 0.3;
       t.vy = 0.5 + 0.8 * this.rnd();
       t.buoyancy = 3;
@@ -853,14 +854,14 @@ export class FxSim {
       t.rot = this.sym(0.3);
     } else {
       // billow: a rolling ball of burning gas off the top, cooling to soot
-      s = L * (0.22 + 0.25 * this.rnd());
-      t.life = 0.5 + 0.5 * this.rnd();
-      t.y = base + L * (0.45 + 0.35 * this.rnd());
-      t.vy = 2 + 1.5 * this.rnd();
+      s = L * (0.18 + 0.2 * this.rnd());
+      t.life = 0.6 + 0.5 * this.rnd();
+      t.y = base + L * (0.3 + 0.35 * this.rnd());
+      t.vy = 1.5 + 1.5 * this.rnd();
       t.buoyancy = 6;
       t.buoyTau = 0.6;
-      t.heat = 0.8 + 0.2 * this.rnd();
-      t.heatTau = t.life * 0.45;
+      t.heat = 0.85 + 0.2 * this.rnd();
+      t.heatTau = t.life * 0.3;
       t.rotRate = this.sym(1.5);
     }
     const billow = u >= F.bodyShare + F.tongueShare;
@@ -952,9 +953,9 @@ export class FxSim {
       if (e.kind !== Kind.Fire || !(e.level > 0)) continue;
       const R = 5 + 2.5 * e.radius;
       const dx = x - e.x, dy = y - (Math.max(e.y, e.groundY) + 1 + 0.5 * e.radius), dz = z - e.z;
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 > 400 * R * R) continue;
-      g += (1.1 * Math.min(1, e.level)) / (1 + d2 / (R * R));
+      const q = 1 + (dx * dx + dy * dy + dz * dz) / (R * R);
+      if (q > 400) continue;
+      g += (1.3 * Math.min(1, e.level)) / (q * q);
     }
     if (this.glow.level > 1e-3) {
       const dx = x - this.glow.x, dy = y - this.glow.y, dz = z - this.glow.z;
