@@ -48,7 +48,7 @@ function interiorMeshes(ac: ReturnType<typeof createAircraft>, skip: string[] = 
 describe('six-pack in full view', () => {
   it('rays from the eye (and a head 3 cm lower or higher) reach every point of every six-pack bezel unobstructed', () => {
     const ac = cockpitAircraft();
-    const meshes = interiorMeshes(ac, ['sunVisors']);
+    const meshes = interiorMeshes(ac, ['sunVisors', 'windshieldGlint']);
     const panel = ac.root.getObjectByName('panel')!;
     const rc = new THREE.Raycaster();
     const blocked: string[] = [];
@@ -251,6 +251,27 @@ describe('the world outside the side window and the fittings, where the airframe
   });
 });
 
+describe('the headliner is the ceiling', () => {
+  it('no part of the wing centre section hangs inside the cabin (every wing vertex over the cabin is above the headliner)', () => {
+    const ac = createAircraft({ quality: 'low' });
+    for (const name of ['wing.left', 'wing.right']) {
+      const p = (ac.root.getObjectByName(name) as THREE.Mesh).geometry.getAttribute('position');
+      for (let i = 0; i < p.count; i++) {
+        const x = p.getX(i);
+        const y = p.getY(i);
+        const z = p.getZ(i);
+        if (y < 0.6 || z < -0.7 || z > 1.2) continue;
+        fuselageSection(z, sec);
+        const W = sec.halfWidth - 0.035;
+        if (Math.abs(x) >= W) continue;
+        const inner = sec.widthY + (sec.top - 0.035 - sec.widthY) * Math.pow(1 - Math.pow(Math.abs(x) / W, sec.nTop), 1 / sec.nTop);
+        expect(y, `${name} vertex at ${x.toFixed(2)},${z.toFixed(2)}`).toBeGreaterThan(inner + 0.005);
+      }
+    }
+    ac.dispose();
+  });
+});
+
 describe('daylight in the cabin (cabinSunVisibility)', () => {
   const P = (x: number, y: number, z: number) => ({ x, y, z });
   const dir = (az: number, el: number) => ({ x: Math.sin(az * DEG) * Math.cos(el * DEG), y: Math.sin(el * DEG), z: -Math.cos(az * DEG) * Math.cos(el * DEG) });
@@ -307,7 +328,7 @@ describe('only drawn from the seat, and cheap', () => {
     v.cameraMode = 'chase';
     ac.setVisualState(v, 1 / 60);
     const chase = calls(ac);
-    for (const n of ['cockpitDetail', 'sunVisors', 'throttle', 'gearHandle', 'flapLever', 'trimWheel']) expect(ac.root.getObjectByName(n)!.visible, n).toBe(false);
+    for (const n of ['cockpitDetail', 'sunVisors', 'windshieldGlint', 'throttle', 'gearHandle', 'flapLever', 'trimWheel']) expect(ac.root.getObjectByName(n)!.visible, n).toBe(false);
     expect(ac.root.getObjectByName('cabinTrim')!.visible).toBe(true);
     v.cameraMode = 'cockpit';
     ac.setVisualState(v, 1 / 60);

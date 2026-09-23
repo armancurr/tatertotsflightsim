@@ -14,10 +14,12 @@ import { PANEL, PANEL_BOTTOM_Y, PANEL_LAYOUT as PL } from './panel';
 import { fuselageSection, monotoneCurve, type SectionParams } from './shape';
 import { WELL, sectionHalfWidthAt } from './gearKinematics';
 import { compass, doorPanels, fuelSelector, headliner, seat, sunVisors, visorHinges } from './interior';
-import { cabinTrim } from './cabinTrim';
+import { cabinTrim, windshieldSheetGeometry } from './cabinTrim';
 
 export interface CockpitRig {
   group: THREE.Group;
+  /** Sun direction (world, toward the sun) and colour × intensity for the windshield glint; the model sets them every frame. */
+  glint: { sunDir: { value: THREE.Vector3 }; sunColor: { value: THREE.Color } };
   /** Meshes only worth drawing from the pilot's seat. */
   details: THREE.Object3D[];
   panelMesh: THREE.Mesh;
@@ -267,6 +269,18 @@ export function buildCockpit(
     tint(box(PANEL.widthM - 0.06, 0.13, 0.012, 0, panelBottom - 0.07, PANEL.z - 0.06, new THREE.Euler(0.55, 0, 0)), 0x222325, 0.9, 0),
     // Pedestal under the centre of the panel (standing on the nose-well roof).
     tint(box(0.14, panelBottom - WELL.nose.roofY, 0.18, 0.02, (panelBottom + WELL.nose.roofY) / 2, PANEL.z - 0.03), 0x242527, 0.85, 0),
+    // Trim-wheel housing at the foot of the pedestal: two cheeks the wheel turns between, the trim
+    // position slot with its pointer (on the right cheek), and a cowl-flap lever below.
+    ...[-1, 1].map((k) => tint(rbox(0.012, 0.13, 0.2, 0.004, 0.02 + k * 0.022, panelBottom - 0.185, PANEL.z + 0.07), 0x202123, 0.8, 0)),
+    tint(box(0.056, 0.02, 0.2, 0.02, panelBottom - 0.245, PANEL.z + 0.07), 0x1d1e20, 0.85, 0),
+    tint(box(0.004, 0.06, 0.012, 0.02 + 0.029, panelBottom - 0.13, PANEL.z + 0.14), 0x0a0a0a, 0.6, 0),
+    tint(box(0.005, 0.006, 0.014, 0.02 + 0.03, panelBottom - 0.125, PANEL.z + 0.14), 0xe8e6de, 0.5, 0),
+    tint(tube(V(0.075, panelBottom - 0.2, PANEL.z + 0.02), V(0.1, panelBottom - 0.2, PANEL.z + 0.07), 0.004), 0xb8babc, 0.3, 0.9),
+    tint(rbox(0.024, 0.016, 0.024, 0.007, 0.1, panelBottom - 0.2, PANEL.z + 0.075), 0x161617, 0.5, 0),
+    // Hand microphone on its hook, left side of the pedestal.
+    tint(rbox(0.04, 0.075, 0.03, 0.012, -0.075, panelBottom - 0.07, PANEL.z + 0.02), 0x121213, 0.55, 0),
+    tint(box(0.016, 0.01, 0.006, -0.075, panelBottom - 0.05, PANEL.z + 0.037), 0x2a2b2d, 0.5, 0.2),
+    tint(tube(V(-0.075, panelBottom - 0.11, PANEL.z + 0.02), V(-0.05, panelBottom - 0.2, PANEL.z + 0.01), 0.005), 0x121213, 0.7, 0),
     // Floor / carpet: footwells either side of the nose-well hump, then full width to the front seats.
     ...floor(),
     // Front seats: pleated fabric inserts in vinyl frames, belts; rails under the cushions.
@@ -351,6 +365,63 @@ export function buildCockpit(
   visors.renderOrder = 2;
   group.add(visors);
   details.push(visors);
+
+  // Windshield glint: dust and fine cleaning scratches on the inside of the windshield catch the
+  // light when the pilot looks toward the sun (additive, cockpit view only). Fog off: it is 1 m away.
+  const glint = { sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunColor: { value: new THREE.Color(0, 0, 0) } };
+  const glintMat = new THREE.ShaderMaterial({
+    name: 'ac.windshieldGlint',
+    uniforms: { uSunDir: glint.sunDir, uSunColor: glint.sunColor },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      varying vec3 vLocal;
+      void main() {
+        vLocal = position;
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uSunDir;
+      uniform vec3 uSunColor;
+      varying vec3 vWorld;
+      varying vec3 vLocal;
+      float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+      float vnoise(vec2 p) {
+        vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
+      }
+      void main() {
+        vec3 V = normalize(vWorld - cameraPosition);
+        float g = max(dot(V, normalize(uSunDir)), 0.0);
+        float glare = pow(g, 10.0) * 0.5 + pow(g, 60.0) * 1.2;
+        if (glare < 0.002) discard;
+        vec2 q = vec2(vLocal.x, vLocal.y + vLocal.z * 0.7);
+        float haze = 0.35 + 0.65 * vnoise(q * 7.0);
+        float specks = smoothstep(0.93, 0.99, vnoise(q * 160.0)) * 2.0;
+        // Circular cleaning scratches: fine rings round a few wipe centres.
+        float sc = 0.0;
+        for (int i = 0; i < 3; i++) {
+          vec2 c = vec2(-0.25 + 0.25 * float(i), 0.55 + 0.08 * float(i));
+          float r = length(q - c) * 900.0;
+          sc += smoothstep(0.85, 1.0, sin(r + h21(vec2(float(i), 3.0)) * 6.28)) * smoothstep(0.3, 0.0, length(q - c)) * step(0.6, vnoise(q * 40.0 + float(i)));
+        }
+        vec3 col = uSunColor * glare * (0.012 * haze + 0.05 * specks + 0.04 * sc);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: false,
+  });
+  mats.all.push(glintMat);
+  const glintMesh = new THREE.Mesh(windshieldSheetGeometry(), glintMat);
+  glintMesh.name = 'windshieldGlint';
+  glintMesh.renderOrder = 2;
+  group.add(glintMesh);
+  details.push(glintMesh);
 
   // Yokes: the shaft slides in and out of the panel, the wheel turns about it.
   const yokeGeo = yokeGeometry();
@@ -475,6 +546,7 @@ export function buildCockpit(
   let lastRetract = 0;
   return {
     group,
+    glint,
     details,
     panelMesh,
     update(anim, r, cockpit) {

@@ -10,7 +10,7 @@ import { fcParams } from '../support/fc';
 import { CONFIG } from '../../src/config';
 import { COCKPIT, LIP_Y, glareshieldTopY } from '../../src/aircraft/cockpit';
 import { PANEL, PANEL_LAYOUT } from '../../src/aircraft/panel';
-import { CABIN_INSET, windowDistance } from '../../src/aircraft/livery';
+import { cabinOpenDistance } from '../../src/aircraft/livery';
 import { DOOR_WINDOW, FUSE_Z0, STRUT, fuselageSection, wingLEy, type SectionParams } from '../../src/aircraft/shape';
 
 const EYE = CONFIG.aircraft.geometry.pilotEye;
@@ -69,7 +69,7 @@ describe('pilot eye point (left seat)', () => {
     expect(screenRow(depression(PANEL_LAYOUT.turn.y - PANEL_LAYOUT.turn.d / 2, PANEL.z))).toBeLessThan(0.95);
   });
 
-  it('the left door post (A-pillar trim) is slim: under 8° wide seen from the seat', () => {
+  it('the left door post (A-pillar trim) is slim: under 6° wide seen from the seat', () => {
     // Scan the cabin side at several heights; the solid run between the windshield opening and
     // the door-window opening is the post. Measure its angular width from the eye.
     for (const y of [0.45, 0.6, 0.75]) {
@@ -78,7 +78,7 @@ describe('pilot eye point (left seat)', () => {
         fuselageSection(z, sec);
         if (y > sec.top - 0.05) continue;
         const x = -sec.halfWidth * Math.pow(1 - Math.pow(Math.max(0, (y - sec.widthY) / (sec.top - sec.widthY)), sec.nTop), 1 / sec.nTop);
-        const open = windowDistance(x, y, z, sec) > CABIN_INSET;
+        const open = cabinOpenDistance(x, y, z, sec) > 0;
         if (!open) solid.push(z);
       }
       // The post is the solid run just behind the windshield's side edge.
@@ -95,7 +95,7 @@ describe('pilot eye point (left seat)', () => {
       const px = -sec.halfWidth + 0.035;
       const a0 = Math.atan2(px - EYE.x, EYE.z - z0);
       const a1 = Math.atan2(px - EYE.x, EYE.z - z1);
-      expect(Math.abs(a1 - a0) / DEG).toBeLessThan(8);
+      expect(Math.abs(a1 - a0) / DEG).toBeLessThan(6);
     }
   });
 

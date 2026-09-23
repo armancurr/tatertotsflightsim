@@ -408,13 +408,14 @@ function paintSkin(
  * up to the post moulding (cabinTrim.ts), so the post is the slim moulding, not a band of wall.
  */
 export function cabinOpenDistance(x: number, y: number, z: number, sec: SectionParams): number {
-  let d = windowDistance(x, y, z, sec) - CABIN_INSET;
+  const dw = windowDistance(x, y, z, sec);
+  let d = dw - CABIN_INSET;
   if (Math.abs(x) > 0.2 && z < -0.4 && y > POST.openY0 - 0.02 && y < POST.openY1 + 0.02) {
     const s = postSideDistance(z, y);
     const as = Math.abs(s);
     if (as < POST.corridorHalf + 0.03) {
       // Only in the strips between the moulding and a window edge (never beyond a window's end).
-      const nearWindow = s > 0 ? (y - pillarY(z)) * 0.67 + 0.016 : 0.016 - doorWindowSd(z, y);
+      const nearWindow = s > 0 ? dw + 0.03 : 0.016 - doorWindowSd(z, y);
       const open = Math.min(as - POST.halfWidth + 0.004, nearWindow, y - POST.openY0, POST.openY1 - y);
       d = Math.max(d, open);
     }
@@ -439,7 +440,7 @@ function paintCabin(x: number, y: number, z: number, sec: SectionParams, t: Texe
     const u = f - Math.floor(f);
     shade(t, 0.93 + 0.07 * Math.sin(u * Math.PI));
     if (z > -0.45 && z < 1.9) shade(t, 1 - 0.28 * lineCov(Math.min(u, 1 - u) * 0.25, 0.0022));
-    shade(t, 1 + 0.035 * grain(x, y, z));
+    shade(t, 1 + 0.012 * grain(x, y, z));
   } else if (y < -0.36) {
     set(t, COLORS.carpet, 0, 1);
     shade(t, 1 + 0.08 * grain(x, y, z));
@@ -448,7 +449,7 @@ function paintCabin(x: number, y: number, z: number, sec: SectionParams, t: Texe
     shade(t, 1 + 0.025 * grain(x, y, z));
   } else {
     set(t, COLORS.upperTrim, 0, 0.7);
-    shade(t, 1 + 0.02 * grain(x, y, z));
+    shade(t, 1 + 0.01 * grain(x, y, z));
   }
   // Seams: headliner edge, the upper trim over the door panels, and the door's own gap.
   const seam = Math.max(lineCov(y - 0.8, 0.003), lineCov(y - 0.22, 0.0025));

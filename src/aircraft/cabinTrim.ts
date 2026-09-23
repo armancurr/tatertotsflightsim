@@ -167,3 +167,31 @@ export function headerTrimGeometry(): THREE.BufferGeometry {
 export function cabinTrim(): THREE.BufferGeometry[] {
   return [tint(postTrimGeometry(-1), TRIM_COLOR, 0.6, 0), tint(postTrimGeometry(1), TRIM_COLOR, 0.6, 0), tint(headerTrimGeometry(), TRIM_COLOR, 0.6, 0)];
 }
+
+/**
+ * The windshield's inner face as a thin sheet (1.2 cm inside the skin, between the glass and the
+ * cabin trim), for the sun-glint overlay: dust and fine scratches that light up when the pilot
+ * looks toward the sun.
+ */
+export function windshieldSheetGeometry(): THREE.BufferGeometry {
+  const rings: number[][] = [];
+  const inset = 0.012;
+  const n = 28;
+  for (let z = -1.2; z <= -0.535; z += 0.025) {
+    fuselageSection(z, _s);
+    const W = _s.halfWidth - inset;
+    const H = _s.top - inset - _s.widthY;
+    const pY = PILLAR.y0 + ((z - PILLAR.z0) * (PILLAR.y1 - PILLAR.y0)) / (PILLAR.z1 - PILLAR.z0) + 0.012;
+    const v = Math.min(0.999, Math.max(0, (pY - _s.widthY) / H));
+    const xp = W * Math.pow(1 - Math.pow(v, _s.nTop), 1 / _s.nTop);
+    const ring: number[] = [];
+    for (let j = 0; j <= n; j++) {
+      const x = -xp + (2 * xp * j) / n;
+      const r = Math.min(0.999, Math.abs(x) / W);
+      const y = _s.widthY + H * Math.pow(1 - Math.pow(r, _s.nTop), 1 / _s.nTop);
+      ring.push(x, y, z);
+    }
+    rings.push(ring);
+  }
+  return faceToward(loftGeometry(rings, { closed: false, orient: 'keep' }), CABIN_CENTRE);
+}
