@@ -40,6 +40,7 @@ import { interpolatePose } from './interpolate';
 import { buildSimSnapshot, installSimApi } from './simApi';
 import { createSystems } from './systems';
 import { combatWorld } from '../combat/world';
+import { createDeferredDisposer } from './deferredDispose';
 
 export interface App {
   dispose(): void;
@@ -99,6 +100,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   const loop = new FixedStepLoop(cfg.sim.fixedDt, cfg.sim.maxSubSteps, cfg.sim.maxFrameDt);
   const fpsMeter = createFpsMeter();
   const input = createInputManager(renderer.domElement, window);
+  // Old aircraft are disposed a few rendered frames after they leave the scene (deferredDispose.ts:
+  // three's shared shadow depth material would otherwise re-upload their freed textures — a leak).
+  const disposer = createDeferredDisposer();
 
   const setTimeOfDay = (i: number) => {
     const n = cfg.atmosphere.timeOfDay.length;
@@ -144,8 +148,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   selectAircraft = (id: string) => {
     const next = getAircraftDef(id);
     if (next.id === def.id) return;
-    scene.remove(aircraft.root);
-    aircraft.dispose();
+    const old = aircraft;
+    scene.remove(old.root);
+    disposer.defer(() => old.dispose(), 3);
     def = next;
     ac = def.config;
     aircraft = def.createModel();
@@ -348,6 +353,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
 
     renderer.render(scene, camera);
     systems.postRender(sysFrame);
+    disposer.tick();
 
     const info = renderer.info;
     renderStats.calls = info.render.calls;
@@ -368,6 +374,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   return {
     dispose() {
       renderer.setAnimationLoop(null);
+      disposer.flush();
       removeEventListener('resize', onResize);
       input.dispose();
       systems.dispose();
