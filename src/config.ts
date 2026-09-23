@@ -496,6 +496,13 @@ export const CONFIG = {
       vleKt: 140,
       /** Max speed for operating the gear (in transit), knots. */
       vloKt: 140,
+      /**
+       * Gear warning (src/ui/gearWarning.ts): with the power back and the gear up it warns only below
+       * this IAS (kt) and below this height (ft AGL); null = no gate (the 172RG's throttle switch warns
+       * at any speed and height). Landing flaps with the gear up warn regardless.
+       */
+      warnBelowKt: null as number | null,
+      warnBelowAglFt: null as number | null,
       /** Seconds continuously airborne before the squat-switch interlock lets the gear retract. */
       retractDelay: 1.5,
       /** Squat switch: the gear will not retract while the aircraft sits on its wheels. */
@@ -2306,6 +2313,9 @@ function makeF16(): AircraftConfig {
       vleKt: 300,
       /** Gear operating speed, knots. */
       vloKt: 300,
+      /** Gear warning below 190 KCAS with the power back (not in a fast idle descent). */
+      warnBelowKt: 190,
+      warnBelowAglFt: null,
       retractDelay: 1.5,
       squatSwitch: true,
     },
@@ -2665,6 +2675,9 @@ function makeA10(): AircraftConfig {
       transitTime: 6,
       vleKt: 200,
       vloKt: 200,
+      /** Gear warning only below the gear-operating speed (not in an idle dive on the range). */
+      warnBelowKt: 200,
+      warnBelowAglFt: null,
       retractDelay: 1.5,
       squatSwitch: true,
     },
@@ -3130,6 +3143,9 @@ function makeB747(): AircraftConfig {
       /** VLE 320 KIAS, VLO 270 KIAS. */
       vleKt: 320,
       vloKt: 270,
+      /** Thrust levers closed with the gear up warn below 800 ft (flaps 25/30 warn at any height). */
+      warnBelowKt: null,
+      warnBelowAglFt: 800,
       retractDelay: 1.5,
       squatSwitch: true,
     },

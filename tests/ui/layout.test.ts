@@ -145,3 +145,17 @@ describe('help sheet (H) placement', () => {
     );
   });
 });
+
+describe('help sheet (H) fits and scrolls', () => {
+  it('three balanced columns on windows ≥ 960 px wide (fits 1024 × 768), and the mouse wheel scrolls it when it does not fit', async () => {
+    const { HUD_CSS } = await import('../../src/ui/hudStyle');
+    // The rest of the HUD lets the mouse through to the 3D view; the help sheet takes it (wheel = scroll).
+    expect(HUD_CSS).toMatch(/\.fsh-root \.fsh-help,\s*\.fsh-root \.fsh-help \*\s*\{\s*pointer-events:\s*auto;/);
+    // …declared after the catch-all `.fsh-root * { pointer-events: none }` so it wins.
+    expect(HUD_CSS.indexOf('.fsh-root .fsh-help, .fsh-root .fsh-help *')).toBeGreaterThan(HUD_CSS.indexOf('.fsh-root * { pointer-events: none'));
+    const wide = /@media \(min-width: 960px\) \{([\s\S]*?)\n\}/.exec(HUD_CSS);
+    expect(wide).not.toBeNull();
+    expect(wide![1]).toMatch(/\.fsh-help \.tfs-controls-grid \{[^}]*column-count: 3/);
+    expect(wide![1]).toMatch(/break-inside: avoid/);
+  });
+});

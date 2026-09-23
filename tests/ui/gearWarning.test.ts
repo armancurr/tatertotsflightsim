@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { CONFIG, cloneConfig } from '../../src/config';
+import { CONFIG, cloneConfig, F16_AIRCRAFT, A10_AIRCRAFT, B747_AIRCRAFT, type Config } from '../../src/config';
 import { gearWarning, gearWarningFromReadings, type GearWarningInput } from '../../src/ui/gearWarning';
 import { updateInstruments, createInstrumentModel } from '../../src/ui/instruments';
 import { annunciations } from '../../src/ui/messages';
@@ -127,6 +127,68 @@ describe('gear warning (172RG logic)', () => {
         const hi = Math.max(a, b);
         if (gearWarning(base({ throttlePct: hi, flapsDeg: flaps })).horn) expect(gearWarning(base({ throttlePct: lo, flapsDeg: flaps })).horn).toBe(true);
       }),
+    );
+  });
+});
+
+/** The fleet's configs as the app builds them (the aircraft section swapped in). */
+const withAircraft = (aircraft: Config['aircraft']): Config => ({ ...CONFIG, aircraft });
+
+describe('gear warning — the jets and the 747 (each aircraft\'s own logic)', () => {
+  const F16 = withAircraft(F16_AIRCRAFT);
+  const A10 = withAircraft(A10_AIRCRAFT);
+  const B747 = withAircraft(B747_AIRCRAFT);
+
+  it('F-16: idle power in a fast descent is not a gear warning; slowing below 190 kt with the gear up is', () => {
+    // ?spawn=range: 250 kt at 1,500 ft, trimmed at 11 % throttle — used to flash GEAR and sound the horn at once.
+    expect(gearWarning(base({ throttlePct: 11, iasKt: 250, aglFt: 1500 }), F16).horn).toBe(false);
+    expect(gearWarning(base({ throttlePct: 0, iasKt: 420, aglFt: 800 }), F16).gearUnsafe).toBe(false);
+    expect(gearWarning(base({ throttlePct: 5, iasKt: 170, aglFt: 800 }), F16).horn).toBe(true);
+  });
+
+  it('A-10: no warning above its gear-operating speed (a dive at idle), a warning below it', () => {
+    expect(gearWarning(base({ throttlePct: 0, iasKt: 300, aglFt: 2000 }), A10).horn).toBe(false);
+    expect(gearWarning(base({ throttlePct: 0, iasKt: 180, aglFt: 2000 }), A10).horn).toBe(true);
+  });
+
+  it('747: thrust levers closed warn only low (< 800 ft); landing flaps (25/30) warn at any height', () => {
+    expect(gearWarning(base({ throttlePct: 10, iasKt: 180, aglFt: 5000 }), B747).horn).toBe(false);
+    expect(gearWarning(base({ throttlePct: 10, iasKt: 180, aglFt: 600 }), B747).horn).toBe(true);
+    expect(gearWarning(base({ throttlePct: 60, flapsDeg: 25, iasKt: 170, aglFt: 5000 }), B747).horn).toBe(true);
+  });
+
+  it('the Cessna keeps the 172RG throttle switch: low power warns at any speed and height', () => {
+    expect(gearWarning(base({ throttlePct: 10, iasKt: 135, aglFt: 5000 })).horn).toBe(true);
+  });
+
+  it('property: the speed/height gates only ever silence the LOW-POWER warning — landing flaps, the squat switch and overspeed are untouched; total on garbage', () => {
+    const arbNum = fc.oneof(fc.double(), fc.constantFrom(Number.NaN, Infinity, -Infinity, 0, 15, 20, 140, 190, 800));
+    fc.assert(
+      fc.property(
+        fc.constantFrom(CONFIG, F16, A10, B747),
+        fc.record({
+          onGround: fc.boolean(),
+          crashed: fc.boolean(),
+          gear: fc.constantFrom('up', 'down', 'transit') as fc.Arbitrary<'up' | 'down' | 'transit'>,
+          handleDown: fc.boolean(),
+          throttlePct: arbNum,
+          flapsDeg: arbNum,
+          iasKt: arbNum,
+          aglFt: arbNum,
+        }),
+        (cfg, inp) => {
+          const w = gearWarning(inp, cfg);
+          const ungated = gearWarning(inp, withAircraft({ ...cfg.aircraft, gear: { ...cfg.aircraft.gear, warnBelowKt: null, warnBelowAglFt: null } }));
+          expect(w.squatSwitch).toBe(ungated.squatSwitch);
+          expect(w.overspeed).toBe(ungated.overspeed);
+          expect(w.lights).toBe(ungated.lights);
+          if (w.gearUnsafe) expect(ungated.gearUnsafe).toBe(true);
+          const landingFlaps = !Number.isNaN(inp.flapsDeg) && inp.flapsDeg >= cfg.hud.gearWarning.flapsAtOrAboveDeg - 0.25;
+          if (landingFlaps) expect(w.gearUnsafe).toBe(ungated.gearUnsafe);
+          expect(w.horn).toBe(w.gearUnsafe || w.squatSwitch);
+        },
+      ),
+      { numRuns: 500 },
     );
   });
 });

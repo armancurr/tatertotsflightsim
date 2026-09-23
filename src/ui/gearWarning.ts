@@ -30,6 +30,8 @@ export interface GearWarningInput {
   flapsDeg: number;
   /** Indicated airspeed, kt. */
   iasKt: number;
+  /** Height above the ground, ft (for the aircraft's warnBelowAglFt gate; absent = low). */
+  aglFt?: number;
 }
 
 export interface GearWarning {
@@ -54,7 +56,12 @@ export function gearWarning(inp: GearWarningInput, cfg: Config = CONFIG): GearWa
   const onGround = !!inp.onGround;
   const downLocked = inp.gear === 'down';
   // NaN throttle reads as full power and NaN flaps as up: never a false alarm from garbage.
-  const lowPower = num(inp.throttlePct, 100) < gw.throttleBelowPct;
+  // Each aircraft's gates on the low-power warning: a jet at idle in a fast descent or an airliner at
+  // flight idle high up is not about to land (NaN speed/height read as slow/low: never a missed warning).
+  const g = cfg.aircraft.gear;
+  const belowSpeed = g.warnBelowKt == null || !(num(inp.iasKt, 0) >= g.warnBelowKt);
+  const belowHeight = g.warnBelowAglFt == null || !(num(inp.aglFt ?? 0, 0) >= g.warnBelowAglFt);
+  const lowPower = num(inp.throttlePct, 100) < gw.throttleBelowPct && belowSpeed && belowHeight;
   const landingFlaps = num(inp.flapsDeg, 0) >= gw.flapsAtOrAboveDeg - 0.25;
   const gearUnsafe = !onGround && !downLocked && (lowPower || landingFlaps);
   const squatSwitch = onGround && !inp.handleDown;
@@ -84,6 +91,7 @@ export function gearWarningFromReadings(r: MaybeHudReadings, cfg: Config = CONFI
       throttlePct: r.throttlePct,
       flapsDeg: r.flapsDeg,
       iasKt: r.airspeedKt,
+      aglFt: r.altitudeAglFt,
     },
     cfg,
   );

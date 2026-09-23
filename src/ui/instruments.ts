@@ -236,7 +236,7 @@ export function updateInstruments(
   const vsMs = clamp(fin(d.verticalSpeed), -2000, 2000);
   const flightPathDeg = tas > 1 ? Math.asin(clamp(vsMs / tas, -1, 1)) * RAD_TO_DEG : 0;
   const gw = gearWarning(
-    { onGround, crashed: state.phase === 'crashed', gear, handleDown: gearHandleDown, throttlePct, flapsDeg, iasKt: iasT },
+    { onGround, crashed: state.phase === 'crashed', gear, handleDown: gearHandleDown, throttlePct, flapsDeg, iasKt: iasT, aglFt: fin(d.altitudeAGL) * M_TO_FT },
     cfg,
   );
 

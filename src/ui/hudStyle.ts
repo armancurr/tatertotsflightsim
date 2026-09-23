@@ -117,6 +117,15 @@ export const HUD_CSS = `
 .fsh-help-sep { opacity: 0.45; margin: 0 2px; }
 @media (max-width: 700px) { .fsh-help-grid { grid-template-columns: 1fr; } }
 ${CONTROLS_CSS}
+/* The H sheet is read while flying: the rest of the HUD lets the mouse through to the 3D view, but the
+   sheet takes it so the wheel scrolls it when it doesn't fit; three balanced columns on wide windows
+   keep it on one screen down to 1024 × 768. */
+.fsh-root .fsh-help, .fsh-root .fsh-help * { pointer-events: auto; }
+@media (min-width: 960px) {
+  .fsh-help { width: min(1120px, calc(100vw - 32px)); }
+  .fsh-help .tfs-controls-grid { display: block; column-count: 3; column-gap: 28px; }
+  .fsh-help .tfs-controls-grid > section { break-inside: avoid; margin-bottom: 12px; }
+}
 `;
 
 const users = new WeakMap<Document, number>();
