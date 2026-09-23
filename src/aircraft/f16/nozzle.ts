@@ -72,7 +72,7 @@ function petalGeometry(): THREE.BufferGeometry {
     g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(count * 2), 2));
     return g;
   };
-  const outer = shell(r, 0.06, 0x8a867e, 0.45, 0.8, 0, false);
+  const outer = shell(r, 0.06, 0x8a867e, 0.5, 0.55, 0, false);
   const inner = shell(r - 0.022, 0.02, 0x2e2925, 0.7, 0.6, 0.7, true);
   // Petal edge (the trailing lip) — a thin strip closing outer to inner at the exit.
   const out = mergeWithHeat([outer, inner]);
@@ -159,7 +159,7 @@ export function buildNozzle(name: string): NozzleBuild {
   petals.frustumCulled = false;
   // Alternating flaps and seals: two tones of heat-worn metal.
   const tone = new THREE.Color();
-  for (let k = 0; k < N; k++) petals.setColorAt(k, tone.setScalar(k % 2 === 0 ? 1 : 0.62));
+  for (let k = 0; k < N; k++) petals.setColorAt(k, tone.setScalar(k % 2 === 0 ? 1 : 0.5));
   group.add(petals);
 
   // Interior (seen looking up the nozzle): flame-holder rings, the turbine exit cone and a dark

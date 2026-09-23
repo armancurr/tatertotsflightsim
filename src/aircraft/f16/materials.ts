@@ -89,7 +89,7 @@ export function createF16Materials(tex: F16Textures | null): F16Materials {
   addF16Soot(radome, char, 'f16-radome');
   addF16Soot(parts, char, 'f16-parts');
 
-  // Canopy: gold/smoke tint (the ITO coating) with strong reflections and a faint iridescence.
+  // Canopy: gold/smoke tint (the ITO coating) with strong reflections.
   const canopy = new THREE.MeshPhysicalMaterial({
     name: 'f16.canopy',
     color: 0x4f4222,
@@ -100,9 +100,6 @@ export function createF16Materials(tex: F16Textures | null): F16Materials {
     depthWrite: false,
     side: THREE.DoubleSide,
     envMapIntensity: 1.3,
-    iridescence: 0.2,
-    iridescenceIOR: 1.8,
-    iridescenceThicknessRange: [250, 420],
   });
   premultipliedGlass(canopy, 'f16-canopy');
   const hud = new THREE.MeshPhysicalMaterial({

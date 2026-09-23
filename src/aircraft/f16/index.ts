@@ -103,9 +103,9 @@ function fuselageDetails(): THREE.BufferGeometry {
     g.push(tint(box(0.004, 0.05, 0.07, V(s * 0.53, -0.1, -6.4)), 0x9a9da0, 0.4, 0.8));
   }
   // Block 50 IFF interrogator "bird slicer" blades ahead of the windscreen.
-  for (const x of [-0.16, -0.05, 0.05, 0.16]) g.push(tint(box(0.006, 0.07, 0.09, V(x, 0.46, -6.42), -0.35, 0, 0), DARK, 0.6, 0.1));
+  for (const x of [-0.15, -0.05, 0.05, 0.15]) g.push(tint(box(0.005, 0.05, 0.07, V(x, 0.44 - Math.abs(x) * 0.25, -6.42), -0.45, 0, 0), DARK, 0.6, 0.1));
   // UHF blade on the spine, UHF/IFF blade under the intake.
-  g.push(tint(box(0.012, 0.2, 0.22, V(0, 0.82, -1.55), -0.5, 0, 0), GREY, 0.55, 0.1));
+  g.push(tint(box(0.012, 0.2, 0.22, V(0, 0.84, -1.55), -0.5, 0, 0), GREY, 0.55, 0.1));
   g.push(tint(box(0.012, 0.13, 0.17, V(0, -0.93, -1.9), 0.5, 0, 0), GREY, 0.55, 0.1));
   // TACAN / ECM blades under the aft fuselage.
   g.push(tint(box(0.01, 0.12, 0.16, V(0, -0.84, 1.6), 0.45, 0, 0), GREY, 0.55, 0.1));
@@ -117,7 +117,7 @@ function fuselageDetails(): THREE.BufferGeometry {
   // Chaff/flare dispensers (ALE-47) under the aft fuselage.
   for (const s of [-1, 1]) g.push(tint(box(0.16, 0.012, 0.32, V(s * 0.36, -0.7, 3.25)), 0x2a2c2e, 0.7, 0.1));
   // Air-refuelling receptacle door outline (slightly proud).
-  g.push(tint(box(0.22, 0.008, 0.46, V(0, 0.727, -1.02), 0.03, 0, 0), 0x55595c, 0.55, 0.1));
+  g.push(tint(box(0.22, 0.008, 0.46, V(0, 0.739, -1.02), 0.06, 0, 0), 0x55595c, 0.55, 0.1));
   return merge(g);
 }
 
@@ -150,12 +150,14 @@ export function createF16Model(): AircraftModelHandle {
   const skinGeo = merge([fuse.skin, surf.ventrals]);
   const skin = mesh(skinGeo, mats.paint, F16_PART.skin, fuselage);
   mesh(fuse.duct, mats.parts, 'f16.intakeDuct', fuselage, false);
-  mesh(fuselageDetails(), mats.parts, 'f16.details', fuselage);
+  // Small parts don't cast shadows (fewer shadow-pass draws); they still receive them.
+  mesh(fuselageDetails(), mats.parts, 'f16.details', fuselage, false).receiveShadow = true;
 
   const cockpit = group(F16_PART.cockpit, fuselage);
   mesh(pit.interior, mats.interior, 'f16.cockpit.interior', cockpit, false).receiveShadow = true;
-  mesh(pit.pilotBody, mats.parts, F16_PART.pilotBody, cockpit, true);
-  const head = mesh(pit.pilotHead, mats.parts, F16_PART.pilotHead, cockpit, true);
+  mesh(pit.pilotBody, mats.parts, F16_PART.pilotBody, cockpit, false).receiveShadow = true;
+  const head = mesh(pit.pilotHead, mats.parts, F16_PART.pilotHead, cockpit, false);
+  head.receiveShadow = true;
   mesh(pit.screens, mats.screens, 'f16.cockpit.screens', cockpit, false);
   mesh(pit.panelFace, mats.panel, 'f16.cockpit.panel', cockpit, false).receiveShadow = true;
   const hudGlass = mesh(pit.hudGlass, mats.hud, 'f16.cockpit.hud', cockpit, false);
@@ -190,7 +192,7 @@ export function createF16Model(): AircraftModelHandle {
   const canopy = group(F16_PART.canopy, root);
   const glass = mesh(pit.canopyGlass, mats.canopy, F16_PART.canopyGlass, canopy, false);
   glass.renderOrder = 3;
-  mesh(pit.canopyFrame, mats.parts, 'f16.canopy.frame', canopy);
+  mesh(pit.canopyFrame, mats.parts, 'f16.canopy.frame', canopy, false).receiveShadow = true;
 
   // ── Wings ──
   const wingGroup = (name: string, w: typeof surf.wingLeft, side: 'left' | 'right') => {
@@ -208,7 +210,7 @@ export function createF16Model(): AircraftModelHandle {
   const tail = group(F16_PART.tail, root);
   mesh(surf.fin, mats.paint, 'f16.fin', tail);
   const rudder = hinge(surf.rudder, F16_PART.rudder, mats.paint, tail);
-  mesh(surf.finDetails, mats.parts, 'f16.fin.details', tail);
+  mesh(surf.finDetails, mats.parts, 'f16.fin.details', tail, false).receiveShadow = true;
 
   // ── Stabilators (each pivot group is a break-up part) ──
   const stabL = makeHinge(F16_PART.leftStab + '.rot', surf.stabLeft.position, surf.stabLeft.quaternion);
@@ -358,7 +360,7 @@ export function createF16Model(): AircraftModelHandle {
   const strobeOff = new THREE.Color(0xbfc4c8);
   const strobeOn = new THREE.Color(0xffffff).multiplyScalar(7);
   const formOff = new THREE.Color(0x2a3326);
-  const formOn = new THREE.Color(0.45, 1.0, 0.55).multiplyScalar(1.4);
+  const formOn = new THREE.Color(0.35, 0.85, 0.42).multiplyScalar(0.55);
   const lampOff = new THREE.Color(0x9aa0a4);
   const lampOn = new THREE.Color(0xfff6e8).multiplyScalar(5);
   const gi = glowIntensity.array as Float32Array;

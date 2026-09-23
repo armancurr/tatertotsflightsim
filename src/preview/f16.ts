@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { createF16Model } from '../aircraft/f16';
 import { createDefaultVisualState, createRestReadings } from '../aircraft/types';
 import { CONFIG, F16_AIRCRAFT } from '../config';
+import { createGpuTimer } from '../render/gpuTimer';
 
 const q = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
@@ -25,7 +26,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = num('exposure', night ? 1.2 : 1.0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = q.get('shadows') !== '0';
 renderer.shadowMap.type = THREE.PCFShadowMap;
 document.getElementById('app')!.appendChild(renderer.domElement);
 
@@ -164,6 +165,8 @@ if (atlasKind) {
   atlasScene.add(quad);
 }
 
+const bench = q.get('bench') === '1';
+const gpu = createGpuTimer(renderer.getContext() as WebGL2RenderingContext, 0.05);
 let frames = 0;
 let last = performance.now();
 const w = window as unknown as Record<string, unknown>;
@@ -181,6 +184,19 @@ renderer.setAnimationLoop((now) => {
   if (atlasScene) {
     renderer.toneMapping = THREE.NoToneMapping;
     renderer.render(atlasScene, atlasCam);
+  } else if (bench) {
+    // Two phases (with the jet, then without); the GPU time difference is the jet's cost.
+    const withJet = frames < 200;
+    jet.root.visible = withJet;
+    gpu.begin(withJet ? 'with' : 'without');
+    renderer.render(scene, camera);
+    gpu.end();
+    gpu.poll();
+    if (frames === 400) {
+      const r = { withMs: gpu.get('with'), withoutMs: gpu.get('without'), jetMs: gpu.get('with') - gpu.get('without') };
+      w.__gpu = r;
+      console.log('[f16] gpu ' + JSON.stringify(r));
+    }
   } else renderer.render(scene, camera);
   frames++;
   if (frames === 40) {
