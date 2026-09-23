@@ -18,11 +18,14 @@ const PILE = mat(0x3e3d3a, 0.7, 0.3);
 const PILE_CAP = mat(0xd8d8d2, 0.5);
 const BOLLARD = mat(0x2a2b2d, 0.5, 0.4);
 const LAMP = mat(0xe8e2c8, 0.4);
-const ROCKS = [0x6f6d68, 0x86837b, 0x5d5b57, 0x9a968d, 0x77736b, 0x8d887f].map((c) => mat(c, 0.92));
+const ROCKS = [0x5f5b55, 0x6e6a62, 0x55524d, 0x7a756b, 0x66625b, 0x4f4c48].map((c) => mat(c, 0.92));
+/** Armour stone (granite/basalt blocks, a little weathered and wet-dark near the water). */
+const STONES = [0x837e74, 0x958f84, 0x75716a, 0xa19b8f, 0x7c776e, 0x8c877d, 0x6f6b64].map((c) => mat(c, 0.88));
+const STONE_WET = mat(0x4a4744, 0.5);
 const RED = mat(0xb3261e, 0.5);
 const GREEN = mat(0x1f7a3a, 0.5);
 const WHITE = mat(0xeeeeea, 0.4);
-const GLASS = mat(0x10161c, 0.08, 0.1);
+const GLASS = mat(0x10161c, 0.08, 0.1, 0, -1); // lit windows at dusk
 const TIMBER = mat(0x5b4a3a, 0.85);
 
 /**
@@ -121,6 +124,22 @@ function buildBreakwater(b: MeshBuilder, bw: MarinaLayout['breakwaters'][number]
     rings.push(ring);
   }
   b.loft(rings, (i, j) => (j === 4 ? CONCRETE : ROCKS[Math.floor(h01(79, i, j) * ROCKS.length)]), false, true);
+  if (!lod) {
+    // armour stones on both slopes and a wave wall (parapet) along the seaward edge of the crest
+    for (const st of breakwaterStones(bw)) boulder(b, st.u, st.y, st.w, st.size, st.seed, st.y < 0.4 ? STONE_WET : STONES[Math.floor(h01(83, st.seed, 1) * STONES.length)]);
+    const sea = seawardSign(bw);
+    for (let i = 0; i < cl.length - 1; i++) {
+      const a = cl[i];
+      const c = cl[i + 1];
+      const du = c.u - a.u;
+      const dw = c.w - a.w;
+      const l = Math.hypot(du, dw) || 1;
+      const nu = (dw / l) * sea[i];
+      const nw = (-du / l) * sea[i];
+      const off = bw.crestHalf - 0.45;
+      b.with([(a.u + c.u) / 2 + nu * off, bw.crestY + 0.6, (a.w + c.w) / 2 + nw * off], [0, (Math.atan2(du, dw) * 180) / Math.PI, 0], () => b.box(0, 0, 0, 0.9, 1.2, l + 0.05, CONCRETE_DARK, { bottom: true }));
+    }
+  }
   // head: a rounded rock pile closing the end
   const end = cl[cl.length - 1];
   b.cylinder([end.u, bw.baseY, end.w], [end.u, bw.crestY + 0.2, end.w], bw.baseHalf, bw.crestHalf + 1, lod ? 6 : 12, ROCKS[1], true);
@@ -166,4 +185,121 @@ export function buildFerryTerminal(pierLen: number, lod = 0): MeshBuilder {
   b.box(-26, 4.2, 14, 22.05, 2.2, 12.05, GLASS, { bottom: true, top: true });
   b.box(-26, 7.2, 14, 23, 0.4, 13, mat(0x5a6068, 0.5, 0.4));
   return b;
+}
+
+/** A marina armour stone: centre (u, w), height y, size (m), whether it lies on the seaward slope. */
+export interface MarinaStone {
+  u: number;
+  w: number;
+  y: number;
+  size: number;
+  seaward: boolean;
+  seed: number;
+}
+
+/** Side of a breakwater centreline point that faces the open sea (+1 = the loft's +normal side). */
+function seawardSign(bw: MarinaLayout['breakwaters'][number]): number[] {
+  // the marina basin lies around (0, 150) in (u, w): the side farther from it is seaward
+  const out: number[] = [];
+  const n = centreline(bw, 3);
+  for (let i = 0; i < n.length; i++) {
+    const a = n[Math.max(0, i - 1)];
+    const c = n[Math.min(n.length - 1, i + 1)];
+    const du = c.u - a.u;
+    const dw = c.w - a.w;
+    const l = Math.hypot(du, dw) || 1;
+    const pu = n[i].u + (dw / l) * 5;
+    const pw = n[i].w + (-du / l) * 5;
+    const mu = n[i].u - (dw / l) * 5;
+    const mw = n[i].w - (-du / l) * 5;
+    out.push(Math.hypot(pu, pw - 150) > Math.hypot(mu, mw - 150) ? 1 : -1);
+  }
+  return out;
+}
+
+function centreline(bw: MarinaLayout['breakwaters'][number], step: number): { u: number; w: number }[] {
+  const cl: { u: number; w: number }[] = [];
+  for (let i = 1; i < bw.pts.length; i++) {
+    const a = bw.pts[i - 1];
+    const c = bw.pts[i];
+    const L = Math.hypot(c.u - a.u, c.w - a.w);
+    const n = Math.max(1, Math.round(L / step));
+    for (let k = 0; k < n; k++) cl.push({ u: a.u + ((c.u - a.u) * k) / n, w: a.w + ((c.w - a.w) * k) / n });
+  }
+  cl.push(bw.pts[bw.pts.length - 1]);
+  return cl;
+}
+
+/** Stones along one breakwater: three rows down each slope, jittered, sized 1–2.8 m. */
+export function breakwaterStones(bw: MarinaLayout['breakwaters'][number]): MarinaStone[] {
+  const cl = centreline(bw, 1.6);
+  const sea = seawardSign(bw);
+  const seaAt = (i: number) => sea[Math.min(sea.length - 1, Math.round((i * 1.6) / 3))];
+  // slope profile (offset from the centreline → height): crest edge, shoulder, waterline, toe
+  const prof: [number, number][] = [
+    [bw.crestHalf, bw.crestY],
+    [bw.crestHalf + 1.5, bw.crestY - 0.8],
+    [bw.baseHalf * 0.5, 0.2],
+    [bw.baseHalf * 0.72, -2.5],
+  ];
+  const yAt = (x: number) => {
+    for (let k = 1; k < prof.length; k++) if (x <= prof[k][0]) return prof[k - 1][1] + ((prof[k][1] - prof[k - 1][1]) * (x - prof[k - 1][0])) / (prof[k][0] - prof[k - 1][0]);
+    return prof[prof.length - 1][1];
+  };
+  const rows = [bw.crestHalf + 1.1, bw.crestHalf + 2.9, bw.baseHalf * 0.5 + 0.4];
+  const out: MarinaStone[] = [];
+  const seed0 = Math.round(bw.pts[0].u);
+  for (let i = 0; i < cl.length; i++) {
+    const a = cl[Math.max(0, i - 1)];
+    const c = cl[Math.min(cl.length - 1, i + 1)];
+    const du = c.u - a.u;
+    const dw = c.w - a.w;
+    const l = Math.hypot(du, dw) || 1;
+    const nu = dw / l;
+    const nw = -du / l;
+    for (const side of [-1, 1]) {
+      for (let r = 0; r < rows.length; r++) {
+        const seed = ((seed0 * 7919 + i * 31 + r * 7 + (side > 0 ? 3 : 0)) >>> 0) % 2147483647;
+        if (h01(91, seed, 0) < 0.12) continue; // gaps between blocks
+        const x = rows[r] + (h01(92, seed, 0) - 0.5) * 1.2;
+        const along = (h01(93, seed, 0) - 0.5) * 1.0;
+        const size = 1.0 + 1.8 * h01(94, seed, 0) * (r === 2 ? 0.8 : 1);
+        out.push({
+          u: cl[i].u + nu * x * side + (du / l) * along,
+          w: cl[i].w + nw * x * side + (dw / l) * along,
+          y: yAt(x) + size * 0.15,
+          size,
+          seaward: side === seaAt(i),
+          seed,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** Every armour stone of the marina (tests / QA). */
+export function marinaStones(m: MarinaLayout): MarinaStone[] {
+  return m.breakwaters.flatMap((bw) => breakwaterStones(bw));
+}
+
+/** A rough quarried block: a box with jittered corners, flat-shaded, tumbled at random. */
+function boulder(b: MeshBuilder, u: number, y: number, w: number, size: number, seed: number, m: ReturnType<typeof mat>): void {
+  const r = (k: number) => 0.75 + 0.5 * h01(95, seed, k);
+  const hx = (size / 2) * r(1);
+  const hy = (size / 2) * 0.7 * r(2);
+  const hz = (size / 2) * r(3);
+  const yaw = h01(96, seed, 0) * 180;
+  const tilt = (h01(97, seed, 0) - 0.5) * 36;
+  b.with([u, y, w], [tilt, yaw, (h01(98, seed, 0) - 0.5) * 36], () => {
+    const j = (k: number) => 1 + (h01(99, seed, k) - 0.5) * 0.45;
+    const P: [number, number, number][] = [];
+    for (let k = 0; k < 8; k++) P.push([(k & 1 ? hx : -hx) * j(k * 3), (k & 2 ? hy : -hy) * j(k * 3 + 1), (k & 4 ? hz : -hz) * j(k * 3 + 2)]);
+    // faces (outward, counter-clockwise): −x, +x, −y, +y, −z, +z
+    const F = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]];
+    for (const f of F) {
+      b.poly([P[f[0]], P[f[1]], P[f[2]]], m);
+      b.poly([P[f[0]], P[f[2]], P[f[3]]], m);
+    }
+  });
 }

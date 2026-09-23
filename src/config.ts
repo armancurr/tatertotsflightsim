@@ -158,37 +158,28 @@ export interface GunConfig {
   splashRadiusM: number;
 }
 
-/** Air-to-ground guided missiles (AGM-65 Maverick): rail-launched, lock before launch, fire-and-forget. */
+/**
+ * Air-to-ground missiles, ARCADE model: pick a target with T, fire with Z, and the missile flies a
+ * scripted curve to it (src/combat/missile.ts). Deliberately not a guidance or seeker simulation.
+ */
 export interface MissileConfig {
   name: string;
-  /** One missile per station, fired in this order. */
+  /** One missile per station, fired in this order (the model hangs one missile at each). */
   stations: { x: number; y: number; z: number }[];
-  massKg: number;
+  /** Visual size, m. */
   diameterM: number;
   lengthM: number;
-  /** Rocket motor: boost thrust for boostS, then sustain thrust for sustainS, N / s. */
-  boostThrustN: number;
-  boostS: number;
-  sustainThrustN: number;
-  sustainS: number;
-  /** Axial drag coefficient (reference area = π·d²/4). */
-  cd: number;
-  /** Proportional-navigation constant and lateral acceleration limit, g. */
-  navConstant: number;
-  maxG: number;
-  /** Seeker: lock cone around the boresight to acquire, gimbal limit once locked, deg. */
-  acquireConeDeg: number;
-  gimbalLimitDeg: number;
-  /** Seconds the seeker needs on a target before LOCK, and the max / min lock ranges, m. */
-  lockTimeS: number;
+  /** Average speed along the scripted path, m/s, and how high the path arcs (fraction of the distance). */
+  speed: number;
+  arc: number;
+  /** Target selection: within this angle of the nose and this range (m); "LOCK" after lockTimeS. */
+  selectConeDeg: number;
   maxRangeM: number;
   minRangeM: number;
-  /** Proximity fuze radius, m; warhead damage and blast radius (m). */
-  fuzeRadiusM: number;
+  lockTimeS: number;
+  /** Damage on arrival and blast radius, m. */
   damage: number;
   blastRadiusM: number;
-  /** Self-destruct after this time of flight, s. */
-  maxFlightS: number;
 }
 
 /** What an aircraft carries. `null` = none (the Cessna carries nothing). */
@@ -1000,6 +991,49 @@ export const CONFIG = {
       lakeMorningCalm: 0.85,
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
+    },
+    /** Road traffic: moving cars, trucks, buses and tractors, parked cars (owned by src/world/cars; system cars.ts). */
+    cars: {
+      /** Every choice (spawns, vehicle types, colours, routes) is a hash of this seed + counters; the clock pauses with the sim. */
+      seed: 5309,
+      /** Fixed simulation step, s (poses are extrapolated between steps). */
+      step: 1 / 20,
+      /** Moving traffic lives within this distance of the camera (m); it is released beyond despawnRadius. */
+      radius: 2600,
+      despawnRadius: 2900,
+      /** New cars appear at least this far from the camera (m) once the first fill is done (or behind it). */
+      spawnHideDistance: 700,
+      /** Pool sizes: moving vehicles (a semi counts once) and parked cars. */
+      maxMoving: 420,
+      maxParked: 1400,
+      /** Moving vehicles per km per direction by road kind (farm tracks: tractors only). */
+      density: { highway: 9, road: 5, access: 3, lane: 1.6, street: 3.2, drive: 0 },
+      /** Village/hamlet streets (no sidewalks) carry this fraction of the street density. */
+      villageStreetFactor: 0.45,
+      /** Tractors driving on farm tracks near the camera (at most). */
+      tractors: 5,
+      /** Parked cars: fraction of kerb slots taken, slot pitch (m), kept clear of junction boxes (m); drawn within parkedRadius (m). */
+      parkedFill: 0.42,
+      parkedPitch: 6.4,
+      parkedJunctionClear: 7,
+      parkedRadius: 1100,
+      /** Detailed models within nearDistance (m); simple ones beyond, moving cars to farDistance, parked to parkedRadius. */
+      nearDistance: 300,
+      farDistance: 2600,
+      /** Contact shadows (AO + a soft sun shadow) within this distance, m. */
+      shadowDistance: 1400,
+      /** Intelligent-driver model: desired time gap (s), jam gap (m), comfortable accel / decel (m/s²), emergency decel. */
+      idm: { timeHeadway: 1.5, minGap: 2.2, accel: 1.8, decel: 2.4, maxDecel: 8 },
+      /** Comfortable lateral acceleration in curves and turns, m/s²; slowest turn speed, m/s. */
+      lateralAccel: 2.3,
+      minTurnSpeed: 2.8,
+      /** Drivers' desired speed as a fraction of the limit (uniform in this range). */
+      speedFactor: [0.93, 1.08] as [number, number],
+      /** Headlights/tail lights come on below this sun elevation (deg), fully by lightsFullDeg. */
+      lightsOnDeg: 14,
+      lightsFullDeg: 4,
+      /** A vehicle stopped this long (s) out of sight is released (gridlock safety valve). */
+      stuckTimeout: 60,
     },
   },
 
@@ -2045,25 +2079,16 @@ export const A10_WEAPONS: WeaponsConfig = {
       { x: -3.98, y: -1.35, z: 0.35 },
       { x: 3.98, y: -1.35, z: 0.35 },
     ],
-    massKg: 220,
     diameterM: 0.305,
     lengthM: 2.49,
-    boostThrustN: 26000,
-    boostS: 1.5,
-    sustainThrustN: 4000,
-    sustainS: 3.5,
-    cd: 0.35,
-    navConstant: 4,
-    maxG: 15,
-    acquireConeDeg: 8,
-    gimbalLimitDeg: 60,
+    speed: 300,
+    arc: 0.06,
+    selectConeDeg: 10,
+    maxRangeM: 8000,
+    minRangeM: 400,
     lockTimeS: 0.8,
-    maxRangeM: 9000,
-    minRangeM: 500,
-    fuzeRadiusM: 2.5,
     damage: 400,
     blastRadiusM: 18,
-    maxFlightS: 60,
   },
 };
 
