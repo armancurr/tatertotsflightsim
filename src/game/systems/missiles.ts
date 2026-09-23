@@ -13,7 +13,7 @@ import type { AircraftState, Vec3 } from '../../types';
 import type { GroundTarget } from '../../combat/types';
 import { combatWorld } from '../../combat/world';
 import { launchArcadeMissile, stepArcadeMissile, type ArcadeMissile } from '../../combat/missile';
-import { newLock, selectNextTarget, stepLock, targetCentre } from '../../combat/targeting';
+import { newLock, newPicker, pickTarget, stepLock, targetCentre } from '../../combat/targeting';
 import { createMissileRenderer, type MissileRenderer } from '../../combat/missileRender';
 import type { AircraftDef } from '../../fleet/types';
 import type { SystemModule } from './types';
@@ -47,6 +47,7 @@ const mod: SystemModule = {
       air: { cfg: null, stores: [], render: null },
     };
     const lock = newLock();
+    const picker = newPicker();
     const flying: Flight[] = [];
     let nextId = 1;
     let time = 0;
@@ -221,9 +222,10 @@ const mod: SystemModule = {
         const s = last;
         if (a === 'lockTarget') {
           if (s.phase === 'crashed') return;
-          const id = selectNextTarget(world, s.position, nose(s), selection(), lock.targetId, env, canShoot);
+          // nearest the nose (sticky to the tracked one), quick presses cycle; the same target keeps its lock timer
+          const id = pickTarget(picker, time, world, s.position, nose(s), selection(), lock.state !== 'off' ? lock.targetId : null, env, canShoot);
           if (id === null) setLock('off', null);
-          else setLock('tracking', id);
+          else if (id !== lock.targetId || lock.state === 'off') setLock('tracking', id);
           writeStatus(s);
         } else if (a === 'fireMissile') {
           if (lock.state !== 'locked' || lock.targetId === null || flying.length >= MAX_IN_FLIGHT) return;

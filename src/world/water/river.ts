@@ -7,15 +7,21 @@
  * far away). Per-vertex data drives the shader:
  *   across  unit vector centre → vertex (the vertex shader widens hairline
  *           rivers to a minimum pixel width along it, so the river is never dashed)
- *   attrs   [halfWidth, depth, flow, foam, s, fade, speed, side] (RIVER_STRIDE)
+ *   attrs   [halfWidth, depth, flow, foam, s, fade, speed, side,
+ *            bend, turbidity, riffle, 0] (RIVER_STRIDE)
  *     flow  ∫ v_ref / v(s) ds — the flow-advection coordinate: a pattern
  *           sampled at (flow − v_ref·t) moves downstream at the local speed v(s)
  *     foam  rapids foam 0..1 from the smoothed water-surface slope
  *     fade  1 upstream → 0 past the coast (the river blends into the sea)
+ *     bend  −1..1 curvature·half-width (shading.ts bendStrength): + = the inner
+ *           bank (point bar) is on the +across side, the thalweg hugs the other
+ *     turbidity  0 clear mountain water … 1 sediment-laden lowland river
+ *     riffle  0..1 moderately steep water (rough, sparkling, flecks of foam)
  */
 import type { Bridge, River, XZ } from '../layout';
+import { bendStrength, riverTurbidity, smoothstep as ss } from './shading';
 
-export const RIVER_STRIDE = 8;
+export const RIVER_STRIDE = 12;
 
 export interface RiverRibbonOptions {
   seaLevel: number;
@@ -74,18 +80,42 @@ export function buildRiverRibbon(rv: River, o: RiverRibbonOptions): RiverRibbon 
   const vRef = o.speed;
   let flow = 0;
   let prevSpeed = o.speed;
+  // tangents smoothed over a window that grows with the width (no folds on the inside of tight bends)
+  const TX = new Float64Array(n);
+  const TZ = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    // tangent smoothed over a window that grows with the width (no folds on the inside of tight bends)
-    const hw = rv.halfWidths[i];
-    const w = hw + o.margin;
-    const kT = Math.max(1, Math.round(w / 15));
+    const kT = Math.max(1, Math.round((rv.halfWidths[i] + o.margin) / 15));
     const a = P[Math.max(0, i - kT)];
     const b = P[Math.min(N - 1, i + kT)];
-    let tx = b.x - a.x;
-    let tz = b.z - a.z;
+    const tx = b.x - a.x;
+    const tz = b.z - a.z;
     const tl = Math.hypot(tx, tz) || 1;
-    tx /= tl;
-    tz /= tl;
+    TX[i] = tx / tl;
+    TZ[i] = tz / tl;
+  }
+  // curvature (1/m, + = turning toward n = (−tz, tx)) over ±3 sections, then smoothed ±3
+  const K = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(0, i - 3);
+    const b = Math.min(n - 1, i + 3);
+    const ds = S[b] - S[a];
+    const cr = TX[a] * TZ[b] - TZ[a] * TX[b];
+    const dt = TX[a] * TX[b] + TZ[a] * TZ[b];
+    K[i] = ds > 0 ? Math.atan2(cr, dt) / ds : 0;
+  }
+  const bend = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let acc = 0;
+    let m = 0;
+    for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++, m++) acc += K[j];
+    bend[i] = bendStrength(acc / m, rv.halfWidths[i]);
+  }
+  const total = S[N - 1] || 1;
+  for (let i = 0; i < n; i++) {
+    const hw = rv.halfWidths[i];
+    const w = hw + o.margin;
+    const tx = TX[i];
+    const tz = TZ[i];
     // water-surface slope, smoothed over ±2 sections
     const i0 = Math.max(0, i - 2);
     const i1 = Math.min(N - 1, i + 2);
@@ -93,6 +123,8 @@ export function buildRiverRibbon(rv: River, o: RiverRibbonOptions): RiverRibbon 
     const slope = ds > 0 ? Math.max(0, (rv.levels[i0] - rv.levels[i1]) / ds) : 0;
     const speed = o.speed + (o.speedSteep - o.speed) * smoothstep(o.rapidsSlope * 0.1, o.rapidsSlope * 8, slope);
     const foam = smoothstep(o.rapidsSlope, o.rapidsSlope * 8, slope);
+    const turbidity = riverTurbidity(S[i] / total, slope, o.rapidsSlope);
+    const riffle = ss(o.rapidsSlope * 0.25, o.rapidsSlope * 1.5, slope);
     if (i > 0) flow += ((S[i] - S[i - 1]) * vRef * 2) / (speed + prevSpeed);
     prevSpeed = speed;
     const nx = -tz;
@@ -116,6 +148,10 @@ export function buildRiverRibbon(rv: River, o: RiverRibbonOptions): RiverRibbon 
       attrs[q + 5] = fade;
       attrs[q + 6] = speed;
       attrs[q + 7] = sg;
+      attrs[q + 8] = bend[i];
+      attrs[q + 9] = turbidity;
+      attrs[q + 10] = riffle;
+      attrs[q + 11] = 0;
     }
     if (i > 0) {
       const k = (i - 1) * 6;

@@ -7,12 +7,17 @@
 import { roofTopAt, buildingRect, type Building } from './placement';
 import { rectRadius } from './geom';
 
-export function createObstacleIndex(buildings: readonly Building[], cellSize = 32): (x: number, z: number) => number {
+export function createObstacleIndex(buildings: readonly Building[], cellSize = 24): (x: number, z: number) => number {
   const inv = 1 / cellSize;
   const lists = new Map<number, number[]>();
   const key = (i: number, j: number): number => (i + 0x8000) * 0x10000 + (j + 0x8000);
+  // bounding circles: most candidates in a cell are rejected without the (trigonometric) roof query
+  const circ = new Float64Array(buildings.length * 3);
   buildings.forEach((b, idx) => {
     const r = rectRadius(buildingRect(b));
+    circ[idx * 3] = b.x;
+    circ[idx * 3 + 1] = b.z;
+    circ[idx * 3 + 2] = (r + 1e-6) * (r + 1e-6);
     const i0 = Math.floor((b.x - r) * inv);
     const i1 = Math.floor((b.x + r) * inv);
     const j0 = Math.floor((b.z - r) * inv);
@@ -36,6 +41,10 @@ export function createObstacleIndex(buildings: readonly Building[], cellSize = 3
     if (!list) return -Infinity;
     let top = -Infinity;
     for (let n = 0; n < list.length; n++) {
+      const k = list[n] * 3;
+      const dx = x - circ[k];
+      const dz = z - circ[k + 1];
+      if (dx * dx + dz * dz > circ[k + 2]) continue;
       const t = roofTopAt(buildings[list[n]], x, z);
       if (t > top) top = t;
     }

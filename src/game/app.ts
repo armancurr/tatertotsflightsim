@@ -19,11 +19,13 @@
  *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
  *   ?aircraft=c172rg|f16|a10                 which aircraft to fly (src/fleet)
  *   ?spawn=range                             start 4 km short of the target range, 1,500 ft, 250 kt
+ *   ?rwy=36|18|03|21                         start lined up on that runway end (R resets there too)
  */
 import * as THREE from 'three';
 import { CONFIG, FT_TO_M } from '../config';
 import type { AircraftState, CameraMode, Controls } from '../types';
 import { createInitialState, createApproachState, approachControls, createTrimmedState, step } from '../physics';
+import { runwayEndFrame } from '../world/runway';
 import { createEnvironment } from '../world/environment';
 import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
@@ -40,6 +42,7 @@ import { interpolatePose } from './interpolate';
 import { buildSimSnapshot, installSimApi } from './simApi';
 import { createSystems } from './systems';
 import { combatWorld } from '../combat/world';
+import { createDeferredDisposer } from './deferredDispose';
 
 export interface App {
   dispose(): void;
@@ -89,7 +92,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   };
 
   // ── Simulation state ──────────────────────────────────────────────────────
-  let state: AircraftState = createInitialState(env, ac);
+  // ?rwy=36|18|03|21: start (and reset with R) lined up on that runway end
+  const startRunway = runwayEndFrame(params.get('rwy'));
+  let state: AircraftState = createInitialState(env, ac, startRunway);
   let prev: AircraftState = state;
   let controlState = createControlState();
   const camParam = params.get('cam') as CameraMode | null;
@@ -99,6 +104,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   const loop = new FixedStepLoop(cfg.sim.fixedDt, cfg.sim.maxSubSteps, cfg.sim.maxFrameDt);
   const fpsMeter = createFpsMeter();
   const input = createInputManager(renderer.domElement, window);
+  // Old aircraft are disposed a few rendered frames after they leave the scene (deferredDispose.ts:
+  // three's shared shadow depth material would otherwise re-upload their freed textures — a leak).
+  const disposer = createDeferredDisposer();
 
   const setTimeOfDay = (i: number) => {
     const n = cfg.atmosphere.timeOfDay.length;
@@ -133,7 +141,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   });
 
   resetTo = (which: 'runway' | 'approach') => {
-    state = which === 'runway' ? createInitialState(env, ac) : createApproachState(env, ac);
+    state = which === 'runway' ? createInitialState(env, ac, startRunway) : createApproachState(env, ac);
     prev = state;
     controlState = resetControls(controlState, which === 'approach' ? approachControls(ac) : undefined);
     camRig = snapCamera(camRig);
@@ -144,8 +152,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   selectAircraft = (id: string) => {
     const next = getAircraftDef(id);
     if (next.id === def.id) return;
-    scene.remove(aircraft.root);
-    aircraft.dispose();
+    const old = aircraft;
+    scene.remove(old.root);
+    disposer.defer(() => old.dispose(), 3);
     def = next;
     ac = def.config;
     aircraft = def.createModel();
@@ -348,6 +357,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
 
     renderer.render(scene, camera);
     systems.postRender(sysFrame);
+    disposer.tick();
 
     const info = renderer.info;
     renderStats.calls = info.render.calls;
@@ -368,6 +378,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   return {
     dispose() {
       renderer.setAnimationLoop(null);
+      disposer.flush();
       removeEventListener('resize', onResize);
       input.dispose();
       systems.dispose();

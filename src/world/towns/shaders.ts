@@ -13,7 +13,7 @@
  * membranes with rooftop units), weathering and ambient occlusion — all
  * box-filtered and faded to their average colour when smaller than a pixel.
  */
-import { FACE, FLAG, NMODE } from './archetypes';
+import { FACE, FLAG, NMODE, TREE_EQ, TREE_UNDER, TREE_LUMP } from './archetypes';
 import { GAMBREL_KNEE_H, GAMBREL_KNEE_T, STYLE } from './placement';
 import { STYLE_X } from './instances';
 
@@ -43,6 +43,9 @@ const DEFINES = `
 #define BF_SILO_ROOF ${FACE.siloRoof}
 #define BF_CUPOLA ${FACE.cupola}
 #define BF_CUPOLA_ROOF ${FACE.cupolaRoof}
+#define BF_AWNING ${FACE.awning}
+#define BF_AWNING_UNDER ${FACE.awningUnder}
+#define BF_TRUNK ${FACE.trunk}
 #define BG_CHIMNEY ${bit(FLAG.chimney)}
 #define BG_DORMERS ${bit(FLAG.dormers)}
 #define BG_CUPOLA ${bit(FLAG.cupola)}
@@ -62,6 +65,11 @@ const DEFINES = `
 #define BG_BRICK ${bit(FLAG.brick)}
 #define BG_BLANK ${bit(FLAG.blank)}
 #define BG_UPPER ${bit(FLAG.upper)}
+#define BG_METALROOF ${bit(FLAG.metalRoof)}
+#define BG_TREE ${bit(FLAG.tree)}
+#define BG_AWNING ${bit(FLAG.awning)}
+#define BG_SOLAR ${bit(FLAG.solar)}
+#define BG_STONE ${bit(FLAG.stone)}
 #define BS_HOUSE ${STYLE.house}
 #define BS_APARTMENT ${STYLE.apartment}
 #define BS_OFFICE ${STYLE.office}
@@ -71,6 +79,9 @@ const DEFINES = `
 #define BS_SILO ${STYLE.silo}
 #define BS_SHOP ${STYLE.shop}
 #define BS_SHED ${STYLE.shed}
+#define BS_TREE ${STYLE.tree}
+#define BS_POOL ${STYLE.pool}
+#define BS_CIVIC ${STYLE.civic}
 #define BS_HVAC ${STYLE_X.hvac}
 #define BS_TANK ${STYLE_X.tank}
 #define BS_MAST ${STYLE_X.mast}
@@ -82,6 +93,9 @@ const DEFINES = `
 #define BN_DOME ${NMODE.dome}
 #define B_KT ${f(GAMBREL_KNEE_T)}
 #define B_KH ${f(GAMBREL_KNEE_H)}
+#define B_TE ${f(TREE_EQ)}
+#define B_TU ${f(TREE_UNDER)}
+#define B_TL ${f(TREE_LUMP)}
 `;
 
 /** Vertex declarations (after #include <common>). */
@@ -101,11 +115,14 @@ flat varying vec4 vBldB;
 flat varying vec4 vBldC;
 flat varying vec4 vBldD;
 flat varying vec2 vBldF;
+flat varying float vBldH;
 #endif
 #ifdef BLD_MID
 uniform sampler2D uBldChunkNear;
 uniform vec4 uBldLod;
 #endif
+uniform vec3 uBldCam;
+uniform vec2 uBldTree;
 bool bldHas(int flags, int b) { return ((flags >> b) & 1) == 1; }
 void bldTransform(out vec3 wpos, out vec3 wn) {
   float W = iB.x;
@@ -115,15 +132,28 @@ void bldTransform(out vec3 wpos, out vec3 wn) {
   float ridge = iD.x;
   int flags = int(iD.z + 0.5);
   int part = int(aFace.y + 0.5);
-  bool on = part == 0 || (part == 1 && bldHas(flags, BG_CHIMNEY)) || (part == 2 && bldHas(flags, BG_DORMERS)) || (part == 3 && bldHas(flags, BG_CUPOLA));
+  bool on = part == 0 || (part == 1 && bldHas(flags, BG_CHIMNEY)) || (part == 2 && bldHas(flags, BG_DORMERS)) || (part == 3 && bldHas(flags, BG_CUPOLA))
+    || (part == 4 && bldHas(flags, BG_AWNING)) || (part == 5 && bldHas(flags, BG_TREE));
   float side = (part == 1 && bldHas(flags, BG_SIDE)) ? -1.0 : 1.0;
   bool cone = bldHas(flags, BG_CONE);
+  bool tree = part == 0 && bldHas(flags, BG_TREE);
   int mode = int(aNrm.w + 0.5);
   float pr = aCoef.x;
   if (mode == BN_DOME && cone) pr = 1.0 - 2.0 * length(position.xz);
   vec3 l = vec3(position.x * W * (aCoef.z > 0.5 ? ridge : 1.0) * side + aOff.x,
                 position.y * Hw + pr * Hr + aCoef.y * Hr / D + aOff.y,
                 position.z * D + aOff.z);
+  if (part == 4) l.y += iD.w + 1.4 * iD.y;
+  if (tree) {
+    // the silo mesh as a crown (twin of evalVertex): wall = flared underside, dome = top
+    float ang = abs(position.x) + abs(position.z) > 1e-6 ? atan(position.z, position.x) : 0.0;
+    float ph0 = 6.2831853 * fract(iC.z * 7.0);
+    float lump = 1.0 - B_TL * (0.5 + 0.3 * sin(3.0 * ang + ph0 + 2.0 * position.y + 3.0 * pr) + 0.2 * sin(7.0 * ang - 2.0 * ph0 + 5.0 * pr));
+    float k = mode == BN_DOME ? lump : (B_TU + (1.0 - B_TU) * position.y) * lump;
+    l.x = position.x * W * k;
+    l.z = position.z * D * k;
+    l.y = mode == BN_DOME ? Hw + B_TE * Hr + pr * (1.0 - B_TE) * Hr : Hw + position.y * B_TE * Hr;
+  }
   vec3 n = aNrm.xyz;
   if (mode >= BN_SLOPE && mode <= BN_GUPPER) {
     float rise = Hr;
@@ -140,12 +170,21 @@ void bldTransform(out vec3 wpos, out vec3 wn) {
       n = vec3(hd.x * Hr, R, hd.y * Hr);
     } else n = vec3(aNrm.x / R, aNrm.y / max(Hr, 1e-3), aNrm.z / R);
   }
+  if (tree) n = vec3(l.x / (0.5 * W), (l.y - Hw - B_TE * Hr) / ((1.0 - B_TE) * Hr), l.z / (0.5 * W));
   n = normalize(n);
   float c = cos(iA.w);
   float s = sin(iA.w);
   wpos = on ? vec3(iA.x - c * l.x + s * l.z, iA.y + l.y, iA.z - s * l.x - c * l.z) : iA.xyz;
   wn = vec3(-c * n.x + s * n.z, n.y, -s * n.x - c * n.z);
   float vis = 1.0;
+  // trees: the detailed crown fades out between uBldTree.x and .y from the (real) camera; the mid blob takes over
+  float treeFar = smoothstep(uBldTree.x, uBldTree.y, distance(uBldCam, iA.xyz));
+#ifndef BLD_MID
+  if (bldHas(flags, BG_TREE)) {
+    if (treeFar >= 1.0) wpos = iA.xyz;
+    vis = 1.0 - treeFar;
+  }
+#endif
 #ifdef BLD_MID
   int ci = int(iE.x + 0.5);
   float nearFlag = texelFetch(uBldChunkNear, ivec2(ci % 256, ci / 256), 0).r;
@@ -155,7 +194,7 @@ void bldTransform(out vec3 wpos, out vec3 wn) {
   float thr = dist * uBldLod.x;
   if (dist > uBldLod.y) thr = max(thr, uBldLod.w);
   vis = smoothstep(thr * 0.8, thr, size) * (1.0 - smoothstep(uBldLod.z * 0.9, uBldLod.z, dist));
-  if (nearFlag > 0.5) vis = 0.0;
+  if (nearFlag > 0.5) vis = int(iC.w + 0.5) == BS_TREE ? min(vis, treeFar) : 0.0;
   if (vis <= 0.0) wpos = vec3(0.0);
 #endif
 #ifdef BLD_COLOR
@@ -164,6 +203,7 @@ void bldTransform(out vec3 wpos, out vec3 wn) {
   vBldC = iC;
   vBldD = iD;
   vBldF = vec2(aFace.x, vis);
+  vBldH = iA.w;
 #endif
 }
 `;
@@ -195,6 +235,7 @@ flat varying vec4 vBldB;
 flat varying vec4 vBldC;
 flat varying vec4 vBldD;
 flat varying vec2 vBldF;
+flat varying float vBldH;
 uniform float uBldNight;
 float bldRough;
 float bldMetal;
@@ -234,9 +275,21 @@ float bIGN(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.0
 
 struct BFac { vec3 alb; float rough; float metal; vec3 emit; float ao; };
 
-// Warm interior light (2700 K) and cooler office light, linear, emission units.
+// Interior light colours (linear, unit intensity): warm 2700 K, neutral LED, cool office, a TV's blue.
 const vec3 B_WARM = vec3(1.0, 0.56, 0.24);
-const vec3 B_OFFICE = vec3(1.0, 0.8, 0.55);
+const vec3 B_NEUTRAL = vec3(1.0, 0.78, 0.52);
+const vec3 B_OFFICE = vec3(1.0, 0.9, 0.72);
+const vec3 B_TV = vec3(0.35, 0.5, 1.0);
+/** Emission of a lit window (calibrated for exposure ≈ 2.2: glowing at dusk, invisible in daylight). */
+const float B_LIT = 0.2;
+
+/** Colour and level of one lit room from its hash: most rooms dim, a few bright. */
+vec3 bRoomLight(float h, bool office) {
+  float k = fract(h * 5.77);
+  vec3 c = office ? (k < 0.6 ? B_OFFICE : B_NEUTRAL) : (k < 0.6 ? B_WARM : k < 0.9 ? B_NEUTRAL : B_TV);
+  float f = fract(h * 29.7);
+  return c * B_LIT * (0.25 + 1.1 * f * f);
+}
 
 /** Glass of one window: dark interior with curtains, reflective; lit at dusk. */
 float bldJit;
@@ -250,11 +303,12 @@ void bGlass(inout BFac o, float m, vec2 q, float ww, float wh, float h, float li
   // glass over a dark interior: a metallic-workflow mirror with F0 ≈ 0.08–0.12, faintly tinted
   vec3 glassF0 = vec3(0.075, 0.085, 0.09) * (0.85 + 0.5 * fract(h * 13.1));
   float lit = step(fract(h * 17.31), litFrac);
-  vec3 e = (office ? B_OFFICE : B_WARM) * lit * (cm > 0.5 ? 0.6 : 1.0) * (0.55 + 0.9 * fract(h * 29.7));
+  // a lit room: brighter toward the ceiling light, curtains glow through
+  vec3 e = bRoomLight(h, office) * lit * (cm > 0.5 ? 0.7 : 0.8 + 0.4 * clamp(q.y / max(wh, 0.1), 0.0, 1.0));
   o.alb = mix(o.alb, mix(glassF0, cur, cm), m);
   o.rough = mix(o.rough, mix(0.04 + 0.06 * fract(h * 3.1), 0.2, cm), m);
   o.metal = mix(o.metal, mix(1.0, 0.25, cm), m);
-  o.emit += e * m * 1.6;
+  o.emit += e * m;
   bldJit = mix(bldJit, fract(h * 41.3) - 0.5, m);
 }
 `;
@@ -295,6 +349,42 @@ BFac bldShade() {
   o.emit = vec3(0.0);
   o.ao = 1.0;
 
+  // ───────────────────────── trees ─────────────────────────
+  if (style == BS_TREE) {
+    if (face == BF_TRUNK) {
+      o.alb = vec3(0.07, 0.055, 0.04);
+      o.rough = 0.95;
+      return o;
+    }
+    vec3 fwp = fwidth(L);
+    float det = 1.0 - smoothstep(0.08, 0.35, max(max(fwp.x, fwp.y), fwp.z));
+    float c1 = bNoise(vec2(L.x + L.y * 0.7, L.z - L.y * 0.5) * 1.6 + rnd * 40.0);
+    float c2 = bNoise(vec2(L.x - L.z, L.y) * 4.3 + rnd * 17.0);
+    float clump = mix(0.5, c1 * 0.65 + c2 * 0.35, det);
+    vec3 leaf = bLin(wallS) * vec3(1.0 + 0.14 * (r2 - 0.5), 1.0, 1.0 - 0.2 * (r3 - 0.5));
+    leaf = mix(vec3(dot(leaf, vec3(0.3, 0.55, 0.15))), leaf, 0.8) * 0.7;
+    o.alb = leaf * (0.45 + 1.0 * clump * clump);
+    float hgt = clamp((L.y - Hw) / max(Hr, 0.1), 0.0, 1.0);
+    o.ao = mix(0.35, 1.0, smoothstep(0.0, 0.8, hgt)) * (0.72 + 0.28 * clump);
+    o.rough = 0.8;
+    return o;
+  }
+  // ───────────────────────── pools ─────────────────────────
+  if (style == BS_POOL) {
+    if (face == BF_ROOF_FLAT) {
+      vec2 pp = L.xz;
+      float ripple = bNoise(pp * 2.5 + rnd * 30.0);
+      o.alb = bLin(roofS) * 0.5 * (0.9 + 0.2 * ripple) * mix(1.0, 0.7, smoothstep(-0.5 * D, 0.5 * D, pp.y));
+      o.rough = 0.03;
+      bldJit = (ripple - 0.5) * 0.6;
+      return o;
+    }
+    o.alb = bLin(wallS) * 0.85;
+    o.rough = 0.85;
+    return o;
+  }
+  // round towers: a near-flat roof deck
+  if (face == BF_SILO_ROOF && style == BS_OFFICE) face = BF_ROOF_FLAT;
   // mid prism: gable ends are walls, flat roofs are membranes
   if ((face == BF_ROOF_PX || face == BF_ROOF_NX) && ridge > 0.999 && !flatRoof) face -= 4;
   if (face >= BF_ROOF_PZ && face <= BF_ROOF_NX && flatRoof) face = BF_ROOF_FLAT;
@@ -338,20 +428,45 @@ BFac bldShade() {
       o.alb = mix(o.alb, vec3(0.16, 0.155, 0.15) * (0.8 + 0.4 * streak), pm);
     }
 
-    if (style == BS_HOUSE || style == BS_APARTMENT || style == BS_SHOP || style == BS_OFFICE) {
+    if (face == BF_SILO_WALL && style == BS_CIVIC) {
+      // water tower tank: smooth painted steel, a darker band with the town's lettering
+      o.rough = 0.45;
+      o.metal = 0.2;
+      // a painted stripe near the top, weld seams, rust streaks from the rim
+      float stripe = bIn(v, Hw - 1.6, Hw - 0.9, fw.y);
+      vec3 stripeC = r3 < 0.5 ? vec3(0.03, 0.08, 0.2) : vec3(0.25, 0.03, 0.02);
+      o.alb *= 1.0 - 0.08 * bLines(v, 2.4, 0.04, fw.y);
+      o.alb = mix(o.alb, stripeC, stripe);
+      o.alb *= 1.0 - 0.15 * smoothstep(0.6, 0.9, bNoise(vec2(u * 1.3, v * 0.08) + rnd * 9.0)) * smoothstep(0.5 * Hw, Hw, v);
+    } else if (style == BS_HOUSE || style == BS_APARTMENT || style == BS_SHOP || style == BS_OFFICE || style == BS_CIVIC) {
       bool glass = bHas(flags, BG_GLASS);
       bool ribbon = bHas(flags, BG_RIBBON);
       bool shop = bHas(flags, BG_SHOPFRONT);
-      bool apt = style == BS_APARTMENT;
+      bool civic = style == BS_CIVIC;
+      bool apt = style == BS_APARTMENT || civic;
       bool house = style == BS_HOUSE;
-      // wall finish: brick courses, lap siding or render
+      // wall finish: brick courses, stone, lap siding or render
       if (bHas(flags, BG_BRICK)) {
         float course = floor(v / 0.075);
         float bv = bh2(vec2(floor(u / 0.23 + course * 0.5), course));
         float det = 1.0 - smoothstep(0.02, 0.06, fw.x);
         o.alb *= mix(1.0, 0.86 + 0.28 * bv, det) * (1.0 - 0.18 * det * bLines(v, 0.075, 0.012, fw.y));
+        // soot and efflorescence patches on old brick
+        o.alb *= 0.9 + 0.2 * bFbm(vec2(u, v) * 0.4 + rnd * 11.0);
+      } else if (bHas(flags, BG_STONE)) {
+        float course = floor(v / 0.45);
+        float bl = 0.7 + 0.4 * bh1(course + rnd * 7.0);
+        float bu = u / bl + course * 0.41;
+        float bv = bh2(vec2(floor(bu), course) + rnd * 13.0);
+        float det = 1.0 - smoothstep(0.03, 0.09, max(fw.x, fw.y));
+        float mortar = max(bLines(v, 0.45, 0.02, fw.y), bLines(bu * bl, bl, 0.02, fw.x));
+        o.alb *= mix(1.0, (0.9 + 0.18 * bv) * (1.0 - 0.22 * mortar), det);
       } else if (bHas(flags, BG_SIDING)) {
         o.alb *= 1.0 - 0.22 * bLines(v + 0.1, 0.2, 0.03, fw.y);
+      } else if (!glass) {
+        // render / stucco: a fine trowelled texture and patchy repaints
+        float det = 1.0 - smoothstep(0.02, 0.08, fw.x);
+        o.alb *= mix(1.0, 0.95 + 0.1 * bNoise(vec2(u, v) * 3.1 + rnd * 5.0), det) * (0.94 + 0.12 * bNoise(vec2(u, v) * 0.35 + fi2));
       }
       // storeys
       float groundH = fh * (shop ? 1.4 : glass ? 1.35 : 1.0);
@@ -360,32 +475,41 @@ BFac bldShade() {
       float nf = top < groundH + 0.3 ? 1.0 : 1.0 + floor((top - groundH - 0.3) / fh);
       bool inFloors = vf >= 0.0 && fi < nf;
       if (glass && !blank) {
-        // ── curtain wall ──
-        float mullP = 1.5;
-        float mu = bLines(u, mullP, 0.05, fw.x);
+        // ── curtain wall: coated glass (15–40 % reflectance, tinted), mullions, spandrels ──
+        float r4 = bh1(rnd * 29.1 + 3.7);
+        float mullP = r4 < 0.3 ? 1.2 : r4 < 0.75 ? 1.5 : 3.0;
+        float mu = bLines(u, mullP, 0.06, fw.x);
         float mt = bLines(vf - groundH, fh, 0.08, fw.y);
         float panel = floor(u / mullP);
         float ph = bh3(vec3(panel, fi, fi2 + rnd * 50.0));
         bool lobby = fi < 0.5;
-        float spandrel = lobby ? 0.0 : 1.0 - smoothstep(0.95 - fw.y, 0.95 + fw.y, fv);
-        vec3 tint = mix(wallC, vec3(0.08, 0.1, 0.11), 0.35);
-        vec3 glassA = lobby ? vec3(0.02, 0.022, 0.024) : tint * (0.55 + 0.25 * ph);
-        vec3 spand = tint * 0.35;
+        float spandrelH = r4 < 0.5 ? 0.95 : 0.0;   // half the towers are all-glass (spandrels behind the glass)
+        float spandrel = lobby ? 0.0 : 1.0 - smoothstep(spandrelH - fw.y, spandrelH + fw.y, fv);
+        vec3 gt = bLin(wallS);
+        float gl = max(dot(gt, vec3(0.2126, 0.7152, 0.0722)), 1e-3);
+        vec3 F0 = gt / gl * (0.14 + 0.22 * r3);
+        vec3 glassA = lobby ? vec3(0.02, 0.022, 0.024) : F0 * (0.85 + 0.3 * ph);
+        vec3 spand = mix(F0 * 0.5, gt * 0.35, 0.5);
         o.alb = mix(glassA, spand, spandrel);
-        o.rough = lobby ? 0.05 : mix(0.04 + 0.1 * ph * ph, 0.3, spandrel);
-        o.metal = lobby ? 0.0 : mix(0.82, 0.55, spandrel);
-        // piers on some towers
-        if (r2 > 0.8) {
-          float pier = bLines(u + 2.25, 4.5, 0.5, fw.x);
-          o.alb = mix(o.alb, bLin(wallS) * 0.5 + 0.03, pier * 0.9);
-          o.rough = mix(o.rough, 0.8, pier);
-          o.metal = mix(o.metal, 0.0, pier);
+        o.rough = lobby ? 0.08 : mix(0.09 + 0.08 * ph * ph, 0.3, spandrel);
+        o.metal = lobby ? 0.0 : mix(0.92, 0.55, spandrel);
+        // vertical fins / piers on some towers
+        if (r2 > 0.78) {
+          float pier = bLines(u + 2.25, 4.5, r2 > 0.9 ? 0.35 : 0.6, fw.x);
+          o.alb = mix(o.alb, bLin(wallS) * 0.45 + 0.05, pier * 0.9);
+          o.rough = mix(o.rough, 0.7, pier);
+          o.metal = mix(o.metal, 0.1, pier);
           mu *= 1.0 - pier;
         }
-        // interior lights at dusk: whole bays of an office floor
-        float lit = step(bh3(vec3(floor(u / (mullP * 4.0)), fi, rnd * 91.0 + fi2)), night * 0.55) * (1.0 - spandrel);
-        o.emit += B_OFFICE * lit * (0.7 + 0.5 * ph) * 0.9;
-        vec3 metal = mix(vec3(0.18, 0.19, 0.2), vec3(0.45), step(0.5, r3));
+        // interior lights at dusk: long runs of a floor (open-plan offices), busier buildings brighter
+        float runW = mullP * (6.0 + floor(10.0 * bh3(vec3(fi, fi2, rnd * 7.0))));
+        float rh = bh3(vec3(floor(u / runW), fi, rnd * 91.0 + fi2));
+        float busy = 0.25 + 0.5 * r4;
+        float lit = step(rh, night * busy) * (1.0 - spandrel) * (lobby ? 0.0 : 1.0);
+        o.emit += bRoomLight(rh * 13.7, true) * lit * (0.75 + 0.5 * ph);
+        // the lobby glows
+        o.emit += B_NEUTRAL * B_LIT * 0.35 * night * (lobby ? 1.0 : 0.0) * (1.0 - spandrel);
+        vec3 metal = mix(vec3(0.18, 0.19, 0.2), vec3(0.5), step(0.5, r3));
         float frame = max(mu, mt) * 0.85;
         bldJit = (ph - 0.5) * (1.0 - spandrel) * (lobby ? 0.0 : 1.0);
         o.alb = mix(o.alb, metal, frame);
@@ -397,12 +521,11 @@ BFac bldShade() {
           float dm = bRect(vec2(u - 0.5 * len, vf), vec2(-1.6, 0.0), vec2(1.6, 2.6), fw);
           o.alb = mix(o.alb, vec3(0.03), dm * 0.6);
         }
-        o.ao *= 1.0;
       } else if (!blank) {
         // ── punched windows ──
-        float bay = house ? 3.1 : apt ? 3.3 : ribbon ? 1.6 : 2.9;
-        float ww = house ? 1.1 + 0.3 * r3 : apt ? 1.45 : ribbon ? 1.5 : 1.15;
-        float wh = house ? 1.3 + 0.2 * r2 : apt ? 1.5 : ribbon ? 1.55 : 1.65;
+        float bay = house ? 3.1 : ribbon ? 1.6 : civic ? 3.4 : apt ? 3.3 : 2.9;
+        float ww = house ? 1.1 + 0.3 * r3 : ribbon ? 1.5 : civic ? 1.5 : apt ? 1.45 : 1.15;
+        float wh = house ? 1.3 + 0.2 * r2 : ribbon ? 1.55 : civic ? 2.1 : apt ? 1.5 : 1.65;
         float sill = house ? 0.85 : 0.9;
         float margin = 0.9;
         float usable = max(len - 2.0 * margin, 0.1);
@@ -441,15 +564,27 @@ BFac bldShade() {
         float db = floor(fract(rnd * 7.77) * nb);
         bool doorBay = front && ground && bi == db && !upper;
         bool garageBay = front && ground && bHas(flags, BG_GARAGE) && nb >= 2.0 && bi == (db < nb - 1.0 ? nb - 1.0 : 0.0);
-        float lf = night * (house ? 0.35 : apt ? 0.45 : 0.4);
+        // lit fraction: some homes are out, some blocks busier
+        float lf = night * (house ? 0.35 : civic ? 0.15 : apt ? 0.45 : 0.4) * (0.4 + 1.2 * r3);
         // detail fade (windows smaller than ~3 px → their average)
         float det = 1.0 - smoothstep(0.18, 0.4, max(fw.x / cell, fw.y / fh));
         float cov = keep * min(1.0, (ribbonW * wh2) / (cell * thisH));
         BFac avg = o;
         avg.alb = mix(o.alb, vec3(0.03), cov * 0.8);
         avg.rough = mix(o.rough, 0.2, cov);
-        avg.emit = B_WARM * lf * cov * 0.8;
-        if (doorBay) {
+        avg.emit = B_WARM * B_LIT * 0.8 * lf * cov;
+        bool garageOnly = bHas(flags, BG_GARAGE) && len < 7.8 && front;
+        if (garageOnly) {
+          // a detached garage: one wide door (two on a double garage)
+          vec2 qd = vec2(u - 0.5 * len, vf);
+          float gw = min(len - 1.2, 5.2);
+          float gm = bRect(qd, vec2(-0.5 * gw, 0.0), vec2(0.5 * gw, 2.2), fw);
+          vec3 gc = (bh1(rnd * 9.1) < 0.6 ? vec3(0.82, 0.82, 0.8) : vec3(0.3, 0.3, 0.3)) * (1.0 - 0.3 * bLines(qd.y, 0.55, 0.04, fw.y));
+          o.alb = mix(o.alb, gc, gm);
+          o.rough = mix(o.rough, 0.45, gm);
+          o.ao *= 1.0 - 0.3 * gm;
+          wm = 0.0; fm = 0.0; sm = 0.0;
+        } else if (doorBay) {
           vec2 qd = vec2(u - cu, fv);
           float dm = bRect(qd, vec2(-0.5, 0.0), vec2(0.5, 2.1), fw);
           float df = bRect(qd, vec2(-0.6, 0.0), vec2(0.6, 2.2), fw) - dm;
@@ -482,8 +617,9 @@ BFac bldShade() {
           vec2 qs = vec2(fract(u / 2.0), fv - 0.45);
           bGlass(o, disp, qs, 2.0, groundH - 1.5, bh3(vec3(floor(u / 2.0), 3.0, rnd * 9.0)), max(lf * 1.6, 0.0), false);
           o.alb = mix(o.alb, vec3(0.05), (bIn(fv, 0.35, 0.45, fw.y) + bIn(fv, groundH - 1.05, groundH - 0.95, fw.y)) * (1.0 - pil) * 0.8);
-          // awning shadow under the sign
-          o.ao *= 1.0 - 0.35 * bIn(fv, groundH - 1.6, groundH - 1.0, fw.y) * step(0.5, r3);
+          // awning shadow under the sign (the awning itself casts the sun's shadow near the aircraft)
+          if (bHas(flags, BG_AWNING)) o.ao *= 1.0 - 0.45 * bIn(fv, 0.0, groundH - 1.0, fw.y) * smoothstep(0.0, groundH - 1.0, fv);
+          else o.ao *= 1.0 - 0.35 * bIn(fv, groundH - 1.6, groundH - 1.0, fw.y) * step(0.5, r3);
           wm = 0.0; fm = 0.0; sm = 0.0;
           det = 1.0;
         } else if (apt && bHas(flags, BG_BALCONY) && eaveWall && fi > 0.5 && inFloors && mod(bi + floor(rnd * 2.0), 2.0) < 0.5) {
@@ -724,7 +860,15 @@ BFac bldShade() {
     } else if (style == BS_SILO || style == BS_TANK) {
       bool cone = bHas(flags, BG_CONE);
       bool blue = wallS.b > wallS.r * 1.5;
-      if (style == BS_TANK) {
+      if (style == BS_TANK && W > 8.0) {
+        // storage tank: welded steel courses, a spiral stair, faint streaks
+        o.alb *= 1.0 - 0.1 * bLines(v, 2.4, 0.05, fw.y);
+        float stair = bIn(fract((u + v * 1.2) / len) * len, 0.0, 1.0, fw.x) * step(0.4, v);
+        o.alb = mix(o.alb, vec3(0.18), stair * 0.8);
+        o.alb *= 0.93 + 0.1 * bNoise(vec2(u * 0.5, v * 0.05) + rnd * 3.0);
+        o.rough = 0.55;
+        o.metal = 0.15;
+      } else if (style == BS_TANK) {
         o.alb *= 1.0 - 0.3 * bLines(u, 0.14, 0.02, fw.x);
         o.alb = mix(o.alb, vec3(0.08), bLines(v, 0.7, 0.05, fw.y));
         o.rough = 0.9;
@@ -778,7 +922,7 @@ BFac bldShade() {
     if (face == BF_SILO_ROOF) fw.x = max(0.5 * W * min(fwidth(atan(L.z, L.x)), fwidth(atan(-L.z, -L.x))), 1e-4);
     float det = 1.0 - smoothstep(0.05, 0.16, max(fw.x, fw.y));
     vec3 c = roofC;
-    bool metalRoof = style == BS_INDUSTRIAL || style == BS_SHED || style == BS_SILO || style == BS_TANK || face == BF_CUPOLA_ROOF;
+    bool metalRoof = style == BS_INDUSTRIAL || style == BS_SHED || style == BS_SILO || style == BS_TANK || face == BF_CUPOLA_ROOF || face == BF_SILO_ROOF || bHas(flags, BG_METALROOF);
     bool copper = roofS.g > roofS.r * 1.15;
     bool terracotta = roofS.r > roofS.g * 1.35 && roofS.r > 0.35;
     bool slate = !terracotta && abs(roofS.r - roofS.b) < 0.08 && roofS.r < 0.42;
@@ -820,6 +964,29 @@ BFac bldShade() {
       o.alb = c * mix(0.92, (0.85 + 0.25 * tv) * shade, det) * (0.9 + 0.2 * bNoise(vec2(along, down) * 6.0));
       o.rough = 0.92;
     }
+    // skylights on some house roofs
+    if (style == BS_HOUSE && (face == BF_ROOF_PZ || face == BF_ROOF_NZ) && bh1(rnd * 61.7 + float(face)) < 0.16) {
+      float sx = (bh1(rnd * 7.3 + float(face)) - 0.5) * max(W - 3.0, 0.0);
+      float sk = bRect(vec2(along - sx, down - 0.25 * D * sec), vec2(-0.45, -0.6), vec2(0.45, 0.6), fw);
+      o.alb = mix(o.alb, vec3(0.03, 0.035, 0.04), sk);
+      o.rough = mix(o.rough, 0.05, sk);
+      o.metal = mix(o.metal, 0.8, sk);
+    }
+    // solar panels on the sunnier slope (+z world is south; roofPZ faces (sin h, −cos h))
+    if (bHas(flags, BG_SOLAR) && (face == BF_ROOF_PZ || face == BF_ROOF_NZ)) {
+      float southPZ = -cos(vBldH);
+      bool sunny = face == BF_ROOF_PZ ? southPZ > -0.15 : southPZ < 0.15;
+      float runL = 0.5 * D * sec;
+      float halfA = 0.5 * W * (0.45 + 0.35 * r3);
+      float pm = sunny ? bIn(along, -halfA, halfA, fw.x) * bIn(down, 0.6, runL - 0.7, fw.y) : 0.0;
+      float grid = max(bLines(along + halfA, 1.05, 0.05, fw.x), bLines(down, 1.7, 0.05, fw.y));
+      o.alb = mix(o.alb, mix(vec3(0.015, 0.02, 0.04), vec3(0.4), grid * 0.6), pm);
+      o.rough = mix(o.rough, 0.12, pm);
+      o.metal = mix(o.metal, 0.6, pm);
+    }
+    // age: old roofs fade toward grey
+    float age = bh1(rnd * 3.1 + 0.7);
+    o.alb = mix(o.alb, vec3(dot(o.alb, vec3(0.3, 0.5, 0.2))), 0.3 * age * (metalRoof ? 0.5 : 1.0));
     // weathering: moss / dirt patches, darker toward the eaves, ridge caps
     float moss = smoothstep(0.55, 0.85, n) * (metalRoof ? 0.3 : 0.6);
     o.alb = mix(o.alb, o.alb * vec3(0.55, 0.6, 0.45), moss * 0.5);
@@ -853,6 +1020,14 @@ BFac bldShade() {
         o.alb = mix(o.alb, vec3(0.5, 0.53, 0.52), sk);
         o.rough = mix(o.rough, 0.3, sk);
         o.metal = mix(o.metal, 0.2, sk);
+      }
+      // solar arrays in rows on some flat roofs
+      if (bHas(flags, BG_SOLAR)) {
+        float inside = bIn(p.x, -0.5 * W + 2.0, 0.5 * W - 2.0, fw.x) * bIn(p.y, -0.5 * D + 2.0, 0.5 * D - 2.0, fw.y);
+        float pm = inside * bIn(fract(p.y / 2.6) * 2.6, 0.25, 1.95, fw.y);
+        o.alb = mix(o.alb, vec3(0.02, 0.025, 0.05) * (1.0 + 4.0 * bLines(p.x, 1.0, 0.04, fw.x)), pm);
+        o.rough = mix(o.rough, 0.15, pm);
+        o.metal = mix(o.metal, 0.5, pm);
       }
       // rooftop unit tops: fans
       if (style == BS_HVAC) {
@@ -901,6 +1076,20 @@ BFac bldShade() {
     o.alb = mix(wallC, vec3(0.85, 0.84, 0.8), 0.5);
     o.alb = mix(o.alb, vec3(0.88), fm);
     bGlass(o, wm, qd - vec2(0.0, 0.05), 1.0, 1.0, bh1(rnd * 8.8 + cx), night * 0.35, false);
+  } else if (face == BF_AWNING || face == BF_AWNING_UNDER) {
+    // canvas awning: solid or striped
+    float sc = bh1(rnd * 23.7);
+    vec3 cA = sc < 0.18 ? vec3(0.06, 0.2, 0.08) : sc < 0.34 ? vec3(0.35, 0.03, 0.03) : sc < 0.5 ? vec3(0.03, 0.06, 0.18) : sc < 0.62 ? vec3(0.02) : sc < 0.76 ? vec3(0.28, 0.1, 0.03) : sc < 0.88 ? vec3(0.45, 0.35, 0.18) : vec3(0.02, 0.18, 0.2);
+    float st = step(0.45, bh1(rnd * 3.9)) * bLines(L.x, 0.5, 0.25, max(fwidth(L.x), 1e-4));
+    o.alb = mix(cA, vec3(0.72, 0.7, 0.65), st);
+    o.rough = 0.8;
+    if (face == BF_AWNING_UNDER) {
+      o.alb *= 0.6;
+      o.ao *= 0.55;
+    }
+  } else if (face == BF_TRUNK) {
+    o.alb = vec3(0.07, 0.055, 0.04);
+    o.rough = 0.95;
   } else if (face == BF_CUPOLA) {
     vec2 q = vec2(L.x + L.z, L.y);
     vec2 fw = vec2(fwidth(q.x), fwidth(q.y));
@@ -924,4 +1113,9 @@ export const BLD_FRAG_COLOR = `
 export const BLD_FRAG_DITHER = `
 #include <clipping_planes_fragment>
   if (vBldF.y < 0.999 && bIGN(gl_FragCoord.xy) >= vBldF.y) discard;
+`;
+/** Near LOD: trees fading out keep exactly the pixels the mid blob leaves (complementary dither). */
+export const BLD_FRAG_DITHER_NEAR = `
+#include <clipping_planes_fragment>
+  if (vBldF.y < 0.999 && bIGN(gl_FragCoord.xy) < 1.0 - vBldF.y) discard;
 `;

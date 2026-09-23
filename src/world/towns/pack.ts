@@ -4,7 +4,7 @@
  */
 import { ARCHETYPES, type Building } from './placement';
 
-const USES: Building['use'][] = ['house', 'apartment', 'shop', 'office', 'tower', 'industrial', 'warehouse', 'church', 'steeple', 'farmhouse', 'barn', 'silo', 'shed'];
+const USES: Building['use'][] = ['house', 'apartment', 'shop', 'office', 'tower', 'industrial', 'warehouse', 'church', 'steeple', 'farmhouse', 'barn', 'silo', 'shed', 'tree', 'pool', 'garage', 'watertower', 'school', 'townhall', 'tank'];
 
 export const PACK_STRIDE = 22;
 

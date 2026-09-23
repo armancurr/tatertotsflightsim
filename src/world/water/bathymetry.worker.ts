@@ -1,10 +1,11 @@
 /**
- * Water worker: bakes the bathymetry clipmap levels (depth + shore distance,
- * half-float RG) and the detail tile's mip chain off the main thread, from the
+ * Water worker: bakes the bathymetry clipmap levels (depth, shore distance,
+ * land surface and tone for the reflections; half-float RGBA) and the detail tile's mip chain off the main thread, from the
  * same pure heightfield the terrain and physics use. Transfers the buffers.
  */
 import { getHeightfield } from '../heightfield';
-import { bakeBathymetry, makeWaterDepthFn, newBathyLevel, packBathymetryHalf, shoreDistanceTransform, type BathyLevel } from './bathymetry';
+import { getLandcover } from '../landcover';
+import { bakeWaterLevel, makeWaterTexelFn, newBathyLevel, packBathymetryHalf, shoreDistanceTransform, type BathyLevel, type WaterTexel } from './bathymetry';
 import { bakeDetailTile, toHalf } from './detail';
 
 type Msg =
@@ -16,7 +17,7 @@ const ctx = self as unknown as {
   postMessage(msg: unknown, transfer: Transferable[]): void;
 };
 
-let depthAt: ((x: number, z: number) => number) | null = null;
+let texelAt: ((x: number, z: number, gx: number, gz: number, out: WaterTexel) => WaterTexel) | null = null;
 const levels = new Map<number, BathyLevel>();
 
 ctx.onmessage = (e) => {
@@ -34,15 +35,15 @@ ctx.onmessage = (e) => {
   }
   if (m.type === 'bathy') {
     const t0 = performance.now();
-    if (!depthAt) depthAt = makeWaterDepthFn(getHeightfield());
+    if (!texelAt) texelAt = makeWaterTexelFn(getHeightfield(), getLandcover());
     let lv = levels.get(m.level);
     if (!lv || lv.res !== m.res) {
       lv = newBathyLevel(m.res);
       levels.set(m.level, lv);
     }
-    bakeBathymetry(depthAt, m.cx, m.cz, m.extent, m.res, lv);
+    bakeWaterLevel(texelAt, m.cx, m.cz, m.extent, m.res, lv);
     shoreDistanceTransform(lv);
-    const data = packBathymetryHalf(lv, new Uint16Array(m.res * m.res * 2));
+    const data = packBathymetryHalf(lv, new Uint16Array(m.res * m.res * 4));
     ctx.postMessage({ type: 'bathy', id: m.id, level: m.level, cx: m.cx, cz: m.cz, extent: m.extent, res: m.res, data, ms: performance.now() - t0 }, [data.buffer]);
   }
 };

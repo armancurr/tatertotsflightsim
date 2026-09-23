@@ -130,7 +130,7 @@ import type {
 } from '../types';
 import { clamp, moveToward } from '../math/vec3';
 import { qIntegrateBody } from '../math/quat';
-import { runwayFrame, fromRunwayCoords, toRunwayCoords } from '../world/runway';
+import { runwayFrame, runwayAt, fromRunwayCoords, toRunwayCoords, type RunwayFrame } from '../world/runway';
 import {
   airDataFromBodyVelocity, bodyToWorld, eulerFromQuat, pqrFromOmega, quatFromEuler, worldToBody,
 } from './frames';
@@ -249,12 +249,15 @@ const windAt = (env: Environment, p: Vec3, t: number): Vec3 => (env.wind ? env.w
 
 // ─── State creation ──────────────────────────────────────────────────────────
 
-/** On runway 36, main wheels spawn.runwayStartOffset m past the threshold, resting on the gear, engine idling. */
-export function createInitialState(env: Environment = FLAT_ENV, cfg: Config = CONFIG): AircraftState {
+/**
+ * On runway 36 (or the given runway end's departure frame, e.g. runwayEndFrame('21')), main wheels
+ * spawn.runwayStartOffset m past the threshold, resting on the gear, engine idling.
+ */
+export function createInitialState(env: Environment = FLAT_ENV, cfg: Config = CONFIG, runway?: RunwayFrame | null): AircraftState {
   const ac = cfg.aircraft;
   const geo = ac.geometry;
   const gd = ac.ground;
-  const rw = runwayFrame(cfg);
+  const rw = runway ?? runwayFrame(cfg);
   const nose = geo.noseWheel;
   const main = geo.leftMainWheel;
   const cgXZ = fromRunwayCoords(ac.spawn.runwayStartOffset + main.z, 0, rw);
@@ -529,7 +532,7 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
           pitchDeg: e.pitchDeg,
           surface,
           onRunway,
-          centerlineOffsetM: onRunway ? toRunwayCoords(pos.x, pos.z, runwayFrame(cfg)).across : null,
+          centerlineOffsetM: onRunway ? toRunwayCoords(pos.x, pos.z, runwayAt(pos.x, pos.z, cfg) ?? runwayFrame(cfg)).across : null,
         };
         phase = 'landed';
       } else {

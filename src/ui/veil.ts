@@ -197,7 +197,8 @@ const VEIL_CSS = `
 @media (prefers-reduced-motion: reduce) { .fsv-mascot, .fsv-boot, .fsv-ready .fsv-start { animation: none; } }
 `;
 
-const instances = new Set<object>();
+/** Live veils → their teardown (an error screen removes them). */
+const instances = new Map<object, () => void>();
 
 /** Does a loading veil still cover the screen? */
 export function veilActive(): boolean {
@@ -225,7 +226,7 @@ export function createLoadingVeil(doc: Document, cfg: Config = CONFIG, opts: Vei
   const win = doc.defaultView ?? (globalThis as unknown as Window);
   const model = createVeilModel();
   const token = {};
-  instances.add(token);
+  instances.set(token, () => teardown());
 
   if (!doc.getElementById(VEIL_STYLE_ID)) {
     const st = doc.createElement('style');
@@ -369,5 +370,241 @@ export function createLoadingVeil(doc: Document, cfg: Config = CONFIG, opts: Vei
       onGesture();
     },
     dispose: teardown,
+  };
+}
+
+// ─── Error screens ───────────────────────────────────────────────────────────
+//
+// What a stranger sees when the simulator can't run: a clear, friendly card (never a blank page),
+// what to try, and — for real errors — the details to paste into an issue. The content builders are
+// pure; showErrorScreen() draws one (above any loading veil, which it removes).
+
+export interface ErrorContent {
+  title: string;
+  message: string;
+  tips: string[];
+  /** Technical details (error message/stack), shown collapsed. */
+  details?: string;
+  /** Offer a Reload button. */
+  reload: boolean;
+}
+
+type Browser = 'chrome' | 'edge' | 'firefox' | 'safari' | 'other';
+
+export function browserFamily(userAgent: string): Browser {
+  const ua = userAgent || '';
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Chrome\/|Chromium\/|CriOS\//.test(ua)) return 'chrome';
+  if (/Safari\//.test(ua) && /Version\//.test(ua)) return 'safari';
+  return 'other';
+}
+
+function accelerationTip(b: Browser): string {
+  switch (b) {
+    case 'chrome':
+      return 'Turn on hardware acceleration: Chrome Settings → System → "Use graphics acceleration when available", then relaunch Chrome.';
+    case 'edge':
+      return 'Turn on hardware acceleration: Edge Settings → System and performance → "Use graphics acceleration when available", then restart Edge.';
+    case 'firefox':
+      return 'Turn on hardware acceleration: Firefox Settings → General → Performance → "Use hardware acceleration when available" (and make sure webgl.disabled is false in about:config).';
+    case 'safari':
+      return 'Update Safari: WebGL 2 needs Safari 15 or newer (macOS 12 / iOS 15).';
+    default:
+      return 'Make sure hardware (GPU) acceleration is turned on in your browser settings.';
+  }
+}
+
+/** The card for a browser that can't give us a WebGL 2 context. */
+export function webglErrorContent(problem: 'no-webgl2' | 'webgl1-only' | 'context-failed', userAgent = ''): ErrorContent {
+  const b = browserFamily(userAgent);
+  const update = 'Update your browser — current Chrome, Edge, Firefox and Safari all support WebGL 2.';
+  if (problem === 'context-failed') {
+    return {
+      title: "Your graphics card didn't start",
+      message: "Your browser supports WebGL 2, but it couldn't create a 3D context right now. That usually means graphics acceleration is off, the GPU is blocked by the browser, or too many 3D tabs are open.",
+      tips: [accelerationTip(b), 'Close other tabs or apps that use 3D, then reload.', 'Restart the browser (or the computer) if it still fails.'],
+      reload: true,
+    };
+  }
+  return {
+    title: 'This browser can’t show 3D graphics',
+    message:
+      problem === 'webgl1-only'
+        ? "Tater's Flight Sim needs WebGL 2. Your browser only offers the older WebGL 1."
+        : "Tater's Flight Sim needs WebGL 2 to draw the world, and this browser doesn't provide it.",
+    tips: [update, accelerationTip(b), 'Try another browser: Chrome, Edge, Firefox or Safari.'],
+    reload: false,
+  };
+}
+
+/** Whatever was thrown, as text (never throws: objects without a prototype, cycles, undefined…). */
+const safeString = (e: unknown): string => {
+  try {
+    if (typeof e === 'string') return e;
+    const j = JSON.stringify(e);
+    if (typeof j === 'string') return j;
+  } catch {
+    /* cyclic, BigInt… */
+  }
+  try {
+    return String(e);
+  } catch {
+    return Object.prototype.toString.call(e);
+  }
+};
+
+const errText = (e: unknown): string => {
+  if (e instanceof Error) {
+    const head = `${e.name}: ${e.message}`;
+    return typeof e.stack === 'string' && e.stack.includes(e.message) ? e.stack : `${head}\n${e.stack ?? ''}`;
+  }
+  return safeString(e);
+};
+
+/** The card for an exception while loading or starting the simulator. */
+export function startupErrorContent(error: unknown, userAgent = ''): ErrorContent {
+  const details = errText(error).slice(0, 4000);
+  const msg = error instanceof Error ? String(error.message) : safeString(error);
+  if (/dynamically imported module|Importing a module script failed|error loading dynamically imported module|Failed to fetch|Load failed|ChunkLoadError/i.test(msg)) {
+    return {
+      title: "The game didn't finish loading",
+      message: 'Some of the game files could not be downloaded — the connection dropped, or a new version was published while this page was open.',
+      tips: ['Reload the page.', 'If you host it yourself, serve the whole dist/ folder and build with --base set to the folder it lives in.'],
+      details,
+      reload: true,
+    };
+  }
+  if (/WebGL|context|GPU|shader/i.test(msg)) {
+    return {
+      title: "The 3D graphics couldn't start",
+      message: 'Your browser refused to create the 3D view the simulator draws into.',
+      tips: [accelerationTip(browserFamily(userAgent)), 'Close other 3D tabs, then reload.'],
+      details,
+      reload: true,
+    };
+  }
+  return {
+    title: 'Something went wrong while starting the simulator',
+    message: 'Sorry — the simulator hit an error before it could take off.',
+    tips: ['Reload the page.', 'If it keeps happening, please open an issue on the project’s GitHub page and paste the details below.'],
+    details,
+    reload: true,
+  };
+}
+
+export const ERROR_STYLE_ID = 'fse-style';
+const ERROR_CSS = `
+.fse-screen { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; overflow: auto;
+  padding: 16px; box-sizing: border-box; background: linear-gradient(180deg, #050912 0%, #0b1628 55%, #1a2640 100%); color: #f4f1ea;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+.fse-card { width: min(620px, 100%); padding: 28px 30px; border-radius: 16px; background: rgba(12, 20, 36, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.10); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); box-sizing: border-box; }
+.fse-mascot { width: 110px; aspect-ratio: 64 / 48; margin-bottom: 8px; }
+.fse-mascot svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.fse-title { margin: 0 0 10px; font-size: clamp(22px, 3.4vw, 30px); font-weight: 800; line-height: 1.15; color: #fff4e0; }
+.fse-message { margin: 0 0 14px; font-size: 15px; line-height: 1.5; color: rgba(226, 234, 244, 0.86); }
+.fse-tips { margin: 0 0 18px; padding-left: 20px; font-size: 14px; line-height: 1.5; color: rgba(214, 226, 240, 0.8); }
+.fse-tips li { margin: 4px 0; }
+.fse-reload { font: inherit; font-size: 14px; font-weight: 700; letter-spacing: 0.04em; padding: 9px 20px; border: 0; border-radius: 999px; cursor: pointer;
+  color: #241503; background: linear-gradient(180deg, #ffd27e, #ffc15c 50%, #f29a2e); }
+.fse-details { margin-top: 16px; font-size: 12px; color: rgba(214, 226, 240, 0.6); }
+.fse-details pre { max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.35); }
+.fse-notice { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); z-index: 1500; max-width: calc(100vw - 32px); box-sizing: border-box;
+  padding: 10px 16px; border-radius: 10px; background: rgba(12, 20, 36, 0.92); color: #f4f1ea; border: 1px solid rgba(255, 255, 255, 0.14);
+  font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; display: flex; gap: 12px; align-items: center; }
+.fse-notice button { font: inherit; padding: 4px 12px; border-radius: 999px; border: 0; cursor: pointer; color: #241503; background: #ffc15c; }
+`;
+
+function ensureErrorStyle(doc: Document): void {
+  if (doc.getElementById(ERROR_STYLE_ID)) return;
+  const st = doc.createElement('style');
+  st.id = ERROR_STYLE_ID;
+  st.textContent = ERROR_CSS;
+  doc.head.appendChild(st);
+}
+
+/** Replace whatever is on screen with an error card (removes any loading veil). Text only — no HTML injection. */
+export function showErrorScreen(doc: Document, content: ErrorContent): HTMLElement {
+  for (const teardown of Array.from(instances.values())) teardown();
+  doc.querySelectorAll('.fse-screen').forEach((e) => e.remove());
+  ensureErrorStyle(doc);
+  const el = doc.createElement('div');
+  el.className = 'fse-screen';
+  el.setAttribute('role', 'alert');
+  const card = doc.createElement('div');
+  card.className = 'fse-card';
+  const mascot = doc.createElement('div');
+  mascot.className = 'fse-mascot';
+  mascot.innerHTML = mascotSvg({ title: 'Tater, the flying potato' });
+  const title = doc.createElement('h1');
+  title.className = 'fse-title';
+  title.textContent = content.title;
+  const msg = doc.createElement('p');
+  msg.className = 'fse-message';
+  msg.textContent = content.message;
+  card.append(mascot, title, msg);
+  if (content.tips.length) {
+    const ul = doc.createElement('ul');
+    ul.className = 'fse-tips';
+    for (const t of content.tips) {
+      const li = doc.createElement('li');
+      li.textContent = t;
+      ul.appendChild(li);
+    }
+    card.appendChild(ul);
+  }
+  if (content.reload) {
+    const b = doc.createElement('button');
+    b.className = 'fse-reload';
+    b.type = 'button';
+    b.textContent = 'Reload';
+    b.addEventListener('click', () => doc.defaultView?.location.reload());
+    card.appendChild(b);
+  }
+  if (content.details) {
+    const d = doc.createElement('details');
+    d.className = 'fse-details';
+    const sum = doc.createElement('summary');
+    sum.textContent = 'Technical details';
+    const pre = doc.createElement('pre');
+    pre.textContent = content.details;
+    d.append(sum, pre);
+    card.appendChild(d);
+  }
+  el.appendChild(card);
+  (doc.body ?? doc.documentElement).appendChild(el);
+  return el;
+}
+
+export interface Notice {
+  readonly element: HTMLElement;
+  setText(text: string): void;
+  remove(): void;
+}
+
+/** A small banner over the game (e.g. "graphics were reset — restoring…"), with an optional button. */
+export function showNotice(doc: Document, text: string, action?: { label: string; onClick: () => void }): Notice {
+  ensureErrorStyle(doc);
+  const el = doc.createElement('div');
+  el.className = 'fse-notice';
+  el.setAttribute('role', 'status');
+  const span = doc.createElement('span');
+  span.textContent = text;
+  el.appendChild(span);
+  if (action) {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.textContent = action.label;
+    b.addEventListener('click', action.onClick);
+    el.appendChild(b);
+  }
+  (doc.body ?? doc.documentElement).appendChild(el);
+  return {
+    element: el,
+    setText: (t) => {
+      span.textContent = t;
+    },
+    remove: () => el.remove(),
   };
 }

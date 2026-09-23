@@ -6,9 +6,12 @@
  *
  *   createAirport(scene, env, { heightAt }) → { update, dispose, papiState, obstacleTop, stats }
  *
- * Draw calls (≈12): pavement, shoulders, markings, structures (tower, hangars,
- * terminal, fuel, fixtures, fence posts), fence fabric, windsock, signs,
- * parked aircraft ×2 types, cars ×2 types, lights (one Points).
+ * Draw calls (≈14): pavement, shoulders, markings, structures (tower, hangars,
+ * terminal, fuel, T-hangars, ARFF, flight school, fuel farm, navaids, fixtures,
+ * fence posts), fence fabric, windsocks (instanced), signs, parked aircraft ×2
+ * types, cars ×2 types, the field's other vehicles (King Airs, helicopter, ARFF
+ * trucks, refuelers, tugs — one merged mesh), the patrol pickup on the
+ * perimeter road, lights (one Points).
  */
 import * as THREE from 'three';
 import { createAirportPlan, type AirportPlan } from './plan';
@@ -45,6 +48,9 @@ import { aircraftGlsl, buildAircraftGeometry, type AircraftType } from './aircra
 import { buildCarGeometry, CAR_PAINTS, type CarKind } from './vehicles';
 import { buildWindsockGeometry, windsockWind, WINDSOCK_MAST } from './windsock';
 import { buildSigns } from './signs';
+import { MeshBuilder } from './builder';
+import { buildExtraVehicle, buildExtraVehicleGeometry } from './fleet';
+import { fromRunwayCoords } from '../runway';
 
 export { AIRPORT_HEIGHTS } from './ground';
 
@@ -146,14 +152,14 @@ export function createAirport(scene: THREE.Scene, env: AirportEnv | null, opts: 
   };
 
   // ── ground ────────────────────────────────────────────────────────────────
-  const pavement = new THREE.Mesh(own(buildPavement(plan, heightAt)), own(createPavementMaterial(plan.rw, apronDetail(plan))));
+  const pavement = new THREE.Mesh(own(buildPavement(plan, heightAt)), own(createPavementMaterial(plan.rw, apronDetail(plan), plan.rw2)));
   pavement.name = 'pavement';
   pavement.receiveShadow = true;
   const shoulders = new THREE.Mesh(own(buildShoulders(plan, heightAt)), own(createShoulderMaterial(plan.rw)));
   shoulders.name = 'shoulders';
   shoulders.receiveShadow = true;
   shoulders.renderOrder = -2;
-  const markings = new THREE.Mesh(own(buildMarkings(plan, heightAt)), own(createMarkingMaterial(plan.rw)));
+  const markings = new THREE.Mesh(own(buildMarkings(plan, heightAt)), own(createMarkingMaterial(plan.rw, plan.rw2)));
   markings.name = 'markings';
   markings.receiveShadow = true;
   group.add(shoulders, pavement, markings);
@@ -168,9 +174,12 @@ export function createAirport(scene: THREE.Scene, env: AirportEnv | null, opts: 
   fence.name = 'fence';
   fence.renderOrder = -1;
   const sockMat = own(createWindsockMaterial(uniforms));
-  const windsock = new THREE.Mesh(own(buildWindsockGeometry()), sockMat);
+  // the field windsock (segmented circle) and one near every runway end: one instanced draw call
+  const socks = [plan.windsock, ...plan.field.windsocks];
+  const windsock = new THREE.InstancedMesh(own(buildWindsockGeometry()), sockMat, socks.length);
+  socks.forEach((p, i) => windsock.setMatrixAt(i, new THREE.Matrix4().makeTranslation(p.x, heightAt(p.x, p.z) + WINDSOCK_MAST.height - 0.12, p.z)));
+  windsock.computeBoundingSphere();
   windsock.name = 'windsock';
-  windsock.position.set(plan.windsock.x, heightAt(plan.windsock.x, plan.windsock.z) + WINDSOCK_MAST.height - 0.12, plan.windsock.z);
   windsock.castShadow = true;
   const wind = windsockWind();
   uniforms.uWind.value.set(wind.x, wind.z, wind.strength);
@@ -249,6 +258,52 @@ export function createAirport(scene: THREE.Scene, env: AirportEnv | null, opts: 
     group.add(mesh);
   }
 
+  // ── the field's other vehicles and aircraft: one merged mesh ─────────────
+  const eb = new MeshBuilder();
+  for (const v of plan.field.vehicles) {
+    const p = fromRunwayCoords(v.a, v.c, plan.rw);
+    const base = eb.vertexCount;
+    eb.pushTR(p.x, heightAt(p.x, p.z) + AIRPORT_HEIGHTS.pavement, p.z, (-v.headingDeg * Math.PI) / 180);
+    buildExtraVehicle(eb, v.kind, v.variant);
+    eb.pop();
+    if (v.shade < 1) for (let i = base * 3; i < eb.col.length; i++) eb.col[i] *= v.shade;
+  }
+  const extras = new THREE.Mesh(own(eb.toGeometry(['color', 'accent', 'rm'])), own(createVehicleMaterial('airport-extras')));
+  extras.name = 'field-vehicles';
+  extras.castShadow = true;
+  extras.receiveShadow = true;
+  group.add(extras);
+
+  // ── the airport ops pickup patrolling the perimeter road ─────────────────
+  const loop = plan.field.roadLoop.map((q) => fromRunwayCoords(q.a, q.c, plan.rw));
+  const loopLen: number[] = [0];
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    loopLen.push(loopLen[i] + Math.hypot(b.x - a.x, b.z - a.z));
+  }
+  const patrol = new THREE.Mesh(own(buildExtraVehicleGeometry('pickup', 1)), own(createVehicleMaterial('airport-patrol')));
+  patrol.name = 'patrol';
+  patrol.castShadow = true;
+  patrol.receiveShadow = true;
+  patrol.matrixAutoUpdate = false;
+  group.add(patrol);
+  const PATROL_SPEED = 7; // m/s (25 km/h), keeping right (the road's outer half)
+  const placePatrol = (time: number) => {
+    const total = loopLen[loop.length];
+    let d = (((time * PATROL_SPEED) % total) + total) % total;
+    let i = 0;
+    while (i < loop.length - 1 && d > loopLen[i + 1]) i++;
+    d -= loopLen[i];
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const dx = (b.x - a.x) / len, dz = (b.z - a.z) / len;
+    const x = a.x + dx * d - dz * 1.2, z = a.z + dz * d + dx * 1.2; // right of the direction of travel
+    const hdg = Math.atan2(dx, -dz);
+    patrol.matrix.makeRotationY(-hdg).setPosition(x, heightAt(x, z) + AIRPORT_HEIGHTS.pavement, z);
+    patrol.matrixWorldNeedsUpdate = true;
+  };
+  placePatrol(0);
+
   // ── lights: one Points draw call ─────────────────────────────────────────
   const n = lights.length;
   const lpos = new Float32Array(n * 3);
@@ -324,6 +379,7 @@ export function createAirport(scene: THREE.Scene, env: AirportEnv | null, opts: 
       const level = lightLevel(sunElevationDeg);
       const night = Math.max(0, Math.min(1, (level - 0.2) / 0.8));
       uniforms.uTime.value = time;
+      placePatrol(time);
       uniforms.uNight.value = night;
       lightMat.uniforms.uNight.value = night;
       lightMat.uniforms.uRabbit.value = rabbitIndex(time);

@@ -30,16 +30,21 @@ const rc = (l: LightDef) => {
 const same = (x: readonly number[], y: readonly number[]) => x.every((v, i) => Math.abs(v - y[i]) < 1e-9);
 
 describe('runway edge lights', () => {
-  const edge = kind('edge');
-  it('lines both edges at <= 200 ft spacing, just outside the pavement', () => {
+  const edge = kind('edge').filter((l) => l.runway === '36/18');
+  it('lines both edges at <= 200 ft spacing, just outside the pavement (left out where 03/21 crosses)', () => {
+    const step = rw.length / Math.ceil(rw.length / 61);
     for (const side of [-1, 1]) {
       const row = edge.filter((l) => Math.sign(rc(l).c) === side).map(rc).sort((p, q) => p.a - q.a);
-      expect(row.length).toBe(Math.ceil(rw.length / 61) + 1);
+      expect(row.length).toBeGreaterThanOrEqual(Math.ceil(rw.length / 61) - 1);
       expect(row[0].a).toBeCloseTo(0, 6);
       expect(row[row.length - 1].a).toBeCloseTo(rw.length, 6);
+      expect(step).toBeLessThanOrEqual(61);
       for (let i = 1; i < row.length; i++) {
-        expect(row[i].a - row[i - 1].a).toBeLessThanOrEqual(61);
-        expect(row[i].a - row[i - 1].a).toBeCloseTo(row[1].a - row[0].a, 6);
+        const gap = row[i].a - row[i - 1].a;
+        const k = Math.round(gap / step);
+        expect(gap).toBeCloseTo(k * step, 6);
+        // a missing light only where it would stand on the crossing runway's pavement
+        for (let j = 1; j < k; j++) expect(pavementAt(plan, row[i - 1].a + j * step, side * (rw.halfWidth + 1))).toBe('runway');
       }
       for (const p of row) {
         expect(Math.abs(p.c) - rw.halfWidth).toBeGreaterThanOrEqual(0.6);
@@ -59,7 +64,7 @@ describe('runway edge lights', () => {
 });
 
 describe('threshold / runway end lights', () => {
-  const th = kind('threshold');
+  const th = kind('threshold').filter((l) => l.runway === '36/18');
   it('spans each end: green toward the approach, red toward the runway', () => {
     const e36 = th.filter((l) => rc(l).a < rw.length / 2);
     const e18 = th.filter((l) => rc(l).a > rw.length / 2);
@@ -160,12 +165,13 @@ describe('approach lights (MALSR) and the rabbit on runway 36', () => {
 
 describe('PAPI', () => {
   const papi = kind('papi');
-  it('has 4 units left of each touchdown zone: 15 m from the edge, 9 m apart, inner unit highest', () => {
-    expect(papi.length).toBe(8);
+  it('has 4 units beside each touchdown zone: 15 m from the edge, 9 m apart, inner unit highest', () => {
+    expect(papi.length).toBe(16); // 36, 18, 3, 21
     const p36 = papi.filter((l) => l.end === '36').map((l) => ({ ...rc(l), unit: l.unit }));
     const p18 = papi.filter((l) => l.end === '18').map((l) => ({ ...rc(l), unit: l.unit }));
     for (const p of p36) expect(p.c).toBeLessThan(-rw.halfWidth); // left of a northbound pilot = west
-    for (const p of p18) expect(p.c).toBeGreaterThan(rw.halfWidth); // left of a southbound pilot = east
+    // 18's left (east) side is where 03/21 and taxiway A cross: its PAPI stands on the right (west)
+    for (const p of p18) expect(p.c).toBeLessThan(-rw.halfWidth);
     for (const set of [p36, p18]) {
       const s = set.sort((x, y) => Math.abs(x.c) - Math.abs(y.c));
       expect(Math.abs(s[0].c) - rw.halfWidth).toBeCloseTo(15, 1);

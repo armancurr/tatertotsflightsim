@@ -37,10 +37,22 @@ export type BuildingUse =
   | 'farmhouse'
   | 'barn'
   | 'silo'
-  | 'shed';
+  | 'shed'
+  | 'tree'
+  | 'pool'
+  | 'garage'
+  | 'watertower'
+  | 'school'
+  | 'townhall'
+  | 'tank';
 
 /** Facade style ids used by the building shader. */
-export const STYLE = { house: 0, apartment: 1, office: 2, industrial: 3, barn: 4, church: 5, silo: 6, shop: 7, shed: 8 } as const;
+export const STYLE = { house: 0, apartment: 1, office: 2, industrial: 3, barn: 4, church: 5, silo: 6, shop: 7, shed: 8, tree: 13, pool: 14, civic: 15 } as const;
+/** Extra facade styles for derived pieces (rooftop units, tanks, masts, penthouses). */
+export const STYLE_X = { hvac: 9, tank: 10, mast: 11, plain: 12 } as const;
+
+/** Props that are not buildings: trees and pools (no windows, no street front). */
+export const isProp = (b: Pick<Building, 'use'>): boolean => b.use === 'tree' || b.use === 'pool';
 
 export interface Building {
   /** Footprint centre, m. */
@@ -102,6 +114,8 @@ export function gambrelFrac(t: number): number {
 }
 
 const DEG = Math.PI / 180;
+/** Tree crowns: height fraction of the widest ring (twin of archetypes.TREE_EQ; asserted equal in the tests). */
+export const TREE_EQ_P = 0.42;
 
 /**
  * Height (m MSL) of the top of the building at (x, z) — the roof surface over
@@ -121,6 +135,8 @@ export function roofTopAt(b: Building, x: number, z: number): number {
   if (b.archetype === 'silo') {
     const r2 = (u * u + v * v) / (hw * hw);
     if (r2 > 1) return -Infinity;
+    // a tree: the crown's upper half (an ellipsoid cap from its widest ring), lumps only pull it in
+    if (b.use === 'tree') return b.y + b.wallHeight + b.roofHeight * (TREE_EQ_P + (1 - TREE_EQ_P) * Math.sqrt(1 - r2));
     return b.y + b.wallHeight + b.roofHeight * (b.ridge < 0.5 ? 1 - Math.sqrt(r2) : Math.sqrt(1 - r2));
   }
   const au = Math.abs(u);
@@ -157,21 +173,37 @@ export function visualSize(b: Building): number {
 
 // ─── Palettes ─────────────────────────────────────────────────────────────────
 
-const WALL_HOUSE = [0xefece4, 0xe9dfc6, 0xdccaa6, 0xe8d9a4, 0xcfcfca, 0xbcc5ac, 0xbcc8d0, 0xa55c40, 0x8e4d37, 0xcbbb9c, 0xdca890, 0xf2efe8, 0xd8cdb8];
-const WALL_APT = [0xd9d1c2, 0xcbbca4, 0xbcb6ad, 0xe2d8ca, 0x9e5c44, 0xc6c2b8, 0xd4c4a8, 0xa8a49c];
-const WALL_OFFICE = [0x6f8594, 0x5b6e7a, 0x8d9ba3, 0x7b8a8f, 0xb8b4ac, 0x9aa6ad, 0x55656e];
-const WALL_SHOP = [0xe0d4bc, 0xcfb99a, 0xb45f45, 0xd9c9a0, 0xe8e2d4, 0xa9b4a8, 0xc98f6c];
+/** Painted siding / render of American-style houses (and their brick ones). */
+const WALL_HOUSE = [0xf0eee8, 0xe9e4d6, 0xe4d8b0, 0xd2d3cf, 0xb4c0c6, 0xb8c2aa, 0xd3c2a0, 0xa99f8e, 0xc9b79c, 0x9aa7ae, 0xa0553f, 0x8e4a36, 0x9b6049, 0xe6e1d3];
+/** Mediterranean-style render of the coastal city (ochre, salmon, cream, pale blue…). */
+const WALL_HOUSE_EU = [0xe2c48a, 0xe0ab8c, 0xefe6cf, 0xefdc9e, 0xf2efe8, 0xcf9474, 0xc3d0d6, 0xdccaa6, 0xd7b8a0, 0xb86a4e, 0xe8d3b5];
+const WALL_APT = [0xd9d1c2, 0xcbbca4, 0xbcb6ad, 0xe2d8ca, 0x9e5c44, 0xc6c2b8, 0xd4c4a8, 0xa8a49c, 0xe0cfa8, 0x8f5a44];
+/** Coated glass of curtain walls (the shader turns the tint into a reflectance). */
+const WALL_GLASS = [0x5d7f8c, 0x4f6a86, 0x7b6a58, 0x8c969e, 0x3c464e, 0x6f8f8a, 0x9aa9b6, 0x566b7c];
+/** Precast concrete / stone of punched-window offices. */
+const WALL_CONCRETE = [0xc9c4b8, 0xb5b0a6, 0xd6d0c2, 0x9c9990, 0xbfae96, 0xa8a49c];
+const WALL_SHOP = [0xe0d4bc, 0xcfb99a, 0xb45f45, 0xd9c9a0, 0xe8e2d4, 0xa9b4a8, 0xc98f6c, 0x9e4f3a, 0x8c4a38];
+/** Main-street commercial blocks of the American town: mostly brick. */
+const WALL_SHOP_TOWN = [0xa3553f, 0x8e4a36, 0xb06448, 0x9b5b45, 0x7f4535, 0xcfb99a, 0xd9c9a0, 0xe0d4bc];
 const WALL_INDUSTRIAL = [0xb9bdbf, 0x9fa7a8, 0xc4b89e, 0xa8b0b4, 0x8c9699, 0xd0ccc0];
 const WALL_BARN_RED = [0x8e2b22, 0x9b3426, 0x7f271f, 0xa33a2a];
 const WALL_BARN_OTHER = [0x7a7068, 0xe6e2d8, 0x6e6258];
 const WALL_SILO = [0xc9cacb, 0x2f4a6a, 0xb7bcc0, 0xd6d2c8];
 const WALL_SHED = [0x9ea5a6, 0x5f7a5a, 0xb5a98e, 0x8a3a2e, 0xa7adb0];
 const WALL_CHURCH = [0xcfc6b4, 0xe7e2d6, 0xb9ae98, 0xd8d0c0];
+/** Tree foliage (sRGB): deciduous greens, a few darker conifers, a purple-leaf plum, a pale birch. */
+const FOLIAGE = [0x4f6b35, 0x5a7a3a, 0x445f2e, 0x68834a, 0x4a6438, 0x3b5530, 0x5f7440, 0x55703e];
+const FOLIAGE_CONIFER = [0x2f4a33, 0x36523a, 0x2c4430];
+const FOLIAGE_ODD = [0x5e3f3c, 0x7c9355, 0x8a8a4a];
 
-const ROOF_TERRACOTTA = [0xb0553a, 0xa34b2f, 0x9e4a30, 0xb8623f];
-const ROOF_SLATE = [0x4a4f57, 0x5c636b, 0x3a3c40, 0x535a60];
-const ROOF_BROWN = [0x6b4a36, 0x5a3e2e, 0x74523a];
-const ROOF_FLAT = [0x7a7a7c, 0x8a8886, 0x6c6e70, 0x94918c];
+const ROOF_TERRACOTTA = [0xa65a3e, 0x9d5439, 0xb0653f, 0x914c36, 0xa8694b, 0xb5744f];
+/** Asphalt shingles: charcoal, estate grey, weathered wood, driftwood, brown, black, hickory, green-grey, slate blue. */
+const ROOF_SHINGLE = [0x3e3f41, 0x56585b, 0x6a645b, 0x78746c, 0x4f443a, 0x2d2d2f, 0x5c5246, 0x4b534d, 0x4a4f57, 0x625e59];
+const ROOF_SLATE = [0x4a4f57, 0x565c63, 0x3e4247, 0x5d6167];
+const ROOF_BROWN = [0x6b4a36, 0x5a4232, 0x74553f];
+/** Standing-seam metal roofs on houses (flagged metal by their colour). */
+export const ROOF_METAL_RES = [0x3f5347, 0x7d3b31, 0x3a3c40, 0x8d9395, 0x33425a];
+const ROOF_FLAT = [0x7a7a7c, 0x8a8886, 0x6c6e70, 0x94918c, 0x4a4b4d, 0xa89f8e, 0x9c9a94];
 const ROOF_METAL = [0x8e9496, 0x6e7477, 0xa3a7a6, 0x7c8a8c];
 const ROOF_BARN = [0x4e5156, 0x6d6f72, 0x7a3a2e, 0x5a6a5c];
 const ROOF_CHURCH = [0x4a4f57, 0x5e8c7a, 0x3e4349];
@@ -182,11 +214,13 @@ const pick = <T>(rnd: () => number, a: readonly T[]): T => a[Math.floor(rnd() * 
 
 function roofColor(rnd: () => number, region: Region): number {
   const r = rnd();
-  const [t, s, b] = region === 'coastal' ? [0.55, 0.75, 0.9] : region === 'town' ? [0.35, 0.65, 0.9] : [0.25, 0.6, 0.9];
+  // cumulative shares: terracotta, slate, shingles, brown, metal
+  const [t, sl, sh, br] = region === 'coastal' ? [0.5, 0.65, 0.85, 0.92] : region === 'town' ? [0.12, 0.22, 0.77, 0.87] : [0.06, 0.14, 0.64, 0.76];
   if (r < t) return pick(rnd, ROOF_TERRACOTTA);
-  if (r < s) return pick(rnd, ROOF_SLATE);
-  if (r < b) return pick(rnd, ROOF_BROWN);
-  return pick(rnd, [0x3a3c40, 0x8c3b30]);
+  if (r < sl) return pick(rnd, ROOF_SLATE);
+  if (r < sh) return pick(rnd, ROOF_SHINGLE);
+  if (r < br) return pick(rnd, ROOF_BROWN);
+  return pick(rnd, ROOF_METAL_RES);
 }
 
 // ─── Prototypes ───────────────────────────────────────────────────────────────
@@ -237,7 +271,7 @@ function houseProto(rnd: () => number, region: Region, use: BuildingUse = 'house
     depth: d,
     wallHeight: storeys * 2.8 + 0.5,
     ...roof,
-    wallColor: white ? pick(rnd, [0xf2efe8, 0xefece4, 0xe9dfc6]) : pick(rnd, WALL_HOUSE),
+    wallColor: white ? pick(rnd, [0xf2efe8, 0xefece4, 0xe9dfc6]) : pick(rnd, region === 'coastal' ? WALL_HOUSE_EU : WALL_HOUSE),
     roofColor: roofColor(rnd, region),
     floorHeight: 2.8,
     style: STYLE.house,
@@ -258,7 +292,7 @@ function rowHouseProto(rnd: () => number, region: Region): Proto {
     depth: d,
     wallHeight: storeys * 2.9 + 0.4,
     ...pitched(rnd, w, d, false, 32 + rnd() * 10, 0),
-    wallColor: pick(rnd, WALL_HOUSE),
+    wallColor: pick(rnd, region === 'coastal' ? WALL_HOUSE_EU : WALL_HOUSE),
     roofColor: roofColor(rnd, region),
     floorHeight: 2.9,
     style: STYLE.house,
@@ -280,7 +314,7 @@ function shopProto(rnd: () => number, region: Region): Proto {
     depth: d,
     wallHeight: floors * 3.2 + 0.6,
     ...(flat ? { roofHeight: 0.6 + rnd() * 0.8, ridge: 1, ridgeAxis: 0 as const } : pitched(rnd, w, d, false, 30 + rnd() * 12, 0)),
-    wallColor: pick(rnd, WALL_SHOP),
+    wallColor: pick(rnd, region === 'town' ? WALL_SHOP_TOWN : region === 'coastal' ? [...WALL_SHOP, ...WALL_HOUSE_EU] : WALL_SHOP),
     roofColor: flat ? pick(rnd, ROOF_FLAT) : roofColor(rnd, region),
     floorHeight: 3.2,
     style: STYLE.shop,
@@ -334,7 +368,7 @@ function officeProto(rnd: () => number, minH: number, maxH: number, use: Buildin
     roofHeight: 1.2 + rnd() * 1.2,
     ridge: 1,
     ridgeAxis: 0,
-    wallColor: glass ? pick(rnd, WALL_OFFICE) : pick(rnd, WALL_APT),
+    wallColor: glass ? pick(rnd, WALL_GLASS) : pick(rnd, WALL_CONCRETE),
     roofColor: pick(rnd, ROOF_FLAT),
     floorHeight: fh,
     style: glass ? STYLE.office : STYLE.apartment,
@@ -439,10 +473,11 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
     return true;
   };
 
-  /** All constraint checks; fits the base to the ground. Does not add. */
+  /** All constraint checks; fits the base to the ground. Does not add. Trees check only their trunk against the roads (crowns may overhang). */
   const fits = (b: Building, clear: number, roadClear: number): Rect | null => {
     const r = buildingRect(b);
-    if (roads.clearance(r, 30) < roadClear) return null;
+    const rr = b.use === 'tree' ? makeRect(b.x, b.z, b.headingDeg, TRUNK_RECT, TRUNK_RECT) : r;
+    if (roads.clearance(rr, 30) < roadClear) return null;
     if (C.rectInAirport(r, 20)) return null;
     if (C.rectWaterClearance(r) < 3) return null;
     if (hash.anyOverlap(r, clear)) return null;
@@ -608,11 +643,50 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
     return false;
   };
 
+  /**
+   * Puts a landmark on a lot along `list` within [rMin, rMax] of the centre — nearest first, or in a
+   * random order — set back `setback` m from the road edge. True if it was placed.
+   */
+  const placeOnStreet = (rnd: () => number, list: NetRoad[], t: Town, ti: number, rMin: number, rMax: number, make: () => Proto, nearest: boolean): boolean => {
+    const cands: { p: XZ; tx: number; tz: number; hw: number; key: number }[] = [];
+    for (const r of list) {
+      for (let i = 1; i < r.points.length; i++) {
+        const a = r.points[i - 1];
+        const b = r.points[i];
+        const l = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+        for (let f = 0.25; f < 1; f += 0.5) {
+          const px = a.x + (b.x - a.x) * f;
+          const pz = a.z + (b.z - a.z) * f;
+          const d = Math.hypot(px - t.x, pz - t.z);
+          if (d < rMin || d > rMax) continue;
+          cands.push({ p: { x: px, z: pz }, tx: (b.x - a.x) / l, tz: (b.z - a.z) / l, hw: r.width / 2, key: nearest ? d : rnd() });
+        }
+      }
+    }
+    cands.sort((a, b) => a.key - b.key || a.p.x - b.p.x || a.p.z - b.p.z);
+    for (const c of cands.slice(0, 120)) {
+      for (const side of [1, -1]) {
+        const p = make();
+        const off = c.hw + p.setback + p.depth / 2;
+        const b = toBuilding(p, c.p.x - c.tz * side * off, c.p.z + c.tx * side * off, 0, rnd(), ti, -1);
+        if (tryAdd(b, p.clear)) return true;
+      }
+    }
+    return false;
+  };
+
+  /** Detached houses (for the yard pass: garages, pools, garden trees). */
+  const yards: { b: Building; region: Region; rN: number }[] = [];
+  /** Each settlement's roads (for the street-tree pass). */
+  const lists: NetRoad[][] = [];
+
   // ── Settlements ────────────────────────────────────────────────────────────
   const smp: Sampler = { x: 0, z: 0, tx: 1, tz: 0 };
   layout.towns.forEach((t, ti) => {
     const rnd = mulberry32((seed ^ Math.imul(ti + 1, 0x7f4a7c15)) >>> 0);
+    const lrnd = mulberry32((seed ^ Math.imul(ti + 1, 0x2c9277b5)) >>> 0);
     const list = townRoads(ti, t);
+    lists.push(list);
     const coastal = t.kind === 'city' || layout.coast.zAt(t.x) - t.z < 1500;
     const region: Region = coastal ? 'coastal' : t.kind === 'town' ? 'town' : 'rural';
     // landmarks first
@@ -621,6 +695,15 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
     else if (t.kind === 'city') {
       placeChurch(rnd, list, t, ti, t.radius * 0.3, t.radius * 0.4, 1.4);
       placeChurch(rnd, list, t, ti, t.radius * 0.55, t.radius * 0.65, 1.1);
+    }
+    // civic buildings: town hall on the main street, schools, a water tower on the edge of town
+    if (t.kind === 'town' || t.kind === 'city') {
+      placeOnStreet(lrnd, list, t, ti, t.radius * (t.kind === 'city' ? 0.2 : 0.02), t.radius * (t.kind === 'city' ? 0.3 : 0.2), () => townHallProto(lrnd, region), true);
+      const schools = t.kind === 'city' ? 3 : 1;
+      for (let k = 0; k < schools; k++) placeOnStreet(lrnd, list, t, ti, t.radius * 0.3, t.radius * 0.75, () => schoolProto(lrnd), false);
+    }
+    if (t.kind === 'town' || t.kind === 'city' || (t.kind === 'village' && lrnd() < 0.45)) {
+      placeOnStreet(lrnd, list, t, ti, t.radius * 0.45, t.radius * 0.95, () => waterTowerProto(lrnd, t.kind === 'village' ? 0.8 : 1), false);
     }
     for (const r of list) {
       const cum = cumulativeLength(r.points);
@@ -641,11 +724,11 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
           const coastD = layout.coast.zAt(smp.x) - smp.z;
           let p: Proto;
           if (t.kind === 'city') {
-            if (coastD < 380 && rN < 0.95) p = industrialProto(rnd, true);
-            else if (rN < 0.14) p = rnd() < 0.7 ? officeProto(rnd, 40 + 50 * (1 - rN / 0.14), 60 + 60 * (1 - rN / 0.14), 'tower') : officeProto(rnd, 16, 36, 'office');
+            if (coastD < 380 && rN < 0.95) p = rnd() < 0.2 ? tankProto(rnd) : industrialProto(rnd, true);
+            else if (rN < 0.14) p = rnd() < 0.7 ? (rnd() < 0.1 ? roundTowerProto(rnd, 50 + 50 * (1 - rN / 0.14)) : officeProto(rnd, 40 + 50 * (1 - rN / 0.14), 60 + 60 * (1 - rN / 0.14), 'tower')) : officeProto(rnd, 16, 36, 'office');
             else if (rN < 0.3) p = rnd() < 0.5 ? officeProto(rnd, 14, 34, 'office') : rnd() < 0.5 ? apartmentProto(rnd, region, 8) : shopProto(rnd, region);
             else if (rN < 0.55) p = rnd() < 0.45 ? apartmentProto(rnd, region, 6) : rnd() < 0.5 ? rowHouseProto(rnd, region) : shopProto(rnd, region);
-            else if (major && rN > 0.6 && rnd() < 0.45) p = industrialProto(rnd, rnd() < 0.6);
+            else if (major && rN > 0.6 && rnd() < 0.45) p = rnd() < 0.15 ? tankProto(rnd) : industrialProto(rnd, rnd() < 0.6);
             else p = houseProto(rnd, region);
           } else if (t.kind === 'town') {
             if (rN < 0.18) p = rnd() < 0.7 ? shopProto(rnd, region) : apartmentProto(rnd, region, 4);
@@ -663,7 +746,7 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
           if (rnd() < t.density * falloff + (rN < 0.3 ? 0.15 : 0)) {
             const off = hw + p.setback + p.depth / 2;
             const b = toBuilding(p, smp.x - smp.tz * side * off, smp.z + smp.tx * side * off, 0, rnd(), ti, -1);
-            tryAdd(b, p.clear);
+            if (tryAdd(b, p.clear) && p.use === 'house' && p.gap > 2) yards.push({ b, region, rN });
           }
           s += p.width + p.gap;
         }
@@ -729,12 +812,256 @@ export function placeBuildings(layout: WorldLayout, net: RoadNetwork, heightAt: 
         const p = houseProto(rnd, 'rural');
         const off = r.width / 2 + 8 + rnd() * 14 + p.depth / 2;
         if (heightAt(smp.x, smp.z) > cfg.farmMaxHeight + 150) continue;
-        tryAdd(toBuilding(p, smp.x - smp.tz * side * off, smp.z + smp.tx * side * off, 0, rnd(), -1, -1), 2);
+        const b = toBuilding(p, smp.x - smp.tz * side * off, smp.z + smp.tx * side * off, 0, rnd(), -1, -1);
+        if (tryAdd(b, 2)) yards.push({ b, region: 'rural', rN: 1 });
+      }
+    }
+  });
+
+  // ── Yards: detached garages, pools and garden trees behind the houses ─────
+  yards.forEach((y, yi) => {
+    const rnd = mulberry32((seed ^ Math.imul(yi + 1, 0x68e31da4)) >>> 0);
+    const h = y.b;
+    const hd = h.headingDeg * DEG;
+    const fx = Math.sin(hd);
+    const fz = -Math.cos(hd);
+    const ax = -fz;
+    const az = fx;
+    const at = (u: number, v: number): XZ => ({ x: h.x + ax * u + fx * v, z: h.z + az * u + fz * v });
+    const suburb = y.rN > 0.3;
+    if (suburb && y.region !== 'coastal' && rnd() < 0.3) {
+      const g = garageProto(rnd, h);
+      const side = rnd() < 0.5 ? 1 : -1;
+      const c = at(side * (h.width / 2 + 1.4 + g.width / 2), -(h.depth / 2 - g.depth / 2) - rnd() * 5);
+      tryAdd(toBuilding(g, c.x, c.z, 0, rnd(), h.town, -1), 0.8);
+    }
+    if (suburb && rnd() < (y.region === 'coastal' ? 0.24 : y.region === 'town' ? 0.1 : 0.04)) {
+      const pl = poolProto(rnd);
+      const c = at((rnd() - 0.5) * h.width * 0.6, -(h.depth / 2 + 3 + pl.depth / 2 + rnd() * 3));
+      tryAdd(toBuilding(pl, c.x, c.z, 0, rnd(), h.town, -1), 1.2, 1.5);
+    }
+    const n = y.region === 'rural' ? 2 + Math.floor(rnd() * 3) : 1 + Math.floor(rnd() * 3);
+    for (let k = 0, placed = 0; k < n + 3 && placed < n; k++) {
+      const tp = treeProto(rnd, rnd() < 0.12 ? 'conifer' : 'garden');
+      const r = tp.width / 2;
+      const back = rnd() < 0.65;
+      const c = back
+        ? at((rnd() - 0.5) * (h.width + 8), -(h.depth / 2 + 1.5 + r + rnd() * 9))
+        : at((rnd() < 0.5 ? 1 : -1) * (h.width / 2 + 1.2 + r + rnd() * 3), (rnd() - 0.4) * h.depth);
+      if (tryAdd(toBuilding(tp, c.x, c.z, 0, rnd(), h.town, -1), 0.5, 0.8)) placed++;
+    }
+  });
+
+  // ── Street trees along the settlements' streets and main roads ───────────
+  layout.towns.forEach((t, ti) => {
+    const rnd = mulberry32((seed ^ Math.imul(ti + 1, 0x5f356495)) >>> 0);
+    const chance = t.kind === 'city' ? 0.85 : t.kind === 'town' ? 0.8 : t.kind === 'village' ? 0.4 : 0.25;
+    for (const r of lists[ti]) {
+      const cum = cumulativeLength(r.points);
+      const len = cum[cum.length - 1];
+      const hw = r.width / 2;
+      for (const side of [1, -1]) {
+        if (rnd() > chance) continue;
+        const hint = { i: 1 };
+        // one species and size per side of a street
+        const proto = treeProto(rnd, 'street');
+        const spacing = 10 + rnd() * 6;
+        let s = rnd() * spacing;
+        while (s < len) {
+          sampleAt(r.points, cum, s, smp, hint);
+          const rN = Math.hypot(smp.x - t.x, smp.z - t.z) / t.radius;
+          if (rN < 1.0 && rnd() < 0.85) {
+            const k = 0.85 + 0.3 * rnd();
+            const tp: Proto = { ...proto, width: proto.width * k, depth: proto.width * k, roofHeight: proto.roofHeight * k };
+            const off = hw + 1.3 + rnd() * 0.6;
+            tryAdd(toBuilding(tp, smp.x - smp.tz * side * off, smp.z + smp.tx * side * off, 0, rnd(), ti, -1), 0.5, 0.8);
+          }
+          s += spacing * (0.9 + 0.2 * rnd());
+        }
       }
     }
   });
 
   return out;
+}
+
+/** Road clearance of a tree is checked on this square around its trunk (m): the crown may overhang. */
+export const TRUNK_RECT = 1.2;
+
+function treeProto(rnd: () => number, kind: 'garden' | 'street' | 'conifer'): Proto {
+  const conifer = kind === 'conifer';
+  const w = conifer ? 3.5 + rnd() * 2.5 : kind === 'street' ? 5 + rnd() * 3 : 4.5 + rnd() * 6;
+  const crown = conifer ? w * (2 + rnd() * 0.8) : w * (0.85 + rnd() * 0.45);
+  const odd = !conifer && rnd() < 0.08;
+  return {
+    use: 'tree',
+    archetype: 'silo',
+    width: w,
+    depth: w,
+    wallHeight: conifer ? 0.8 + rnd() * 0.8 : 1.6 + rnd() * 1.6,
+    roofHeight: crown,
+    ridge: 1,
+    ridgeAxis: 0,
+    wallColor: conifer ? pick(rnd, FOLIAGE_CONIFER) : odd ? pick(rnd, FOLIAGE_ODD) : pick(rnd, FOLIAGE),
+    roofColor: 0x4a3c30,
+    floorHeight: 0,
+    style: STYLE.tree,
+    setback: 0,
+    gap: 0,
+    clear: 0.5,
+  };
+}
+
+function poolProto(rnd: () => number): Proto {
+  const w = 4 + rnd() * 2;
+  return {
+    use: 'pool',
+    archetype: 'flat',
+    width: w,
+    depth: w * (1.7 + rnd() * 0.5),
+    wallHeight: 0.25,
+    roofHeight: 0.12,
+    ridge: 1,
+    ridgeAxis: 0,
+    wallColor: pick(rnd, [0xd9d5ca, 0xcfc8b8, 0xe2ded4]),
+    roofColor: pick(rnd, [0x3fa6c4, 0x4bb3c8, 0x3a9cb8]),
+    floorHeight: 0,
+    style: STYLE.pool,
+    setback: 0,
+    gap: 0,
+    clear: 1.2,
+  };
+}
+
+/** A detached garage in the colours of its house. */
+function garageProto(rnd: () => number, h: Building): Proto {
+  const w = 6 + rnd() * 1.4;
+  const d = 6.2 + rnd() * 1.2;
+  return {
+    use: 'garage',
+    archetype: 'gable',
+    width: w,
+    depth: d,
+    wallHeight: 2.8,
+    ...pitched(rnd, w, d, false, 20 + rnd() * 10, 0),
+    wallColor: h.wallColor,
+    roofColor: h.roofColor,
+    floorHeight: 2.8,
+    style: STYLE.house,
+    setback: 0,
+    gap: 0,
+    clear: 0.8,
+  };
+}
+
+function townHallProto(rnd: () => number, region: Region): Proto {
+  const w = 26 + rnd() * 8;
+  const d = 16 + rnd() * 4;
+  return {
+    use: 'townhall',
+    archetype: 'hip',
+    width: w,
+    depth: d,
+    wallHeight: 3 * 3.8 + 0.8,
+    ...pitched(rnd, w, d, true, 26 + rnd() * 6, 0),
+    wallColor: pick(rnd, [0xd8cfbd, 0xc9bda5, 0xa3553f, 0xe2dccd]),
+    roofColor: region === 'coastal' ? pick(rnd, ROOF_TERRACOTTA) : pick(rnd, [...ROOF_SLATE, 0x5e8c7a]),
+    floorHeight: 3.8,
+    style: STYLE.civic,
+    setback: 8 + rnd() * 4,
+    gap: 6,
+    clear: 3,
+  };
+}
+
+function schoolProto(rnd: () => number): Proto {
+  const w = 48 + rnd() * 24;
+  const d = 14 + rnd() * 4;
+  return {
+    use: 'school',
+    archetype: 'flat',
+    width: w,
+    depth: d,
+    wallHeight: 2 * 3.7 + 0.9,
+    roofHeight: 0.7 + rnd() * 0.4,
+    ridge: 1,
+    ridgeAxis: 0,
+    wallColor: pick(rnd, [0xa3553f, 0x9b5b45, 0xb06448, 0xc9bda5, 0xd8cfbd]),
+    roofColor: pick(rnd, ROOF_FLAT),
+    floorHeight: 3.7,
+    style: STYLE.civic,
+    setback: 10 + rnd() * 8,
+    gap: 10,
+    clear: 4,
+  };
+}
+
+/** A water tower: a column and a domed tank (drawn as pieces; the obstacle is the whole cylinder). */
+function waterTowerProto(rnd: () => number, scale: number): Proto {
+  const d = (11 + rnd() * 3) * scale;
+  return {
+    use: 'watertower',
+    archetype: 'silo',
+    width: d,
+    depth: d,
+    wallHeight: (30 + rnd() * 10) * scale,
+    roofHeight: d * 0.22,
+    ridge: 1,
+    ridgeAxis: 0,
+    wallColor: pick(rnd, [0xe9ecec, 0xb9d0dc, 0xcfd8c8, 0xdfe3e6]),
+    roofColor: pick(rnd, [0xe9ecec, 0xb9d0dc, 0x9aa6ad]),
+    floorHeight: 0,
+    style: STYLE.civic,
+    setback: 10 + rnd() * 8,
+    gap: 10,
+    clear: 4,
+  };
+}
+
+/** A fuel / storage tank on the industrial edge and the harbour: wide, white, low cone roof. */
+function tankProto(rnd: () => number): Proto {
+  const d = 12 + rnd() * 12;
+  return {
+    use: 'tank',
+    archetype: 'silo',
+    width: d,
+    depth: d,
+    wallHeight: 8 + rnd() * 7,
+    roofHeight: d * (0.06 + rnd() * 0.04),
+    ridge: 0,
+    ridgeAxis: 0,
+    wallColor: pick(rnd, [0xe6e8e6, 0xd8dcdc, 0xc9ced0, 0xe2dccb]),
+    roofColor: pick(rnd, [0xd8dcdc, 0xb7bcc0]),
+    floorHeight: 0,
+    style: STYLE_X.tank,
+    setback: 10 + rnd() * 10,
+    gap: 6 + rnd() * 6,
+    clear: 3,
+  };
+}
+
+/** A round glass tower (the silo mesh with a curtain wall and a near-flat roof). */
+function roundTowerProto(rnd: () => number, h: number): Proto {
+  const d = 24 + rnd() * 10;
+  const fh = 3.8;
+  const floors = Math.max(12, Math.round(h / fh));
+  return {
+    use: 'tower',
+    archetype: 'silo',
+    width: d,
+    depth: d,
+    wallHeight: floors * fh + 0.8,
+    roofHeight: 1.6,
+    ridge: 1,
+    ridgeAxis: 0,
+    wallColor: pick(rnd, WALL_GLASS),
+    roofColor: pick(rnd, ROOF_FLAT),
+    floorHeight: fh,
+    style: STYLE.office,
+    setback: 6 + rnd() * 4,
+    gap: 8 + rnd() * 6,
+    clear: 3,
+  };
 }
 
 function barnProto(rnd: () => number): Proto {

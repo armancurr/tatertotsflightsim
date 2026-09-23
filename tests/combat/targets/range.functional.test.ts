@@ -71,4 +71,47 @@ describe('target range on the real world', () => {
       expect(v.target.position.z).toBe(v.plan.z);
     });
   });
+
+  it('the column drives the farm lane through the range: on the ground, never overlapping, halts and scatters when hit, reset restores', { timeout: 120000 }, () => {
+    expect(plan.track?.kind).toBe('lane');
+    const world = createCombatWorld();
+    const rt = createRangeRuntime(world, { height: env.groundHeight, normal: env.groundNormal }, () => null);
+    rt.install(plan);
+    const d = rt.convoy!;
+    expect(d).not.toBeNull();
+    const col = rt.vehicles.filter((v) => v.unit >= 0);
+    const start = col.map((v) => ({ x: v.target.position.x, z: v.target.position.z }));
+    const check = () => {
+      for (const v of col) {
+        const p = v.target.position;
+        expect(p.y).toBeCloseTo(env.groundHeight(p.x, p.z), 6);
+        expect(env.waterLevel(p.x, p.z)).toBeNull();
+        expect(['water', 'urban']).not.toContain(env.surfaceAt(p.x, p.z));
+      }
+      expect(d.overlapping()).toBe(false);
+    };
+    const phases = new Set<string>();
+    for (let k = 0; k < 3000; k++) {
+      rt.update(0.1); // 5 minutes: up the lane, turn round, back down
+      phases.add(d.phase());
+      if (k % 10 === 0) check();
+    }
+    expect([...phases]).toEqual(expect.arrayContaining(['drive', 'endStop', 'turn']));
+    const moved = col.map((v, i) => Math.hypot(v.target.position.x - start[i].x, v.target.position.z - start[i].z));
+    expect(Math.max(...col.map((v) => v.view.odo))).toBeGreaterThan(900);
+    expect(moved.some((m) => m > 20)).toBe(true);
+    // a kill: the column halts and scatters off the road; nobody leaves valid ground
+    world.applyHit(col[2].target.id, { weapon: 'missile', damage: 1e6, point: { x: 0, y: 0, z: 0 }, direction: { x: 0, y: -1, z: 0 }, time: 1 });
+    for (let k = 0; k < 300; k++) {
+      rt.update(0.1);
+      if (k % 5 === 0) check();
+    }
+    expect(d.phase()).toBe('contact');
+    expect(col.filter((v) => v.target.alive).every((v) => Math.hypot(v.target.velocity.x, v.target.velocity.z) < 0.1)).toBe(true);
+    rt.reset();
+    col.forEach((v, i) => {
+      expect(v.target.alive).toBe(true);
+      expect(Math.hypot(v.target.position.x - start[i].x, v.target.position.z - start[i].z)).toBeLessThan(0.01);
+    });
+  });
 }, 120000);

@@ -6,6 +6,9 @@ import {
   newBathyLevel,
   sampleBathymetry,
   makeWaterDepthFn,
+  makeWaterTexelFn,
+  bakeWaterLevel,
+  newWaterTexel,
   shoreDistanceTransform,
   packBathymetryHalf,
   surfFoam,
@@ -16,6 +19,7 @@ import {
 import { fromHalf } from '../../../src/world/water/detail';
 import { getHeightfield } from '../../../src/world/heightfield';
 import { getLayout } from '../../../src/world/layout';
+import { getLandcover } from '../../../src/world/landcover';
 
 const hf = getHeightfield();
 const L = getLayout();
@@ -30,6 +34,70 @@ describe('water depth function', () => {
     expect(depthAt(lk.center.x, lk.center.z)).toBeCloseTo(lk.level - hf.height(lk.center.x, lk.center.z), 9);
     expect(depthAt(lk.center.x, lk.center.z)).toBeGreaterThan(10);
     expect(depthAt(0, 0)).toBeLessThan(-20); // the airfield
+  });
+});
+
+describe('water texel (depth + the land the reflections see)', () => {
+  const lc = getLandcover();
+  const texel = makeWaterTexelFn(hf, lc);
+  const t = newWaterTexel();
+
+  it('has the same depth as the depth function, and the land surface on top of the ground', () => {
+    for (const [x, z] of [
+      [3300, L.coast.zAt(3300) + 1500],
+      [L.lakes[0].center.x, L.lakes[0].center.z],
+      [0, 0],
+      [5000, -9000],
+      [-3000, -24000],
+    ]) {
+      texel(x, z, 0, 0, t);
+      expect(t.depth).toBeCloseTo(depthAt(x, z), 9);
+      expect(t.ground).toBeCloseTo(hf.height(x, z), 9);
+      expect(t.surface).toBeGreaterThanOrEqual(t.ground);
+      expect(t.tone).toBeGreaterThanOrEqual(0);
+      expect(t.tone).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('trees line the river banks (the reflections show them), the water itself is open', () => {
+    const rv = L.rivers[0];
+    let banks = 0;
+    let tall = 0;
+    for (let i = 520; i < 740; i += 20) {
+      const p = rv.points[i];
+      const q = rv.points[i + 1];
+      const tl = Math.hypot(q.x - p.x, q.z - p.z);
+      const nx = -(q.z - p.z) / tl;
+      const nz = (q.x - p.x) / tl;
+      texel(p.x, p.z, 0, 0, t);
+      expect(t.surface).toBeLessThan(rv.levels[i] + 0.5); // no canopy over the channel
+      for (const sg of [-1, 1]) {
+        const off = rv.halfWidths[i] + 25;
+        texel(p.x + nx * off * sg, p.z + nz * off * sg, 0, 0, t);
+        banks++;
+        if (t.surface > rv.levels[i] + 10) tall++;
+      }
+    }
+    expect(tall / banks).toBeGreaterThan(0.5);
+  });
+
+  it('bakes all four channels on a grid (land surface and tone filled)', () => {
+    const lk = L.lakes[0];
+    const lv = bakeWaterLevel(texel, lk.center.x, lk.center.z, 4096, 32, newBathyLevel(32));
+    expect(lv.valid).toBe(true);
+    let wet = 0;
+    for (let k = 0; k < 32 * 32; k++) {
+      expect(Number.isFinite(lv.surface[k])).toBe(true);
+      expect(lv.tone[k]).toBeGreaterThanOrEqual(0);
+      expect(lv.tone[k]).toBeLessThanOrEqual(1);
+      if (lv.depth[k] > 0) {
+        wet++;
+        expect(lv.surface[k]).toBeLessThan(lk.level + 0.01);
+      }
+    }
+    expect(wet).toBeGreaterThan(20);
+    const lv2 = bakeBathymetry(depthAt, lk.center.x, lk.center.z, 4096, 32, newBathyLevel(32));
+    for (let k = 0; k < 32 * 32; k++) expect(lv.depth[k]).toBeCloseTo(lv2.depth[k], 9);
   });
 });
 
@@ -124,14 +192,20 @@ describe('shore distance', () => {
     );
   });
 
-  it('packs depth and distance into half-float RG texels', () => {
+  it('packs depth, distance, land surface and tone into half-float RGBA texels', () => {
     const lv = bakeBathymetry((x) => x / 25, 0, 0, 1024, 16, newBathyLevel(16));
     shoreDistanceTransform(lv);
-    const out = new Uint16Array(16 * 16 * 2);
+    for (let i = 0; i < 256; i++) {
+      lv.surface[i] = 100 + i * 3;
+      lv.tone[i] = (i % 17) / 16;
+    }
+    const out = new Uint16Array(16 * 16 * 4);
     packBathymetryHalf(lv, out);
     for (let i = 0; i < 256; i++) {
-      expect(fromHalf(out[i * 2])).toBeCloseTo(lv.depth[i], 1);
-      expect(fromHalf(out[i * 2 + 1])).toBeCloseTo(lv.shore[i], 0);
+      expect(fromHalf(out[i * 4])).toBeCloseTo(lv.depth[i], 1);
+      expect(fromHalf(out[i * 4 + 1])).toBeCloseTo(lv.shore[i], 0);
+      expect(Math.abs(fromHalf(out[i * 4 + 2]) - lv.surface[i])).toBeLessThan(0.5);
+      expect(fromHalf(out[i * 4 + 3])).toBeCloseTo(lv.tone[i], 2);
     }
   });
 

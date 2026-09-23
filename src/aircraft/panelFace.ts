@@ -574,6 +574,52 @@ function controlsArt(c: CanvasRenderingContext2D) {
     c.fill();
     text(c, t, x, y + S(0.016), S(0.0042), INK_DIM);
   }
+  // Davtron-style digital clock / OAT / volts beside the hour meter (red LCD digits, three buttons).
+  {
+    const x = X(ru.x + 0.07);
+    const y = Y(ru.y - 0.008);
+    rrect(c, x, y, S(0.085), S(0.034), S(0.003));
+    c.fillStyle = '#111213';
+    c.fill();
+    rrect(c, x + S(0.006), y + S(0.004), S(0.073), S(0.016), S(0.0015));
+    c.fillStyle = '#1c0a08';
+    c.fill();
+    text(c, '12:47', x + S(0.0425), y + S(0.0122), S(0.011), '#ff5a3c', 'center', 700, MONO);
+    for (let i = 0; i < 3; i++) {
+      circle(c, x + S(0.02 + i * 0.0225), y + S(0.027), S(0.0032));
+      c.fillStyle = '#8a8c90';
+      c.fill();
+    }
+    text(c, 'OAT · VOLTS · CLOCK', x + S(0.0425), y + S(0.038), S(0.0034), INK_DIM);
+  }
+  // ELT remote switch and the low-voltage light, right of the engine gauges.
+  {
+    const ex = X(0.272);
+    const ey = Y(0.3);
+    rrect(c, ex - S(0.017), ey - S(0.014), S(0.034), S(0.03), S(0.002));
+    c.fillStyle = '#c9c4b6';
+    c.fill();
+    text(c, 'ELT', ex, ey - S(0.008), S(0.0048), '#1a1a1a');
+    text(c, 'ON  ARM  RESET', ex, ey + S(0.011), S(0.0028), '#1a1a1a');
+    circle(c, ex, ey + S(0.002), S(0.0045));
+    c.fillStyle = '#26272a';
+    c.fill();
+    c.fillStyle = '#c8cacc';
+    c.fillRect(ex - S(0.0012), ey - S(0.004), S(0.0024), S(0.008));
+    circle(c, X(0.272), Y(0.245), S(0.0065));
+    c.fillStyle = '#3a0c08';
+    c.fill();
+    text(c, 'LOW VOLTS', X(0.272), Y(0.232), S(0.0036), INK_DIM);
+  }
+  // Wear: rubbed paint round the most-used knobs and the yoke holes, a scuff under the key.
+  for (const [x, y, r] of [[L.throttle.x, L.throttle.y, 0.024], [L.mixture.x, L.mixture.y, 0.02], [L.magneto.x, L.magneto.y, 0.024], [L.yokeShafts[0].x, L.yokeShafts[0].y, 0.04], [L.yokeShafts[1].x, L.yokeShafts[1].y, 0.04], [L.gearHandle.x, L.gearHandle.bottom, 0.02]] as const) {
+    const g = c.createRadialGradient(X(x), Y(y), S(r * 0.5), X(x), Y(y), S(r));
+    g.addColorStop(0, 'rgba(120,122,126,0.10)');
+    g.addColorStop(1, 'rgba(120,122,126,0)');
+    c.fillStyle = g;
+    circle(c, X(x), Y(y), S(r));
+    c.fill();
+  }
   // Registration placard and the model name.
   text(c, 'N172RG', X(-0.487), Y(0.425), S(0.0065), '#b9b6ad', 'left', 700, MONO);
   text(c, 'CUTLASS RG', X(-0.1), Y(0.43), S(0.006), '#7c7a74');

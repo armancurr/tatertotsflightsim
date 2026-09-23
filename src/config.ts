@@ -801,6 +801,15 @@ export const CONFIG = {
       elevation: 30,
       /** Runway 36/18: centre point, true heading of runway 36, dimensions (m). */
       runway: { center: { x: 0, z: 0 }, headingDeg: 360, length: 1600, width: 30, name: '36/18' },
+      /**
+       * Every runway (the one named like `runway` is `runway` itself — the default for spawn and
+       * reset). 03/21 crosses 36/18 at 30° in its northern half: its centreline meets 36/18's at
+       * z ≈ −400 (800 m from the 03 threshold, 400 m from the 21 threshold); it also crosses taxiway A.
+       */
+      runways: [
+        { center: { x: 0, z: 0 }, headingDeg: 360, length: 1600, width: 30, name: '36/18' },
+        { center: { x: -100, z: -227 }, headingDeg: 30, length: 1200, width: 25, name: '03/21' },
+      ],
       /** Radius of the flattened airport plateau and the blend band around it, m. */
       flatRadius: 1300,
       blendWidth: 900,
@@ -916,6 +925,9 @@ export const CONFIG = {
       minAngularSize: 0.0016,
       /** LOD switch hysteresis, as a fraction of the switch distance. */
       hysteresis: 0.06,
+      /** Trees: detailed crowns nearer than treeLodStart (m), the mid-LOD blob beyond treeLodEnd (dithered cross-fade between). */
+      treeLodStart: 600,
+      treeLodEnd: 800,
       /** Farmsteads: one candidate per jittered grid cell of this size (m), kept with this probability. */
       farmsteadSpacing: 900,
       farmsteadChance: 0.62,
@@ -1044,8 +1056,12 @@ export const CONFIG = {
       riverLiftPerKm: 1.2,
       /** Rivers stay at least this many pixels wide at any distance (coverage-faded, never dashed). */
       riverMinPixels: 1.4,
-      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = as windy as midday. */
+      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = the full wind; later in the day (cat's paws between calm patches). */
       lakeMorningCalm: 0.85,
+      lakeDayCalm: 0.45,
+      /** Reeds at the water's edge (slow lowland river reaches, lowland lakes): candidate spacing along a bank (m), drawn within reedFar (m). */
+      reedSpacing: 3,
+      reedFar: 1800,
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
     },
@@ -1232,6 +1248,26 @@ export const CONFIG = {
     cloudResolution: 0.75,
     /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
     cloudBudgetMs: 2.5,
+    /**
+     * Quality presets (src/render/quality.ts). URL override: ?quality=auto|low|medium|high.
+     * 'auto' (default): start at ≤ startMegapixels of rendered pixels and let dynamic resolution climb
+     * to maxPixelRatio when there is headroom (fast first ramp), down to floorPixelRatio when there
+     * isn't; software renderers and older integrated GPUs start lower (and without MSAA / volumetric
+     * clouds on software). 'high' = start at the cap (the look screenshots are judged by).
+     */
+    quality: {
+      default: 'auto' as 'auto' | 'low' | 'medium' | 'high',
+      /** Rendered megapixels the 'auto' preset starts at (1440×900 at 1× ≈ 1.3). */
+      startMegapixels: 1.3,
+      /** …times this on an older integrated / mobile GPU. */
+      weakGpuStartScale: 0.5,
+      /** Lowest pixel ratio the auto/low/medium presets may drop to (config minPixelRatio is the 'high' floor). */
+      floorPixelRatio: 0.5,
+      /** Seconds of headroom per raise during the first ramp up from the conservative start (then upDelay). */
+      rampUpDelay: 1,
+      /** Seconds after start (or a reset) during which slow frames — streaming, shader compiles — are not judged. */
+      warmup: 3,
+    },
   },
 
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────
@@ -1896,7 +1932,42 @@ export const CONFIG = {
         regroupS: 55,
         /** Wrecks on the track are bypassed this far to the side, m. */
         bypass: 7,
+        /** Closest a follower may close up on the vehicle ahead (centre to centre), m. */
+        minGap: 13,
+        /** Pivot turns at the ends of a lane (deg/s): tracked hulls neutral-steer, wheeled ones shuffle round slower. */
+        turnRateDeg: [24, 14] as [number, number],
+        /** Pause (s) at each end of the lane before and after turning round. */
+        endPauseS: 4,
+        /** Speed while pulling off the road to scatter, m/s, and the angle off the road, deg. */
+        scatterSpeed: 4.5,
+        scatterAngleDeg: 42,
+        /** Dust kicked up behind a moving vehicle: puffs per metre driven, and the colour (linear, HDR-calibrated). */
+        dustPerM: 0.3,
+        dustColor: [0.42, 0.35, 0.25] as [number, number, number],
       },
+      /**
+       * The column drives the real farm lane through the range (read from the road network): the
+       * longest stretch of a lane of these kinds within `radius` m of the site that stays off farm
+       * yards and water, ≥ minLength m (it may pass under a hedgerow's canopy for ≤ maxCanopy m); the
+       * column turns round at each end where every vehicle has a clear circle of `turnClear` m.
+       */
+      route: { kinds: ['drive', 'lane', 'access'] as string[], radius: 800, minLength: 650, turnClear: 4.6, endMargin: 14, maxCanopy: 40 },
+      /**
+       * Soft contact shadows / ambient occlusion under every vehicle (multiplied onto the ground), and
+       * their sun-cast shadow (reach ≤ castMax m); the occlusion's soft rim widens by `grow`·distance
+       * (a dark patch that still reads from 2 km), fading a little over farFade m; lift/pull as the roads'.
+       */
+      shadow: { strength: 0.8, castMax: 5.5, farFade: [2500, 9000] as [number, number], lift: 0.0017, pull: 0.0016, grow: 0.0008 },
+      /** Earth berms and revetments (fresh-dug earth, linear albedo). */
+      berm: { color: [0.105, 0.078, 0.05] as [number, number, number], grass: [0.05, 0.062, 0.028] as [number, number, number] },
+      /**
+       * Far vehicles are drawn a little larger (a game-visibility aid, like other sims' "model
+       * enlargement"): scale 1 up to `far[0]` m, growing to `far[2]` at `far[1]` m and beyond. Hit boxes
+       * are unchanged (the centre is the same, so the pipper still lands on the hull).
+       */
+      farScale: [900, 2600, 1.45] as [number, number, number],
+      /** Turrets traverse (deg/s) between scan bearings every scanS s. The ZSU's radar dish spins (rev/s). */
+      turret: { slewDeg: 16, scanS: [4, 10] as [number, number], radarRevS: 0.55 },
       /** Tank platoon dug in behind berms, facing the airport; AAA site (ZSU-23-4s in revetments); logistics park. */
       platoon: { count: 4, spacing: 42 },
       aaa: { count: 2, spacing: 85 },
