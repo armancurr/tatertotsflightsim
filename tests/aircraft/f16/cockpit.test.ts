@@ -411,3 +411,15 @@ describe('F-16 cockpit: dispose', () => {
     expect(mt).toBe(mats.size);
   });
 });
+
+describe('F-16 cockpit: caution logic', () => {
+  it('master caution: engine off, overspeed or a stall warning in flight — not the at-rest stall horn on the runway', () => {
+    const on = (patch: Partial<AircraftVisualState>, inst: Partial<ReturnType<typeof createRestReadings>> = {}) =>
+      liveReadings(state({ ...patch, instruments: { ...createRestReadings(), ...inst } }), true).masterCaution;
+    expect(on({ engineRunning: false })).toBe(true);
+    expect(on({}, { stallWarning: true, state: 'ground' })).toBe(false);
+    expect(on({}, { stallWarning: true, state: 'airborne' })).toBe(true);
+    expect(on({}, { overspeed: true, state: 'airborne' })).toBe(true);
+    expect(on({}, { state: 'airborne', airspeedKt: 400 })).toBe(false);
+  });
+});

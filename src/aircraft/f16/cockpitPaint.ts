@@ -80,7 +80,7 @@ export function liveReadings(v: AircraftVisualState, handleDown: boolean): LiveR
     gearPos,
     handleDown,
     engineRunning: running,
-    masterCaution: !running || r?.stallWarning === true || r?.overspeed === true,
+    masterCaution: !running || r?.overspeed === true || (r?.stallWarning === true && r?.state === 'airborne'),
     toLdgConfig: gearPos < 0.99 && agl < 1000 && kt < 190 && fin(r?.verticalSpeedFpm) < -250,
     time,
     airStores: v.airStores ?? [true, true],
@@ -1089,8 +1089,8 @@ export function createLiveInstruments(ctx: Ctx): LiveInstruments {
       lamp('gear0', down, '#3cf060', '#0a160c', '');
       lamp('gear1', down, '#3cf060', '#0a160c', '');
       lamp('gear2', down, '#3cf060', '#0a160c', '');
-      lamp('masterCaution', L.masterCaution, '#ffb020', '#1e1605', 'MASTER\nCAUTION', '#221400', 15);
-      lamp('tfFail', false, '#ff3a24', '#1c0706', 'TF FAIL', '#220000', 15);
+      lamp('masterCaution', L.masterCaution, '#ffb020', '#0f0b03', 'MASTER\nCAUTION', '#221400', 15);
+      lamp('tfFail', false, '#ff3a24', '#0e0404', 'TF FAIL', '#220000', 15);
       eyebrows(L);
     }
   }

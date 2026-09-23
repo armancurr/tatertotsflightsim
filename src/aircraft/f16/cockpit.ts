@@ -18,6 +18,7 @@
  * [2, 3] × gear-handle offset, uv.y ∈ [0, 1] × stick offset, uv.y ∈ [2, 3] × landing-light switch.
  */
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { loftGeometry } from '../loft';
 import { tint, merge } from '../materials';
 import { box, ellipsoid, tube, V } from './geom';
@@ -209,6 +210,13 @@ export function canopyInnerY(x: number, z: number): number {
 // ─── Build helpers ───────────────────────────────────────────────────────────
 
 const M4 = () => new THREE.Matrix4();
+/** Rounded box centred at c, turned rx about x (cushions, the seat's headrest). */
+function rbox(w: number, h: number, d: number, c: THREE.Vector3, rx: number, radius: number): THREE.BufferGeometry {
+  const g = new RoundedBoxGeometry(w, h, d, 3, radius);
+  g.rotateX(rx);
+  g.translate(c.x, c.y, c.z);
+  return g;
+}
 /** Box in a local frame. */
 function fbox(F: THREE.Matrix4, w: number, h: number, d: number, x: number, y: number, z: number, hex: number, rough: number, metal = 0): THREE.BufferGeometry {
   return tint(box(w, h, d, V(x, y, z)).applyMatrix4(F), hex, rough, metal);
@@ -710,15 +718,17 @@ function buildSeat(interior: THREE.BufferGeometry[], detail: THREE.BufferGeometr
   const at = (t: number, fwd = 0) => base.clone().addScaledVector(up, t).add(V(0, 0, -fwd));
   // Back cushion and back plate (reclined), the back's side rails, low bucket sides at the seat pan,
   // headrest / parachute container behind the head, seat pan, survival kit.
-  interior.push(tint(box(0.36, 0.6, 0.06, at(0.33, 0.0), r, 0, 0), PIT.cushion, 0.95, 0));
-  interior.push(tint(box(0.4, 0.7, 0.06, at(0.34, -0.06), r, 0, 0), PIT.seat, 0.8, 0.05));
+  interior.push(tint(rbox(0.34, 0.58, 0.07, at(0.33, 0.0), r, 0.025), PIT.cushion, 0.95, 0));
+  interior.push(tint(box(0.38, 0.7, 0.05, at(0.34, -0.06), r, 0, 0), PIT.seat, 0.8, 0.05));
   for (const s of [-1, 1]) {
-    interior.push(tint(box(0.03, 0.66, 0.1, at(0.34, -0.03).add(V(s * 0.205, 0, 0)), r, 0, 0), PIT.seat, 0.75, 0.1));
-    interior.push(tint(box(0.03, 0.12, 0.4, V(s * 0.215, 0.35, -4.53)), PIT.seat, 0.75, 0.1));
+    interior.push(tint(rbox(0.035, 0.62, 0.1, at(0.3, -0.03).add(V(s * 0.2, 0, 0)), r, 0.012), PIT.seat, 0.7, 0.1));
+    interior.push(tint(rbox(0.035, 0.12, 0.4, V(s * 0.215, 0.35, -4.53), 0, 0.012), PIT.seat, 0.7, 0.1));
   }
-  interior.push(tint(box(0.3, 0.26, 0.18, at(0.86, -0.08), r, 0, 0), PIT.seat, 0.75, 0.05));
-  interior.push(tint(box(0.26, 0.1, 0.03, at(0.84, 0.02), r, 0, 0), 0x2b2d27, 0.9, 0));
-  interior.push(tint(box(0.38, 0.06, 0.42, V(0, 0.33, -4.54), -8 * DEG, 0, 0), PIT.cushion, 0.95, 0));
+  // Headrest / parachute container: narrower than the seat, rounded, with the canopy breaker on top.
+  interior.push(tint(rbox(0.24, 0.24, 0.17, at(0.86, -0.08), r, 0.035), 0x2d2f31, 0.8, 0.05));
+  interior.push(tint(rbox(0.2, 0.12, 0.04, at(0.82, 0.015), r, 0.015), 0x3a3c36, 0.95, 0));
+  for (const s of [-1, 1]) interior.push(tint(tube(at(0.96, -0.06).add(V(s * 0.06, 0, 0)), at(1.0, -0.02).add(V(s * 0.06, 0, 0)), 0.008, 0.005, 8), 0x8a8e90, 0.4, 0.6));
+  interior.push(tint(rbox(0.38, 0.06, 0.42, V(0, 0.33, -4.54), -8 * DEG, 0.02), PIT.cushion, 0.95, 0));
   interior.push(tint(box(0.42, 0.1, 0.42, V(0, 0.26, -4.54)), PIT.seat, 0.8, 0.05));
   // Headrest pad and the parachute riser covers over the shoulders.
   detail.push(tint(box(0.18, 0.1, 0.03, at(0.8, 0.03), r, 0, 0), 0x2f3129, 0.95, 0));
