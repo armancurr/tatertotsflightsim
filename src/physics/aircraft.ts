@@ -86,6 +86,7 @@ import { applyFbw } from './fbw';
 import { groundContacts } from './ground';
 import { FLAT_ENV } from './flatEnv';
 import { solveTrim, type TrimRequest } from './trim';
+import { gunRecoil } from './recoil';
 
 const DEG = Math.PI / 180;
 const ZERO: Vec3 = Object.freeze({ x: 0, y: 0, z: 0 });
@@ -413,7 +414,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
   const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
   const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0 });
-  const fAir = bodyToWorld(q, { x: aero.fx, y: aero.fy, z: aero.fz });
+  // Gun recoil while rounds are leaving the barrel (set by the weapons system; see ./recoil).
+  const gun = gunRecoil(raw.gunFiring, cfg);
+  const fAir = bodyToWorld(q, { x: aero.fx + gun.fx, y: aero.fy + gun.fy, z: aero.fz + gun.fz });
 
   // ── Ground, structure, water, obstacles ──
   const omegaWorld = bodyToWorld(q, w);
@@ -477,9 +480,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   const position = { x: pos.x + velocity.x * dt, y: pos.y + velocity.y * dt, z: pos.z + velocity.z * dt };
 
   const tg = worldToBody(q, gr.torque);
-  const tx = aero.tx + tg.x;
-  const ty = aero.ty + tg.y;
-  const tz = aero.tz + tg.z;
+  const tx = aero.tx + tg.x + gun.tx;
+  const ty = aero.ty + tg.y + gun.ty;
+  const tz = aero.tz + tg.z + gun.tz;
   const I = ac.inertia;
   // ω̇ = I⁻¹(τ − ω × Iω), diagonal inertia (pitch = X, yaw = Y, roll = Z).
   const hx = I.pitch * w.x;
@@ -496,7 +499,7 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // ── Load factor: specific force along body up (accelerometer), and the airframe (aero) part for over-G ──
   const nAero = aero.fy / (m * g);
   const gBody = worldToBody(q, gr.force);
-  const loadFactor = (aero.fy + gBody.y) / (m * g);
+  const loadFactor = (aero.fy + gun.fy + gBody.y) / (m * g);
   if (nAero > ac.limits.structuralFailureG || nAero < ac.limits.structuralFailureNegG) {
     return crashedState(state, 'Structural failure — over-G', time, env, cfg, { flapsDeg, gearPos });
   }
