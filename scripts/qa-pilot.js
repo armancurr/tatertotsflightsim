@@ -73,20 +73,20 @@
       approachKt: 65, finalFlapsNotch: 3, patternFlapsNotch: 1, patternAglFt: 1000, patternKt: 80, finalLengthM: 2600,
       maxBankDeg: 30, patternBankDeg: 25, maxThrottle: 100,
       // Flare: wheel height (ft) at which to begin = sink × lead, clamped; the sink target falls with height.
-      flareLeadS: 3.2, flareMinFt: 8, flareMaxFt: 22, touchdownSinkFpm: 90, maxFlarePitchDeg: 10, minFlarePitchDeg: -2, flareGain: 0.8, flareIdle: 'entry',
+      flareLeadS: 4.5, flareMinFt: 8, flareMaxFt: 28, touchdownSinkFpm: 70, maxFlarePitchDeg: 10, minFlarePitchDeg: -2, flareGain: 0.6, flareIdle: 'entry',
       trackKdegPerM: 0.25, finalMaxCorrDeg: 20,
-      pitchKp: 0.22, pitchKd: 0.06, rollKp: 0.12, rollKd: 0.04, yawKp: 0.08, yawKd: 0.03, flareKp: 0.3, flareKd: 0.08,
+      pitchKp: 0.22, pitchKd: 0.06, rollKp: 0.12, rollKd: 0.04, yawKp: 0.08, yawKd: 0.03, flareKp: 0.3, flareKd: 0.15,
       speedKp: 2.5, speedKi: 0.6, throttleIdle: 0, approachThrottle: 45,
     },
     f16: {
       jet: true, fbw: true, afterburner: true,
       vrKt: 150, rotatePitchDeg: 11, climbKt: 350, climbPitchMaxDeg: 20, cruiseKt: 420,
       takeoffThrottle: 100, climbThrottle: 88, cruiseThrottle: 80,
-      approachKt: 140, approachAoaDeg: 13, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 250, finalLengthM: 6000,
+      approachKt: 140, approachAoaDeg: 10, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 250, finalLengthM: 6000,
       maxBankDeg: 60, patternBankDeg: 35, maxThrottle: 88,
-      flareLeadS: 2.0, flareMinFt: 10, flareMaxFt: 32, touchdownSinkFpm: 200, maxFlarePitchDeg: 12, minFlarePitchDeg: 0, flareGain: 0.6, flareIdle: 'entry',
+      flareLeadS: 3, flareMinFt: 10, flareMaxFt: 36, touchdownSinkFpm: 200, maxFlarePitchDeg: 12, minFlarePitchDeg: 0, flareGain: 0.8, flareIdle: 'entry',
       trackKdegPerM: 0.08, finalMaxCorrDeg: 15,
-      pitchKp: 0.12, pitchKd: 0.04, rollKp: 0.05, rollKd: 0.015, yawKp: 0.05, yawKd: 0.02, flareKp: 0.18, flareKd: 0.05,
+      pitchKp: 0.12, pitchKd: 0.04, rollKp: 0.05, rollKd: 0.015, yawKp: 0.05, yawKd: 0.02, flareKp: 0.4, flareKd: 0.12,
       speedKp: 1.2, speedKi: 0.35, throttleIdle: 0, approachThrottle: 60,
     },
     a10: {
@@ -95,9 +95,9 @@
       takeoffThrottle: 100, climbThrottle: 100, cruiseThrottle: 85,
       approachKt: 135, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 200, finalLengthM: 5000,
       maxBankDeg: 60, patternBankDeg: 30, maxThrottle: 100,
-      flareLeadS: 2.2, flareMinFt: 10, flareMaxFt: 30, touchdownSinkFpm: 180, maxFlarePitchDeg: 9, minFlarePitchDeg: -1, flareGain: 0.6, flareIdle: 'entry',
+      flareLeadS: 3, flareMinFt: 10, flareMaxFt: 32, touchdownSinkFpm: 180, maxFlarePitchDeg: 9, minFlarePitchDeg: -1, flareGain: 0.8, flareIdle: 'entry',
       trackKdegPerM: 0.1, finalMaxCorrDeg: 15,
-      pitchKp: 0.12, pitchKd: 0.04, rollKp: 0.05, rollKd: 0.015, yawKp: 0.05, yawKd: 0.02, flareKp: 0.18, flareKd: 0.05,
+      pitchKp: 0.12, pitchKd: 0.04, rollKp: 0.05, rollKd: 0.015, yawKp: 0.05, yawKd: 0.02, flareKp: 0.4, flareKd: 0.12,
       speedKp: 1.2, speedKi: 0.35, throttleIdle: 0, approachThrottle: 60,
       gun: { muzzleVelocity: 1010, boresightDownDeg: 2, rateRps: 65 },
     },
@@ -152,7 +152,7 @@
     }
     if (weapons && weapons.missiles) {
       const m = weapons.missiles;
-      p.missile = { maxRangeM: fin(m.maxRangeM, 9000), minRangeM: fin(m.minRangeM, 500), acquireConeDeg: fin(m.acquireConeDeg, 8), lockTimeS: fin(m.lockTimeS, 1) };
+      p.missile = { maxRangeM: fin(m.maxRangeM, 8000), minRangeM: fin(m.minRangeM, 400), selectConeDeg: fin(m.selectConeDeg ?? m.acquireConeDeg, 10), lockTimeS: fin(m.lockTimeS, 0.8), speed: fin(m.speed, 300) };
     }
     return p;
   }
@@ -699,11 +699,25 @@
         await gearTo(true);
         await flapsTo(P.finalFlapsNotch);
         const hold = speedHold(o.approachKt ?? P.approachKt, sim().throttle || P.approachThrottle, P.throttleIdle, P.maxThrottle);
+        // Jets with an on-speed AoA fly the final on AoA: the throttle holds it (the speed falls out), the stick the path.
+        const aoaT = o.approachAoaDeg ?? P.approachAoaDeg;
+        if (aoaT) hold.kt = 0;
+        const approachThrottle = (s) => {
+          if (!aoaT) return hold.throttle(s);
+          const err = s.aoa - aoaT; // + = slow → more power
+          const now = drv.now();
+          const dt = hold.lastT === null ? 0.2 : clamp((now - hold.lastT) / 1000, 0.01, 1);
+          hold.lastT = now;
+          const floorKt = (P.approachKt ?? 0) - 10;
+          const e2 = err + (s.airspeed < floorKt ? (floorKt - s.airspeed) * 0.3 : 0);
+          hold.i = clamp(hold.i + P.speedKi * 2 * e2 * dt, P.throttleIdle, P.maxThrottle);
+          return clamp(hold.i + P.speedKp * 2 * e2, P.throttleIdle, P.maxThrottle);
+        };
         let entrySink = null;
         let r = await fly(
           (s) => {
             const gp = glidePathTargets(s, P, RW);
-            return { pitch: clamp(pitchForVs(s, gp.vsFpm), -8, P.maxFlarePitchDeg), roll: rollFor(s, gp.trackDeg, 20), thr: hold.throttle(s) };
+            return { pitch: clamp(pitchForVs(s, gp.vsFpm), -8, P.maxFlarePitchDeg - 1), roll: rollFor(s, gp.trackDeg, 20), thr: approachThrottle(s) };
           },
           (s) => {
             if (wheelFt(s) <= flareHeightFt(-s.verticalSpeed, P)) { entrySink = Math.max(0, -s.verticalSpeed); return true; }
@@ -986,7 +1000,7 @@
         const find = () => (api.combat() ? api.combat().list().find((t) => t.id === targetId) : null);
         let t = find();
         if (!t) return { result: 'no target' };
-        const M = P.missile || { maxRangeM: 9000, minRangeM: 500, acquireConeDeg: 8, lockTimeS: 1 };
+        const M = P.missile || { maxRangeM: 8000, minRangeM: 400, selectConeDeg: 10, lockTimeS: 0.8, speed: 300 };
         const res = { result: 'aborted', locked: false, launched: false, killsBefore: c0.stats.kills, fired: c0.stats.missilesFired };
         // Get inside the envelope: from > 0.85 × max range come in; from inside 1.5 km open out first.
         let s = sim();
@@ -1004,7 +1018,7 @@
             const T = find() || t;
             const los = api.lineOfSight(x, T.x, T.y + 1, T.z);
             const lk = api.combat() && api.combat().lock;
-            const cone = M.acquireConeDeg * 0.5;
+            const cone = M.selectConeDeg * 0.5;
             // Press T when the nose is on it; again if the lock went to another target.
             if (Math.abs(los.az) < cone && Math.abs(los.el - x.pitch) < cone && drv.now() - tryLockAt.t > (M.lockTimeS + 0.5) * 1000) {
               if (!lk || lk.state === 'off' || (lk.targetId !== null && lk.targetId !== targetId)) {

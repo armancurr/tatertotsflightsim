@@ -23,6 +23,8 @@ export interface QaPilotLib {
   flareHeightFt(sinkFpm: number, p: QaProfile): number;
   flareSinkFpm(wheelFt: number, sinkAtEntryFpm: number, p: QaProfile): number;
   flarePitch(wheelFt: number, vsFpm: number, aoaDeg: number, groundKt: number, pitchDeg: number, sinkAtEntryFpm: number, p: QaProfile): number;
+  landingPitchTarget(wheelFt: number, vsFpm: number, aoaDeg: number, groundKt: number, pitchDeg: number, approachPitchDeg: number, entrySinkFpm: number | null, p: QaProfile): { mode: 'approach' | 'flare'; pitch: number };
+  machFrom(iasKt: number, altFt: number): number;
   glidePathTargets(s: Record<string, unknown>, p: QaProfile, rw: unknown): { vsFpm: number; rollDeg: number; aboveFt: number; distM: number };
   createPilot(driver: QaDriver, opts?: { profile?: QaProfile; runway?: unknown }): QaPilot;
   [k: string]: unknown;
@@ -48,6 +50,8 @@ export interface QaDriver {
 }
 export type QaPilot = Record<string, unknown> & {
   phase: string;
+  profile: QaProfile;
+  stats: Record<string, unknown>;
   log: Record<string, unknown>[];
   init(): Promise<QaProfile>;
   takeoff(): Promise<string>;
