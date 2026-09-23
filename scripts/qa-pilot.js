@@ -70,7 +70,7 @@
       jet: false, fbw: false, afterburner: false,
       vrKt: 55, rotatePitchDeg: 9, climbKt: 75, climbPitchMaxDeg: 12, cruiseKt: 105,
       takeoffThrottle: 100, climbThrottle: 100, cruiseThrottle: 75,
-      approachKt: 65, finalFlapsNotch: 3, patternFlapsNotch: 1, patternAglFt: 1000, patternKt: 80, finalLengthM: 2600,
+      approachKt: 65, finalFlapsNotch: 3, patternFlapsNotch: 1, patternAglFt: 800, patternKt: 75, finalLengthM: 1400,
       maxBankDeg: 30, patternBankDeg: 25, maxThrottle: 100,
       // Flare: wheel height (ft) at which to begin = sink × lead, clamped; the sink target falls with height.
       flareLeadS: 4.5, flareMinFt: 8, flareMaxFt: 28, touchdownSinkFpm: 70, maxFlarePitchDeg: 10, minFlarePitchDeg: -2, flareGain: 0.6, flareIdle: 'entry',
@@ -82,7 +82,8 @@
       jet: true, fbw: true, afterburner: true,
       vrKt: 150, rotatePitchDeg: 11, climbKt: 350, climbPitchMaxDeg: 20, cruiseKt: 420,
       takeoffThrottle: 100, climbThrottle: 88, cruiseThrottle: 80,
-      approachKt: 140, approachAoaDeg: 10, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 250, finalLengthM: 6000,
+      rollSpeedScale: true,
+      approachKt: 140, approachAoaDeg: 10, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 250, finalLengthM: 5000,
       maxBankDeg: 60, patternBankDeg: 35, maxThrottle: 88,
       flareLeadS: 3, flareMinFt: 10, flareMaxFt: 36, touchdownSinkFpm: 200, maxFlarePitchDeg: 12, minFlarePitchDeg: 0, flareGain: 0.8, flareIdle: 'entry',
       trackKdegPerM: 0.08, finalMaxCorrDeg: 15,
@@ -93,7 +94,8 @@
       jet: true, fbw: true, afterburner: false,
       vrKt: 120, rotatePitchDeg: 10, climbKt: 210, climbPitchMaxDeg: 15, cruiseKt: 300,
       takeoffThrottle: 100, climbThrottle: 100, cruiseThrottle: 85,
-      approachKt: 135, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 200, finalLengthM: 5000,
+      rollSpeedScale: true,
+      approachKt: 135, finalFlapsNotch: 2, patternFlapsNotch: 0, patternAglFt: 1500, patternKt: 200, finalLengthM: 4000,
       maxBankDeg: 60, patternBankDeg: 30, maxThrottle: 100,
       flareLeadS: 3, flareMinFt: 10, flareMaxFt: 32, touchdownSinkFpm: 180, maxFlarePitchDeg: 9, minFlarePitchDeg: -1, flareGain: 0.8, flareIdle: 'entry',
       trackKdegPerM: 0.1, finalMaxCorrDeg: 15,
@@ -299,7 +301,7 @@
 
     // Rates from successive windows (the snapshot has no body rates or ground track).
     let last = null;
-    const rates = { q: 0, p: 0, r: 0, trackDeg: null };
+    const rates = { q: 0, p: 0, r: 0, g: 0, trackDeg: null };
     function updateRates(s) {
       const t = drv.now();
       if (last && t > last.t) {
@@ -307,16 +309,19 @@
         rates.q = (s.pitch - last.pitch) / dt;
         rates.p = (s.roll - last.roll) / dt;
         rates.r = wrap180(s.heading - last.hdg) / dt;
+        rates.g = (fin(s.gLoad, 1) - last.g) / dt;
         const dx = s.position.x - last.x;
         const dz = s.position.z - last.z;
         if (Math.hypot(dx, dz) > 0.5) rates.trackDeg = wrap360(Math.atan2(dx, -dz) * R2D);
       }
-      last = { t, pitch: s.pitch, roll: s.roll, hdg: s.heading, x: s.position.x, z: s.position.z };
+      last = { t, pitch: s.pitch, roll: s.roll, hdg: s.heading, x: s.position.x, z: s.position.z, g: fin(s.gLoad, 1) };
     }
-    const resetRates = () => { last = null; rates.q = rates.p = rates.r = 0; rates.trackDeg = null; };
+    const resetRates = () => { last = null; rates.q = rates.p = rates.r = rates.g = 0; rates.trackDeg = null; };
     const track = (s) => (rates.trackDeg === null ? s.heading : rates.trackDeg);
 
     const throttleRatePct = 45; // config.controls.throttleRate × 100 (%/s)
+    /** The speed-brake switch as this pilot last set it (X toggles it; it starts retracted). */
+    let speedBrakeOn = false;
     /**
      * One control window (ms): proportional key pulses toward the targets.
      * t: { pitch?, roll?, yaw? (heading, ground), thr? (%), brake?, fine? (flare gains) }.
@@ -326,8 +331,14 @@
       updateRates(s);
       const kp = t.fine ? P.flareKp : P.pitchKp;
       const kd = t.fine ? P.flareKd : P.pitchKd;
-      const up = t.pitch === null || t.pitch === undefined ? 0 : kp * (t.pitch - s.pitch) - kd * rates.q;
-      const ur = t.roll === null || t.roll === undefined ? 0 : P.rollKp * (t.roll - s.roll) - P.rollKd * rates.p;
+      // Jets: ask for at most ±5° of attitude change at a time (no violent bunts or yanks).
+      if (P.jet && t.pitch !== null && t.pitch !== undefined && !t.fine) t = { ...t, pitch: clamp(t.pitch, s.pitch - 5, s.pitch + 5) };
+      const up = t.g !== undefined && t.g !== null
+        ? (P.gKp ?? 0.06) * (t.g - fin(s.gLoad, 1)) - (P.gKd ?? 0.02) * rates.g
+        : t.pitch === null || t.pitch === undefined ? 0 : kp * (t.pitch - s.pitch) - kd * rates.q;
+      // Jets' fly-by-wire roll is a rate command that gets livelier with speed: scale the hands with 1/IAS.
+      const rs = t.rollScale ?? (P.rollSpeedScale ? clamp(250 / Math.max(80, fin(s.airspeed, 250)), 0.3, 1.5) : 1);
+      const ur = t.roll === null || t.roll === undefined ? 0 : rs * (P.rollKp * (t.roll - s.roll) - P.rollKd * rates.p);
       const uy = t.yaw === null || t.yaw === undefined ? 0 : P.yawKp * wrap180(t.yaw - s.heading) - P.yawKd * rates.r;
       const tp = Math.min(ms, Math.abs(up) * ms);
       const tr = Math.min(ms, Math.abs(ur) * ms);
@@ -341,6 +352,7 @@
       if (tt > 0) key(dthr > 0 ? 'KeyW' : 'KeyS', true);
       if (t.brake) key('Space', true);
       else if (t.brake === false) key('Space', false);
+      if (t.speedBrake !== undefined && t.speedBrake !== null && !!t.speedBrake !== speedBrakeOn) { speedBrakeOn = !!t.speedBrake; drv.key('KeyX', true); drv.key('KeyX', false); }
       if (t.trigger) key('KeyQ', true);
       else if (t.trigger === false) key('KeyQ', false);
       const t0 = drv.now();
@@ -532,7 +544,7 @@
       async turn(deltaDeg, bank = 30) {
         const s0 = sim();
         const target = wrap360(s0.heading + deltaDeg);
-        const alt = s0.altitude;
+        const alt = s0.altitude + clamp(s0.verticalSpeed, -3000, 3000) / 6;
         const sign = Math.sign(deltaDeg);
         api.phase = `turn ${deltaDeg > 0 ? 'right' : 'left'} ${Math.abs(deltaDeg)}°`;
         note(api.phase + ' start');
@@ -574,9 +586,11 @@
             if (s.gLoad >= g - 0.3) sustained += 0.2;
             const rollNow = Math.abs(s.roll);
             // Pull for the load factor once banked; keep the nose from dropping (level turn).
+            // Bank first, then pull for the load factor (stick ∝ g error); bank adjusts to hold altitude.
             const vs = s.verticalSpeed;
-            const pull = rollNow > bank - 15 ? clamp((g - s.gLoad) * 4 + (0 - vs) / 400, -6, 6) : 0;
-            return { pitch: s.pitch + pull, roll: sign * bank, thr: hold.throttle(s) };
+            const bankT = sign * clamp(bank + clamp(vs / 150, -12, 8), 30, 85);
+            if (rollNow < bank - 20) return { pitch: pitchForVs(s, 0), roll: bankT, thr: hold.throttle(s), rollScale: 1 };
+            return { g, roll: bankT, thr: hold.throttle(s), rollScale: 1 };
           },
           () => turned >= Math.abs(deltaDeg) - 20,
           120000,
@@ -650,14 +664,26 @@
         const hold = speedHold(o.speedKt ?? P.cruiseKt, o.throttle ?? P.cruiseThrottle, P.throttleIdle, o.maxThrottle ?? P.maxThrottle);
         const bank = o.bank ?? P.patternBankDeg;
         api.phase = o.phase ?? `direct ${Math.round(x)},${Math.round(z)}`;
+        let dMin = Infinity;
+        let dStart = null;
         const r = await fly(
           (s) => {
             const brg = bearingTo(s.position.x, s.position.z, x, z);
-            const floor = s.altitudeAGL < 400 ? 1500 : null;
+            const floorAgl = P.jet ? Math.max(800, s.airspeed * 3) : 400;
+            const floor = s.altitudeAGL < floorAgl ? 2000 : null;
             const vs = floor ?? altHoldVs(s, alt, o.maxVs ?? 2500);
-            return { pitch: clamp(pitchForVs(s, vs), -15, P.climbPitchMaxDeg), roll: rollFor(s, brg, bank), thr: hold.throttle(s) };
+            return { pitch: clamp(pitchForVs(s, vs), -15, P.climbPitchMaxDeg), roll: rollFor(s, brg, bank), thr: hold.throttle(s), speedBrake: P.jet ? s.airspeed > hold.kt + 40 : undefined };
           },
-          (s) => Math.hypot(s.position.x - x, s.position.z - z) < (o.arriveM ?? 600) || (o.until ? o.until(s) : false),
+          (s) => {
+            const d = Math.hypot(s.position.x - x, s.position.z - z);
+            if (d < (o.arriveM ?? 600) || (o.until ? o.until(s) : false)) return true;
+            // Went past it (closest approach within a turn radius, now opening): don't orbit the waypoint.
+            const V = Math.max(40, s.groundSpeed) * KT_MS;
+            const R = (V * V) / (9.81 * Math.tan(bank * D2R));
+            if (dStart === null) dStart = d;
+            dMin = Math.min(dMin, d);
+            return dMin < dStart - 300 && dMin < Math.max(R, (o.arriveM ?? 600) * 2) && d > dMin + 300;
+          },
           o.timeoutMs ?? 400000,
         );
         note(api.phase + ' reached');
@@ -677,8 +703,9 @@
         const r = await fly(
           (s) => {
             const trk = lineHeading(s.position.x, s.position.z, ax, az, courseDeg, k, maxInt);
-            const vs = o.vs ? o.vs(s) : altHoldVs(s, alt);
-            return { pitch: clamp(pitchForVs(s, vs), -12, P.climbPitchMaxDeg), roll: rollFor(s, trk, bank), thr: o.thr ? o.thr(s) : hold.throttle(s) };
+            const low = !o.vs && s.altitudeAGL < Math.min(1000, P.patternAglFt * 0.7);
+            const vs = low ? 1500 : o.vs ? o.vs(s) : altHoldVs(s, alt);
+            return { pitch: clamp(pitchForVs(s, vs), -12, P.climbPitchMaxDeg), roll: rollFor(s, trk, bank), thr: o.thr ? o.thr(s) : hold.throttle(s), speedBrake: P.jet ? s.airspeed > (o.speedKt ?? hold.kt) + 40 : undefined };
           },
           (s) => until(s, lineCoords(s.position.x, s.position.z, ax, az, courseDeg)),
           o.timeoutMs ?? 400000,
@@ -754,8 +781,15 @@
           const c = lineCoords(x.position.x, x.position.z, RW.thrX, RW.thrZ, RW.courseDeg);
           return wrap360(RW.courseDeg - clamp(c.cross * 1.0, -6, 6));
         };
-        const r = await fly((s) => ({ pitch: s.airspeed > P.vrKt * 0.7 ? Math.min(s.pitch, P.maxFlarePitchDeg - 2) : null, roll: 0, yaw: steer(s), thr: 0, brake: s.airspeed < P.vrKt * 0.85 }), (s) => s.groundSpeed < 2, 90000, 100);
+        const t0 = drv.now();
+        // Mains down: lower the nose (jets: aerobrake a moment first), idle, speed brake, then the wheel brakes.
+        const r = await fly((s) => {
+          const tS = (drv.now() - t0) / 1000;
+          const aero = P.jet && tS < 2 && s.airspeed > P.vrKt * 0.8;
+          return { pitch: aero ? Math.min(s.pitch, P.maxFlarePitchDeg - 2) : P.id === 'c172rg' && s.airspeed > 35 ? Math.min(s.pitch, 3) : null, roll: 0, yaw: steer(s), thr: 0, brake: P.jet ? tS > 1.5 : s.airspeed < 45, speedBrake: P.jet ? true : undefined };
+        }, (s) => s.groundSpeed < 2, 90000, 100);
         key('Space', false);
+        if (P.jet) await controlWindow({ speedBrake: false }, 50);
         note('stopped');
         return r;
       },
@@ -786,33 +820,62 @@
         const jz = dwZ + dirZ * joinAlong;
         api.phase = 'rtb: pattern entry';
         note('rtb', { side, R: Math.round(R) });
-        const r0 = lineCoords(s.position.x, s.position.z, dwX, dwZ, recip);
-        if (r0.along < -600 || Math.abs(r0.cross) > 1500) {
-          await api.gotoPoint(jx, jz, { altFt, speedKt: P.patternKt, arriveM: 1200, phase: 'rtb: to downwind', maxVs: P.jet ? 4000 : 1000 });
+        // Too high to join the pattern: a descending orbit (idle, speed brake) down to pattern altitude.
+        if (s.altitude > altFt + 2500) {
+          await api.descendTo(altFt + 300, { side });
+          if (sim().state === 'crashed') return 'crashed';
         }
-        if (sim().state === 'crashed') return 'crashed';
-        // Downwind: slow to pattern speed, pattern flaps, gear down abeam the threshold (jets: earlier).
-        let configured = false;
         const baseAt = P.finalLengthM; // start the 180° turn this far beyond the threshold
-        const res = await api.trackLine(dwX, dwZ, recip, (x, lc) => {
-          if (!configured && lc.along > -1500) {
-            configured = true;
-            gearTo(true).then(() => flapsTo(P.patternFlapsNotch));
+        const r0 = lineCoords(s.position.x, s.position.z, dwX, dwZ, recip);
+        if (r0.along > baseAt - R) {
+          // Already out on the approach side: go straight to a long final (centreline, well out) and turn in.
+          const out = P.finalLengthM + 3 * R;
+          await api.gotoPoint(RW.thrX - dirX * out, RW.thrZ - dirZ * out, { altFt, speedKt: P.patternKt, arriveM: 1000, phase: 'rtb: to long final', maxVs: P.jet ? 4000 : 1000 });
+          if (sim().state === 'crashed') return 'crashed';
+        } else {
+          if (r0.along < -600 || Math.abs(r0.cross) > 1500) {
+            await api.gotoPoint(jx, jz, { altFt, speedKt: P.patternKt, arriveM: 1200, phase: 'rtb: to downwind', maxVs: P.jet ? 4000 : 1000 });
           }
-          return lc.along >= baseAt - R * 0.2;
-        }, { altFt, speedKt: P.patternKt, phase: 'downwind', kDegPerM: 0.05, maxInterceptDeg: 60 });
-        if (res === 'crashed') return res;
+          if (sim().state === 'crashed') return 'crashed';
+          // Downwind: slow to pattern speed, pattern flaps, gear down abeam the threshold.
+          let configured = false;
+          const res = await api.trackLine(dwX, dwZ, recip, (x, lc) => {
+            if (!configured && lc.along > -1500) {
+              configured = true;
+              gearTo(true).then(() => flapsTo(P.patternFlapsNotch));
+            }
+            return lc.along >= baseAt - R * 0.2;
+          }, { altFt, speedKt: P.patternKt, phase: 'downwind', kDegPerM: 0.05, maxInterceptDeg: 60 });
+          if (res === 'crashed') return res;
+        }
         await gearTo(true);
         await flapsTo(Math.max(P.patternFlapsNotch, Math.min(P.finalFlapsNotch, 1)));
         // Base + final turn: track the final course; the line guidance turns through base onto final.
         const finalHold = speedHold(P.approachKt + 10, sim().throttle, P.throttleIdle, P.maxThrottle);
-        const res2 = await api.trackLine(RW.thrX, RW.thrZ, RW.courseDeg, (x, lc) => Math.abs(lc.cross) < 60 && Math.abs(wrap180(track(x) - RW.courseDeg)) < 8, {
-          phase: 'base / turn to final', kDegPerM: 90 / (1.2 * Math.abs(offset)), maxInterceptDeg: 90, bank: P.patternBankDeg + 5,
+        const res2 = await api.trackLine(RW.thrX, RW.thrZ, RW.courseDeg, (x, lc) => (Math.abs(lc.cross) < 60 && Math.abs(wrap180(track(x) - RW.courseDeg)) < 8) || lc.along > -P.finalLengthM * 0.5, {
+          phase: 'base / turn to final', kDegPerM: 90 / (0.6 * Math.abs(offset)), maxInterceptDeg: 90, bank: P.patternBankDeg + 5,
           vs: (x) => { const gp = glidePathTargets(x, P, RW); return gp.aboveFt > 0 ? Math.max(gp.vsFpm, -1200) : altHoldVs(x, altFt); },
           thr: (x) => finalHold.throttle(x),
         });
         if (res2 === 'crashed') return res2;
         return api.approachAndLand(o);
+      },
+      /** Descend in a steady orbit (o.side: +1 right, −1 left) at idle to altFt MSL; jets use the speed brake. */
+      async descendTo(altFt, o = {}) {
+        api.phase = `descend to ${Math.round(altFt)} ft`;
+        const sign = o.side ?? 1;
+        const maxVs = P.id === 'f16' ? 6000 : P.jet ? 3500 : 900;
+        const floorAgl = P.patternAglFt + 400;
+        const kt = P.jet ? P.patternKt + 60 : P.patternKt + 10;
+        const hold = speedHold(kt, 0, P.throttleIdle, P.maxThrottle);
+        const r = await fly(
+          (s) => ({ pitch: clamp(pitchForVs(s, -maxVs), Math.max(-25, s.pitch - 4), Math.min(10, s.pitch + 4)), roll: sign * P.patternBankDeg, thr: hold.throttle(s), speedBrake: P.jet ? s.airspeed > kt - 20 : undefined }),
+          (s) => s.altitude <= altFt || s.altitudeAGL <= floorAgl,
+          o.timeoutMs ?? 300000,
+        );
+        await fly((s) => ({ pitch: pitchForVs(s, 0), roll: 0, thr: hold.throttle(s), speedBrake: false }), (s) => Math.abs(s.roll) < 5 && Math.abs(s.verticalSpeed) < 800, 15000);
+        note(api.phase + ' done');
+        return r;
       },
       /** Cessna circuit from the runway: take-off, crosswind, downwind, base, final, landing to a full stop. */
       async circuit(o = {}) {
