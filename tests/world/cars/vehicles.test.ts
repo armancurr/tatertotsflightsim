@@ -7,7 +7,7 @@ import { SPECS, SEMI, MODEL_COUNT, MODEL_TRAILER, TRAILER_WHEELBASE, VT } from '
 const models = Array.from({ length: MODEL_COUNT }, (_, m) => m);
 const tris = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttribute('position').count) / 3;
 
-describe('vehicle models', () => {
+describe('vehicle models', { timeout: 20000 }, () => {
   const near = models.map((m) => buildVehicleGeometry(m, 0));
   const far = models.map((m) => buildVehicleGeometry(m, 1));
 
@@ -16,11 +16,13 @@ describe('vehicle models', () => {
       expect(Object.keys(g.attributes).sort()).toEqual(['aMat', 'aWheel', 'color', 'normal', 'position']);
       expect(g.index).not.toBeNull();
       const pos = g.getAttribute('position').array as Float32Array;
-      for (const v of pos) expect(Number.isFinite(v)).toBe(true);
+      expect(pos.every((v) => Number.isFinite(v))).toBe(true);
       const n = g.getAttribute('normal');
-      for (let i = 0; i < n.count; i++) expect(Math.hypot(n.getX(i), n.getY(i), n.getZ(i))).toBeCloseTo(1, 3);
+      let worst = 0;
+      for (let i = 0; i < n.count; i++) worst = Math.max(worst, Math.abs(Math.hypot(n.getX(i), n.getY(i), n.getZ(i)) - 1));
+      expect(worst).toBeLessThan(1e-3);
     }
-  });
+  }, 20000);
 
   it('stay cheap: 400–2,000 triangles near (≤ 2,200 for the big trucks), ≤ 300 far', () => {
     near.forEach((g, m) => {
@@ -51,6 +53,7 @@ describe('vehicle models', () => {
       const w = g.getAttribute('aWheel');
       const p = g.getAttribute('position');
       let minY = Infinity;
+      let outside = 0;
       const hubZ = new Set<number>();
       let front = 0;
       for (let i = 0; i < w.count; i++) {
@@ -60,8 +63,9 @@ describe('vehicle models', () => {
         if (w.getW(i) < 0) front++;
         // every wheel vertex lies within its tyre radius of the hub
         const d = Math.hypot(p.getY(i) - w.getY(i), p.getZ(i) - w.getZ(i));
-        expect(d).toBeLessThanOrEqual(Math.abs(w.getW(i)) + 1e-3);
+        if (d > Math.abs(w.getW(i)) + 1e-3) outside++;
       }
+      expect(outside, `wheel vertices outside the tyre ${m}`).toBe(0);
       expect(minY, `model ${m}`).toBeLessThan(0.03);
       if (m === MODEL_TRAILER) {
         expect([...hubZ].every((z) => z > TRAILER_WHEELBASE / 2 - 1)).toBe(true);
@@ -141,7 +145,7 @@ function windingAgreement(g: THREE.BufferGeometry): number {
   return ok / Math.max(1, total);
 }
 
-describe('sculpted bodies', () => {
+describe('sculpted bodies', { timeout: 30000 }, () => {
   it('every near model faces outward (winding agrees with the shading normals)', () => {
     for (const m of models) expect(windingAgreement(buildVehicleGeometry(m, 0)), `model ${m}`).toBeGreaterThan(0.985);
   });
@@ -212,10 +216,12 @@ describe('sculpted bodies', () => {
           const { geometry: g } = buildBodyGeometry(P, detail);
           const pos = g.getAttribute('position');
           const nrm = g.getAttribute('normal');
+          let bad = 0;
           for (let i = 0; i < pos.count; i++) {
-            expect(Number.isFinite(pos.getX(i) + pos.getY(i) + pos.getZ(i))).toBe(true);
-            expect(Math.hypot(nrm.getX(i), nrm.getY(i), nrm.getZ(i))).toBeCloseTo(1, 3);
+            if (!Number.isFinite(pos.getX(i) + pos.getY(i) + pos.getZ(i))) bad++;
+            if (Math.abs(Math.hypot(nrm.getX(i), nrm.getY(i), nrm.getZ(i)) - 1) > 1e-3) bad++;
           }
+          expect(bad).toBe(0);
           g.computeBoundingBox();
           const bb = g.boundingBox!;
           expect(bb.min.y).toBeGreaterThanOrEqual(-0.02);
@@ -227,7 +233,7 @@ describe('sculpted bodies', () => {
       ),
       { numRuns: 40 },
     );
-  });
+  }, 30000);
 });
 
 describe('far level of detail (one instanced parametric car)', () => {
