@@ -11,9 +11,16 @@ only runtime dependency is [Three.js](https://threejs.org).
 [![CI](https://github.com/<owner>/taters-flight-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/taters-flight-sim/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![The Cessna lined up on runway 36, chase camera, morning light](qa/screenshots/stop-01-runway-chase.png)
+![An A-10C Warthog runs in on a column of burning armour at golden hour](docs/screenshots/a10-burning-convoy.jpg)
 
-![Cruising south toward the coast over farmland and forest](qa/screenshots/stop-03-town-coast.png)
+| | |
+| --- | --- |
+| ![A-10 Maverick lock: the HUD lock box on a BTR-80 at 1.9 NM and the missile's IR view](docs/screenshots/a10-maverick-lock.jpg) | ![A Maverick hits the lead vehicle of a truck column](docs/screenshots/a10-maverick-hit.jpg) |
+| **Lock and launch.** Pick a target, get a lock, fire a Maverick. | **Direct hit.** Fireball, debris, and the blast takes out a neighbour. |
+| ![An F-16C in afterburner over snow-capped mountains and cumulus](docs/screenshots/f16-afterburner-mountains.jpg) | ![The Cessna 172RG cockpit over the coast, with a real-size panel](docs/screenshots/cessna-cockpit-coast.jpg) |
+| **F-16C in afterburner** over the mountains, volumetric clouds. | **Cessna 172RG cockpit** with a real 1980s panel, heading for the coast. |
+| ![The A-10 cockpit with the HUD drawn on its combiner glass](docs/screenshots/a10-cockpit-hud.jpg) | ![A Cessna following the river to the sea at golden hour](docs/screenshots/cessna-river-coast.jpg) |
+| **A-10 cockpit.** The HUD sits on the combiner glass. | **Low and slow** down the river to the sea. |
 
 ## Features
 
