@@ -1,8 +1,9 @@
 /**
  * The A-10C cockpit view (camera '1' at A10_AIRCRAFT.geometry.pilotEye): raycasts from the eye check
  * the Warthog's famous visibility — a clear forward cone, the glareshield (panel top) 16–21° below
- * the horizon straight ahead, nothing opaque close to the eye — plus the HUD combiner contract
- * (`hudCombiner`: its geometry is the glass rectangle) and the hidden head.
+ * the horizon straight ahead, nothing opaque close to the eye, a slim three-piece windscreen frame —
+ * plus the HUD combiner contract (`hudCombiner`: its geometry is the glass rectangle), its placement
+ * (level flight in the middle of the glass) and the hidden head.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as THREE from 'three';
@@ -94,7 +95,7 @@ describe('A-10 cockpit view', () => {
     expect(blocked / n).toBeLessThan(0.08);
   });
 
-  it('the forward cone (±25° yaw, −12…+15° pitch) is mostly clear: only the slim windscreen frame crosses it', () => {
+  it('the forward cone (±25° yaw, −12…+15° pitch) is mostly clear: only the slim windscreen posts, the bow and the HUD cross it', () => {
     let n = 0;
     let blocked = 0;
     const blockers = new Set<string>();
@@ -108,8 +109,54 @@ describe('A-10 cockpit view', () => {
         }
       }
     }
-    expect(blocked / n).toBeLessThan(0.15);
+    // The three-piece windscreen's posts and the bow arch (which curves down the sides) cross the
+    // cone as thin lines; everything else is clear.
+    expect(blocked / n).toBeLessThan(0.22);
     for (const b of blockers) expect(['a10.canopy.frame', 'a10.cockpit.interior'], b).toContain(b);
+  });
+
+  it('the windscreen frame is slim: below the bow (and its mirrors) every frame sample is within 2° of a clear sightline', { timeout: 30_000 }, () => {
+    const frameHit = (yaw: number, pitch: number) => hit(yaw, pitch)?.object.name === 'a10.canopy.frame';
+    const clear = (yaw: number, pitch: number) => hit(yaw, pitch) === null;
+    let frames = 0;
+    for (let yaw = -36; yaw <= 36; yaw += 1) {
+      for (let pitch = -8; pitch <= 13; pitch += 1) {
+        if (!frameHit(yaw, pitch)) continue;
+        frames++;
+        let near = false;
+        for (let d = 0.5; d <= 2 && !near; d += 0.5) near = clear(yaw + d, pitch) || clear(yaw - d, pitch) || clear(yaw, pitch + d) || clear(yaw, pitch - d);
+        expect(near, `yaw ${yaw} pitch ${pitch}`).toBe(true);
+      }
+    }
+    expect(frames).toBeGreaterThan(20);
+  });
+
+  it('three-piece windscreen: the front panel posts stand 12–17° either side of the nose, the bow arches 18–24° above the eye', () => {
+    // Posts: scanning along the horizon from the centre outwards, the first frame hit.
+    for (const s of [-1, 1]) {
+      let first = 0;
+      for (let yaw = 0; yaw <= 40; yaw += 0.25) {
+        const h = hit(s * yaw, 0);
+        if (h?.object.name === 'a10.canopy.frame') {
+          first = yaw;
+          break;
+        }
+      }
+      expect(first, `side ${s}`).toBeGreaterThan(12);
+      expect(first, `side ${s}`).toBeLessThan(17);
+    }
+    // Bow: beside the centre mirror, scanning up.
+    for (const yaw of [-9, 9]) {
+      let bow = 0;
+      for (let p = 0; p <= 40; p += 0.25) {
+        if (hit(yaw, p)?.object.name === 'a10.canopy.frame') {
+          bow = p;
+          break;
+        }
+      }
+      expect(bow, `yaw ${yaw}`).toBeGreaterThan(18);
+      expect(bow, `yaw ${yaw}`).toBeLessThan(24);
+    }
   });
 
   it('above the windscreen the bubble is frameless: straight up and up-back are clear', () => {
@@ -136,10 +183,36 @@ describe('A-10 cockpit view', () => {
     expect(Math.abs(c.x)).toBeLessThan(0.01);
     expect(c.z).toBeLessThan(eye.z - 0.5);
     const below = Math.atan2(eye.y - c.y, eye.z - c.z) / DEG;
-    expect(below).toBeGreaterThan(5);
-    expect(below).toBeLessThan(20);
+    expect(below).toBeGreaterThan(1.5);
+    expect(below).toBeLessThan(6);
     // Wide: it covers at least ±7° either side of the centreline.
     expect(Math.atan2(HUD.w / 2, eye.z - c.z) / DEG).toBeGreaterThan(7);
+  });
+
+  it('HUD glass placement: level flight (2–4.5° nose up) puts the horizon in the middle third of the glass seen from the eye', () => {
+    const combiner = m.hudCombiner as THREE.Mesh;
+    m.root.updateMatrixWorld(true);
+    combiner.geometry.computeBoundingBox();
+    const b = combiner.geometry.boundingBox!;
+    // Elevation (deg above the boresight) of the glass' top and bottom edge centres, from the eye.
+    const elev = (y: number) => {
+      const p = m.root.worldToLocal(combiner.localToWorld(new THREE.Vector3(0, y, 0)));
+      return Math.atan2(p.y - eye.y, eye.z - p.z) / DEG;
+    };
+    const top = elev(b.max.y);
+    const bottom = elev(b.min.y);
+    const third = (top - bottom) / 3;
+    for (const pitch of [2, 2.5, 3, 3.5, 4, 4.5]) {
+      // In level flight the horizon (and the flight-path marker) sits `pitch` below the boresight.
+      const horizon = -pitch;
+      expect(horizon, `pitch ${pitch}`).toBeGreaterThan(bottom + third);
+      expect(horizon, `pitch ${pitch}`).toBeLessThan(top - third);
+    }
+    // Room above the boresight (climbs, the gun cross) and below it (CCIP in a dive).
+    expect(top).toBeGreaterThan(4);
+    expect(bottom).toBeLessThan(-10);
+    // The whole glass stands above the glareshield sightline.
+    expect(bottom).toBeGreaterThan(-16);
   });
 
   it('the panel carries two MFCDs, the stick is on the centreline and the throttles on the left console', () => {

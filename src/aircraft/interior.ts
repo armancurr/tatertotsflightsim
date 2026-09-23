@@ -91,18 +91,27 @@ export function seat(s: SeatSpec): THREE.BufferGeometry[] {
   out.push(tint(local(0, 0, 0, rbox(0.42, s.backHeight, 0.08, 0.035)), C.vinyl, 0.75, 0));
   for (const dx of [-0.105, -0.035, 0.035, 0.105]) out.push(tint(local(dx, -0.02, -0.045, rbox(0.068, s.backHeight - 0.16, 0.035, 0.016)), C.fabric, 0.97, 0));
   out.push(tint(local(0, s.backHeight / 2 - 0.035, -0.02, rbox(0.42, 0.075, 0.1, 0.035)), C.fabricDark, 0.9, 0));
-  // Shoulder harness draped over the back (top outboard → bottom inboard, on the fabric), then
-  // down to the buckle on the inboard side of the cushion; the lap belt across the cushion.
-  const onBack = (x: number, y: number) => V(x, y, -0.066).applyMatrix4(back);
-  const top = onBack(s.outboard * 0.15, s.backHeight / 2 - 0.09);
-  const low = onBack(-s.outboard * 0.1, -s.backHeight / 2 + 0.1);
-  const buckle = V(s.x - s.outboard * 0.12, s.cushionY + 0.082, s.cushionZ + 0.2);
-  const lapOut = V(s.x + s.outboard * 0.19, s.cushionY + 0.08, s.cushionZ + 0.19);
+  // Belts: grey webbing. The shoulder harness comes down from its anchor on the cabin wall above
+  // and behind the door, over the outboard shoulder of the seat back, across the back to the
+  // inboard hip; the two lap-belt halves lie across the cushion to the buckle.
+  const onBack = (x: number, y: number) => V(x, y, -0.064).applyMatrix4(back);
+  const anchor = V(s.x + s.outboard * 0.19, 0.84, s.backZ + 0.2);
+  const shoulder = onBack(s.outboard * 0.13, s.backHeight / 2 + 0.01);
+  const mid = onBack(0, -0.02);
+  const hip = onBack(-s.outboard * 0.13, -s.backHeight / 2 + 0.1);
+  const buckle = V(s.x - s.outboard * 0.11, s.cushionY + 0.08, s.cushionZ + 0.12);
+  const lapOut = V(s.x + s.outboard * 0.2, s.cushionY + 0.075, s.cushionZ + 0.14);
+  const lapIn = V(s.x - s.outboard * 0.2, s.cushionY + 0.06, s.cushionZ + 0.16);
   const n = V(0, 0, -1).transformDirection(back);
-  out.push(tint(strap(top, low, 0.045, n), C.webbing, 0.9, 0));
-  out.push(tint(strap(low, buckle, 0.045, V(0, 1, -0.6)), C.webbing, 0.9, 0));
-  out.push(tint(strap(lapOut, buckle, 0.045, V(0, 1, 0)), C.webbing, 0.9, 0));
-  out.push(tint(box(0.05, 0.012, 0.035, at(buckle.x, buckle.y + 0.004, buckle.z)), C.buckle, 0.3, 0.9));
+  const web = 0x5b5a57;
+  out.push(tint(strap(anchor, shoulder, 0.04, V(-s.outboard, 0, -0.3)), web, 0.9, 0));
+  out.push(tint(strap(shoulder, mid, 0.04, n), web, 0.9, 0));
+  out.push(tint(strap(mid, hip, 0.04, n), web, 0.9, 0));
+  out.push(tint(strap(lapOut, buckle, 0.04, V(0, 1, 0)), web, 0.9, 0));
+  out.push(tint(strap(lapIn, buckle, 0.04, V(0, 1, 0)), web, 0.9, 0));
+  out.push(tint(rbox(0.036, 0.008, 0.026, 0.003, at(buckle.x, buckle.y + 0.004, buckle.z)), 0x8d9093, 0.35, 0.85));
+  // Inertia-reel anchor fitting on the wall.
+  out.push(tint(rbox(0.03, 0.05, 0.04, 0.008, at(anchor.x, anchor.y + 0.02, anchor.z)), 0x2a2b2d, 0.6, 0.3));
   return out;
 }
 
@@ -212,11 +221,6 @@ export function headliner(): THREE.BufferGeometry[] {
     ball.applyMatrix4(at(x - side * 0.008, y - 0.006, -0.42));
     out.push(tint(ball, 0x77746c, 0.5, 0.3));
   }
-  // Door map pockets.
-  for (const side of [-1, 1]) {
-    fuselageSection(-0.3, _sec);
-    out.push(tint(rbox(0.03, 0.14, 0.42, 0.01, at(side * (_sec.halfWidth - 0.075), -0.08, -0.36)), 0x4a453f, 0.9, 0));
-  }
   return out;
 }
 
@@ -250,15 +254,91 @@ export function visorHinges(): THREE.BufferGeometry[] {
   return out;
 }
 
-/** Door trim panels: a vinyl insert on each cabin side with an armrest and a chrome handle. */
+/**
+ * Inner cabin wall at height y, station z: |x| of the shell surface `inset` metres inside the skin
+ * (upper and lower halves of the section), and the inward normal's x/y (right side).
+ */
+export function wallPoint(y: number, z: number, inset: number, out: { x: number; nx: number; ny: number }) {
+  fuselageSection(z, _sec);
+  const upper = y >= _sec.widthY;
+  const n = upper ? _sec.nTop : _sec.nBot;
+  const W = _sec.halfWidth - inset;
+  const H = Math.max(0.05, upper ? _sec.top - inset - _sec.widthY : _sec.widthY - (_sec.bottom + inset));
+  const v = Math.min(0.999, Math.abs(y - _sec.widthY) / H);
+  const u = Math.pow(1 - Math.pow(v, n), 1 / n);
+  out.x = W * u;
+  const gx = Math.pow(Math.max(u, 1e-6), n - 1) / W;
+  const gy = (upper ? 1 : -1) * (Math.pow(Math.max(v, 1e-6), n - 1) / H);
+  const l = Math.hypot(gx, gy) || 1;
+  out.nx = -gx / l;
+  out.ny = -gy / l;
+  return out;
+}
+
+/** A panel following the cabin wall over (z0..z1) × (y0..y1), `proud` metres off the shell, with a rounded rim. */
+function wallPanel(side: -1 | 1, z0: number, z1: number, y0: number, y1: number, proud: number, rim = 0.012): THREE.BufferGeometry {
+  const w = { x: 0, nx: 0, ny: 0 };
+  const nz = 14;
+  const ny = 8;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (let j = 0; j <= ny; j++) {
+    const y = y0 + ((y1 - y0) * j) / ny;
+    for (let i = 0; i <= nz; i++) {
+      const z = z0 + ((z1 - z0) * i) / nz;
+      // Rounded rim: the panel face comes out of the wall over `rim` at every edge.
+      const e = Math.min(z - z0, z1 - z, y - y0, y1 - y) / rim;
+      const d = 0.002 + proud * Math.sqrt(Math.max(0, Math.min(1, e)) * (2 - Math.min(1, e)));
+      wallPoint(y, z, 0.035, w);
+      pos.push(side * (w.x + w.nx * d), y + w.ny * d, z);
+    }
+  }
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nz; i++) {
+      const a = j * (nz + 1) + i;
+      const b = a + 1;
+      const c = a + nz + 1;
+      const d = c + 1;
+      // Faces toward the cabin centre for either side.
+      if (side < 0) idx.push(a, c, b, b, c, d);
+      else idx.push(a, b, c, b, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** Door interior: moulded vinyl panel, sculpted armrest, chrome handle in its cup, map pocket; plus the kick panel ahead of the door. */
 export function doorPanels(): THREE.BufferGeometry[] {
   const out: THREE.BufferGeometry[] = [];
-  for (const s of [-1, 1]) {
-    fuselageSection(-0.1, _sec);
-    const x = s * (_sec.halfWidth - 0.05);
-    out.push(tint(rbox(0.012, 0.5, 0.95, 0.006, at(x, -0.02, -0.12)), 0x6a6258, 0.85, 0));
-    out.push(tint(rbox(0.065, 0.05, 0.6, 0.018, at(x - s * 0.03, 0.12, -0.05)), 0x4f4942, 0.8, 0));
-    out.push(tint(box(0.02, 0.02, 0.1, at(x - s * 0.015, 0.2, 0.18)), 0xa8aaac, 0.35, 0.8));
+  const w = { x: 0, nx: 0, ny: 0 };
+  const onWall = (side: -1 | 1, y: number, z: number, proud: number) => {
+    wallPoint(y, z, 0.035, w);
+    return V(side * (w.x + w.nx * proud), y + w.ny * proud, z);
+  };
+  for (const side of [-1, 1] as const) {
+    // Door panel (the door's lower half, under the window) and its upper trim strip under the window.
+    out.push(tint(wallPanel(side, -0.9, 0.29, -0.3, 0.3, 0.012), 0x55565a, 0.85, 0));
+    out.push(tint(wallPanel(side, -0.72, 0.29, 0.305, 0.345, 0.018, 0.008), 0x46474a, 0.6, 0));
+    // Armrest: a sculpted bar along the door at elbow height, sloping up toward the front (the door pull).
+    const ar = onWall(side, 0.075, -0.22, 0.036);
+    out.push(tint(rbox(0.065, 0.055, 0.62, 0.024, at(ar.x, ar.y, ar.z, 0.04, 0, 0)), 0x3e3f42, 0.75, 0));
+    out.push(tint(rbox(0.05, 0.012, 0.56, 0.005, at(ar.x - side * 0.004, ar.y + 0.028, ar.z, 0.04, 0, 0)), 0x4a4b4e, 0.55, 0));
+    // Door pull cup and the chrome handle (lever) ahead of the armrest, under the window.
+    const h = onWall(side, 0.21, -0.62, 0.012);
+    out.push(tint(rbox(0.014, 0.05, 0.11, 0.008, at(h.x, h.y, h.z)), 0x202124, 0.7, 0));
+    out.push(tint(rbox(0.016, 0.018, 0.085, 0.006, at(h.x - side * 0.01, h.y, h.z + 0.005, 0, 0, 0)), 0xb8babc, 0.3, 0.9));
+    // Map pocket along the bottom of the door.
+    const m = onWall(side, -0.19, -0.35, 0.03);
+    out.push(tint(rbox(0.03, 0.13, 0.5, 0.012, at(m.x, m.y, m.z)), 0x404144, 0.9, 0));
+    out.push(tint(box(0.006, 0.006, 0.47, at(m.x - side * 0.016, m.y + 0.06, m.z)), 0x1c1c1d, 0.9, 0));
+    // Kick panel ahead of the door, under the panel (fresh-air outlet grille).
+    out.push(tint(wallPanel(side, -1.18, -0.93, -0.28, 0.2, 0.006), 0x424346, 0.85, 0));
+    const v = onWall(side, 0.02, -1.06, 0.012);
+    for (let k = 0; k < 4; k++) out.push(tint(box(0.01, 0.006, 0.09, at(v.x, v.y + k * 0.014, v.z)), 0x1a1a1b, 0.8, 0));
   }
   return out;
 }

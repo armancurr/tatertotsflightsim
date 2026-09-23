@@ -8,9 +8,10 @@
  * (1000 ft) — only as many groups as keep 900 ft between the two ends —, a
  * dashed centreline (120 ft stripes, ≈80 ft gaps) and full-length side stripes.
  */
-import type { RunwayFrame } from '../runway';
+import { fromRunwayCoords, toRunwayCoords, type RunwayFrame } from '../runway';
 import { strokeQuads, textQuads, type P2 } from './font';
-import type { AirportPlan, RC } from './plan';
+import { runwayPolys, type AirportPlan, type RC } from './plan';
+import { clipHalfPlane, convexDifference, intersectConvex, overlaps, polyArea, rectPoly, subtractAll, type P2 as G2 } from './geom2d';
 
 export const FT = 0.3048;
 export const IN = 0.0254;
@@ -26,7 +27,8 @@ export type MarkKind =
   | 'hold-short'
   | 'tiedown'
   | 'carpark'
-  | 'fuel';
+  | 'fuel'
+  | 'helipad';
 
 export type PaintColor = 'white' | 'yellow';
 
@@ -40,6 +42,8 @@ export interface MarkQuad {
   /** Owner name (hold-short: connector name). */
   name?: string;
   style?: 'solid' | 'dashed';
+  /** Frame the paint shader reads runway coordinates in: 0 = 36/18 (default), 1 = the crossing runway. */
+  frame?: 0 | 1;
   /** Corners in runway coordinates, counter-clockwise in (a, c). */
   p: [RC, RC, RC, RC];
 }
@@ -254,6 +258,11 @@ function arc(centre: RC, from: RC, to: RC, steps = 9): RC[] {
 }
 
 export function taxiMarkings(plan: AirportPlan): MarkQuad[] {
+  const holes = runwayPolys(plan).slice(1);
+  return holes.length ? cutQuads(taxiMarkingsRaw(plan), holes) : taxiMarkingsRaw(plan);
+}
+
+function taxiMarkingsRaw(plan: AirportPlan): MarkQuad[] {
   const out: MarkQuad[] = [];
   const tw = plan.taxiway;
   const side = plan.holdLines[0]?.side ?? (tw.c >= 0 ? 1 : -1);
@@ -346,5 +355,157 @@ export function taxiMarkings(plan: AirportPlan): MarkQuad[] {
       out.push(rect('carpark', 'white', edge - 0.06, edge + 0.06, st.c0 + 0.2, st.c1 - 0.2));
     }
   }
+  return out;
+}
+
+// ─── the crossing runway and the field (field.ts) ─────────────────────────────
+
+/** A convex polygon as marking quads (fan of quads; a last triangle as a degenerate quad). */
+function polyToQuads(p: readonly G2[], base: Omit<MarkQuad, 'p'>): MarkQuad[] {
+  const q = polyArea(p) < 0 ? [...p].reverse() : [...p];
+  const out: MarkQuad[] = [];
+  for (let i = 1; i + 1 < q.length; i += 2) {
+    const d = i + 2 < q.length ? q[i + 2] : q[i + 1];
+    out.push({ ...base, p: [q[0], q[i], q[i + 1], d] });
+  }
+  return out;
+}
+
+/** Cut quads by convex holes (paint never lies on a pavement it doesn't belong to). */
+function cutQuads(quads: readonly MarkQuad[], holes: readonly (readonly G2[])[]): MarkQuad[] {
+  const out: MarkQuad[] = [];
+  for (const q of quads) {
+    const hs = holes.filter((h) => overlaps(q.p, h));
+    if (!hs.length) {
+      out.push(q);
+      continue;
+    }
+    const { p: _p, ...base } = q;
+    void _p;
+    for (const piece of subtractAll(q.p, hs)) out.push(...polyToQuads(piece, base));
+  }
+  return out;
+}
+
+/**
+ * The crossing runway's FAA markings (built in its own frame, then moved into runway-36
+ * coordinates), interrupted where it crosses 36/18: 36/18 is the primary runway, its markings run
+ * through the intersection and the crossing runway's stop at its edges.
+ */
+export function crossRunwayMarkings(plan: AirportPlan): MarkQuad[] {
+  const rw2 = plan.rw2;
+  if (rw2 === plan.rw) return [];
+  const to1 = (p: RC): RC => {
+    const w = fromRunwayCoords(p.a, p.c, rw2);
+    const q = toRunwayCoords(w.x, w.z, plan.rw);
+    return { a: q.along, c: q.across };
+  };
+  const moved = runwayMarkings(rw2).map((q) => ({ ...q, frame: 1 as const, p: q.p.map(to1) as MarkQuad['p'] }));
+  const r = plan.runway;
+  // the hold lines painted across the runway interrupt its centreline (no paint over paint)
+  const hl = MARKING.holdLine;
+  const holes: G2[][] = [rectPoly(r.a0, r.a1, r.c0, r.c1)];
+  for (const h of plan.field.holds) {
+    if (h.lineFrame !== 'crossT') continue;
+    const t0 = Math.min(h.d0, h.d0 + h.dir * 7 * hl) - 0.3;
+    const t1 = Math.max(h.d0, h.d0 + h.dir * 7 * hl) + 0.3;
+    const s0 = -rw2.halfWidth + MARKING.sideStripeWidth(rw2.width) + 0.05;
+    holes.push([to1({ a: t0, c: s0 }), to1({ a: t1, c: s0 }), to1({ a: t1, c: -s0 }), to1({ a: t0, c: -s0 })]);
+  }
+  return cutQuads(moved, holes);
+}
+
+/** Hold-line bands (2 dashed on the runway side, 2 solid on the holding side) of a field hold. */
+function holdBands(plan: AirportPlan, h: AirportPlan['field']['holds'][number]): MarkQuad[] {
+  const f = plan.field;
+  const hl = MARKING.holdLine;
+  const out: MarkQuad[] = [];
+  const X = (t: number, s: number): RC => {
+    const w = fromRunwayCoords(t, s, f.cross);
+    const q = toRunwayCoords(w.x, w.z, plan.rw);
+    return { a: q.along, c: q.across };
+  };
+  // on a runway the lines stop inside the side stripes (no paint over paint)
+  const far = h.lineFrame === 'cross' ? 400 : f.cross.halfWidth - MARKING.sideStripeWidth(f.cross.width) - 0.1;
+  for (let i = 0; i < 4; i++) {
+    const d0 = h.d0 + h.dir * (2 * i * hl);
+    const d1 = d0 + h.dir * hl;
+    const lo = Math.min(d0, d1), hi = Math.max(d0, d1);
+    const solid = i >= 2;
+    const segs: [number, number][] = [];
+    if (solid) segs.push([-far, far]);
+    else for (let k = -far + MARKING.holdDash / 2; k < far; k += 2 * MARKING.holdDash) segs.push([k, Math.min(far, k + MARKING.holdDash)]);
+    for (const [u0, u1] of segs) {
+      const band: G2[] =
+        h.lineFrame === 'cross'
+          ? [X(f.crossingT + u0, lo), X(f.crossingT + u1, lo), X(f.crossingT + u1, hi), X(f.crossingT + u0, hi)]
+          : [X(lo, u0), X(hi, u0), X(hi, u1), X(lo, u1)];
+      const piece = intersectConvex(band, h.clip);
+      if (piece.length < 3 || Math.abs(polyArea(piece)) < 0.01) continue;
+      out.push(...polyToQuads(piece, { kind: 'hold-short', color: 'yellow', name: h.name, style: solid ? 'solid' : 'dashed', frame: h.lineFrame === 'crossT' ? 1 : 0 }));
+    }
+  }
+  return out;
+}
+
+/** Taxiway, taxilane, helipad and hold markings of the field additions, cut off the runways. */
+export function fieldMarkings(plan: AirportPlan): MarkQuad[] {
+  const f = plan.field;
+  const W = MARKING.taxiLine;
+  const tw = plan.taxiway;
+  const lines: MarkQuad[] = [];
+  // B west of 36/18 to the 03 threshold (stops at the runway edge after the cut below)
+  const thr = (() => {
+    const w = fromRunwayCoords(0, 0, f.cross);
+    const q = toRunwayCoords(w.x, w.z, plan.rw);
+    return { a: q.along, c: q.across };
+  })();
+  lines.push(...line('taxi-centerline', 'yellow', [{ a: f.connectorB.a, c: -(plan.rw.halfWidth + 0.6) }, { a: f.connectorB.a, c: thr.c }], W));
+  // C from taxiway A's centreline to the 21 threshold
+  lines.push(...line('taxi-centerline', 'yellow', [f.cLine[0], f.cLine[1]], W));
+  // taxiway A's north extension continues the centreline to C
+  lines.push(...line('taxi-centerline', 'yellow', [{ a: tw.a1 - 30, c: tw.c }, { a: f.cLine[0].a, c: tw.c }], W));
+  // T-hangar taxilanes and their cross lane, the ARFF lead-in
+  const lanes = f.tLanes.slice(0, -1);
+  const cross = f.tLanes[f.tLanes.length - 1];
+  const cMid = (cross.c0 + cross.c1) / 2;
+  for (const l of lanes) lines.push(...line('taxi-centerline', 'yellow', [{ a: (l.a0 + l.a1) / 2, c: tw.c + tw.halfWidth }, { a: (l.a0 + l.a1) / 2, c: cMid }], W));
+  lines.push(...line('taxi-centerline', 'yellow', [{ a: (lanes[0].a0 + lanes[0].a1) / 2, c: cMid }, { a: (lanes[lanes.length - 1].a0 + lanes[lanes.length - 1].a1) / 2, c: cMid }], W));
+  const arff = plan.pavement.find((r) => r.name === 'arff');
+  if (arff) lines.push(...line('taxi-centerline', 'yellow', [{ a: (arff.a0 + arff.a1) / 2, c: tw.c + tw.halfWidth }, { a: (arff.a0 + arff.a1) / 2, c: arff.c1 - 4 }], W));
+  const out = cutQuads(lines, runwayPolys(plan));
+
+  // hold positions of the crossing runway (on taxiways A, B, C and on the runway itself)
+  for (const h of f.holds) out.push(...holdBands(plan, h));
+
+  // helipad: TLOF perimeter ring and a white "H" (crossbar across the prevailing approach)
+  const hp = f.helipad;
+  const ring: RC[] = [];
+  for (let k = 0; k <= 48; k++) {
+    const t = (k / 48) * Math.PI * 2;
+    ring.push({ a: hp.a + Math.cos(t) * hp.r, c: hp.c + Math.sin(t) * hp.r });
+  }
+  out.push(...line('helipad', 'white', ring, 0.3));
+  const hh = 3.0, hw2 = 1.0, st = 0.45;
+  out.push(rect('helipad', 'white', hp.a - hh / 2, hp.a + hh / 2, hp.c - hw2 - st / 2, hp.c - hw2 + st / 2));
+  out.push(rect('helipad', 'white', hp.a - hh / 2, hp.a + hh / 2, hp.c + hw2 - st / 2, hp.c + hw2 + st / 2));
+  out.push(rect('helipad', 'white', hp.a - st / 2, hp.a + st / 2, hp.c - hw2, hp.c + hw2));
+  // a yellow outer ring (FATO) around the TLOF
+  const ring2: RC[] = ring.map((p) => ({ a: hp.a + (p.a - hp.a) * 1.35, c: hp.c + (p.c - hp.c) * 1.35 }));
+  out.push(...line('helipad', 'yellow', ring2, 0.3));
+
+  // tie-downs on the south ramp
+  const side = plan.holdLines[0]?.side ?? 1;
+  for (const s of f.parking) {
+    const q = toRunwayCoords(s.x, s.z, plan.rw);
+    const a = q.along, c = q.across;
+    const t = 0.15;
+    out.push(rect('tiedown', 'white', a - 5.3, a + 5.3, c - t / 2, c + t / 2));
+    const c0 = c + side * 0.4;
+    const c1 = c + side * 6.5;
+    out.push(rect('tiedown', 'white', a - t / 2, a + t / 2, Math.min(c0, c1), Math.max(c0, c1)));
+  }
+  void clipHalfPlane;
+  void convexDifference;
   return out;
 }

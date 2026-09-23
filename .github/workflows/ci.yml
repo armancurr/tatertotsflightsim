@@ -1,25 +1,35 @@
 name: CI
 
+# Every push/PR: typecheck, the unit + fuzz + functional tests (no browser) and the production builds
+# — a few minutes. The browser end-to-end tests draw WebGL on the CPU on GitHub's GPU-less runners
+# (SwiftShader, well under 1 fps), so they take tens of minutes: they run nightly, and on demand from
+# the Actions tab (Run workflow → "browser end-to-end tests").
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      e2e:
+        description: Also run the browser end-to-end tests (slow on CPU-only runners)
+        type: boolean
+        default: true
+  schedule:
+    - cron: '17 4 * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: Node ${{ matrix.node-version }} · typecheck, test, build
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    # GitHub's Linux runners have no GPU: the browser tests draw WebGL on the CPU (SwiftShader) at
-    # well under 1 fps, detect it and stretch their waits, so they take many minutes, not seconds.
-    timeout-minutes: 90
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -35,17 +45,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install the test browser (Playwright Chromium + system libraries)
-        run: npx playwright install --with-deps chromium
-
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test (unit, fuzz, functional, browser end-to-end)
-        run: npm test
+      - name: Test (unit, fuzz, functional; the browser tests run in the e2e job)
+        run: npx vitest run --exclude "**/*.e2e.test.ts"
 
       - name: Build
         run: npm run build
+
+      - name: Build for a GitHub Pages sub-path (every URL must carry the --base prefix)
+        run: |
+          npx vite build --base=/tatertotsflightsim/ --outDir dist-subpath
+          grep -q 'src="/tatertotsflightsim/assets/' dist-subpath/index.html
+          if grep -qE '(src|href)="/(assets|favicon)' dist-subpath/index.html; then
+            echo "::error::dist-subpath/index.html has URLs without the --base prefix"
+            exit 1
+          fi
 
       - name: Upload the build
         if: matrix.node-version == 24
@@ -54,3 +70,27 @@ jobs:
           name: tatertotsflightsim-dist
           path: dist/
           retention-days: 14
+
+  e2e:
+    name: Browser end-to-end (headless Chromium, CPU WebGL)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.e2e)
+    runs-on: ubuntu-latest
+    # SwiftShader draws a frame in seconds; the tests detect it and stretch their waits
+    # (tests/support/e2e.ts), so the whole browser suite takes 30–60 minutes here.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the test browser (Playwright Chromium + system libraries)
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser end-to-end tests
+        run: npx vitest run .e2e.test.ts

@@ -4,6 +4,9 @@
  * (x, z) → top height MSL or −Infinity. PURE.
  */
 import type { AirportPlan } from './plan';
+import { fromRunwayCoords } from '../runway';
+import { FACILITY_SIZE, LOCALIZER_HEIGHT, localizerShelterX, TH_HALF_DEPTH, TH_RIDGE } from './facilities';
+import { EXTRA_VEHICLE_SIZE } from './fleet';
 
 export type Obstacle =
   | { type: 'box'; x: number; z: number; halfW: number; halfD: number; headingDeg: number; top: number }
@@ -105,5 +108,50 @@ export function airportObstacles(plan: AirportPlan, heightAt: (x: number, z: num
   // fuel tank
   out.push({ type: 'cylinder', x: plan.fuelTank.x, z: plan.fuelTank.z, r: 4, top: heightAt(plan.fuelTank.x, plan.fuelTank.z) + 3.2 });
   out.push({ type: 'cylinder', x: plan.fuelPump.x, z: plan.fuelPump.z, r: 1, top: heightAt(plan.fuelPump.x, plan.fuelPump.z) + 2.0 });
+
+  // the field's buildings and navaids (the maintenance hangar is in plan.hangars)
+  const f = plan.field;
+  const at = (a: number, c: number) => fromRunwayCoords(a, c, plan.rw);
+  /** Local (x, z) of a building frame (front −Z) → world, heading = the way the front faces. */
+  const local = (x0: number, z0: number, headingDeg: number, lx: number, lz: number) => {
+    const r = (-headingDeg * Math.PI) / 180;
+    return { x: x0 + lx * Math.cos(r) + lz * Math.sin(r), z: z0 - lx * Math.sin(r) + lz * Math.cos(r) };
+  };
+  const obox = (x: number, z: number, halfW: number, halfD: number, headingDeg: number, height: number) =>
+    out.push({ type: 'box', x, z, halfW, halfD, headingDeg, top: heightAt(x, z) + height });
+  for (const b of f.buildings) {
+    const p = at(b.a, b.c);
+    switch (b.kind) {
+      case 'thangar':
+        obox(p.x, p.z, b.width / 2 + 0.4, TH_HALF_DEPTH(b.depth), b.headingDeg, TH_RIDGE(b.depth));
+        break;
+      case 'flightSchool':
+      case 'fireStation':
+      case 'fuelFarm':
+      case 'vor':
+      case 'glideslope': {
+        const sz = FACILITY_SIZE[b.kind === 'vor' ? 'vor' : b.kind];
+        obox(p.x, p.z, sz.halfW, sz.halfD, b.headingDeg, sz.height);
+        break;
+      }
+      case 'localizer': {
+        obox(p.x, p.z, 15.5, 1.6, b.headingDeg, LOCALIZER_HEIGHT);
+        const sh = local(p.x, p.z, b.headingDeg, localizerShelterX(30), 0);
+        const sz = FACILITY_SIZE.localizerShelter;
+        obox(sh.x, sh.z, sz.halfW, sz.halfD, b.headingDeg, sz.height);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  // parked King Airs, the helicopter, ARFF trucks, refuelers, tugs, the baggage train, the ops pickup
+  for (const v of f.vehicles) {
+    const p = at(v.a, v.c);
+    const sz = EXTRA_VEHICLE_SIZE[v.kind];
+    obox(p.x, p.z, sz.width / 2, sz.length / 2, v.headingDeg, sz.height);
+  }
+  // windsock masts at the runway ends
+  for (const w of f.windsocks) out.push({ type: 'cylinder', x: w.x, z: w.z, r: 0.5, top: heightAt(w.x, w.z) + 6.6 });
   return out;
 }

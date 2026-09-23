@@ -10,7 +10,7 @@ import { fcParams } from '../support/fc';
 import { CONFIG } from '../../src/config';
 import { COCKPIT, LIP_Y, glareshieldTopY } from '../../src/aircraft/cockpit';
 import { PANEL, PANEL_LAYOUT } from '../../src/aircraft/panel';
-import { CABIN_INSET, windowDistance } from '../../src/aircraft/livery';
+import { cabinOpenDistance } from '../../src/aircraft/livery';
 import { DOOR_WINDOW, FUSE_Z0, STRUT, fuselageSection, wingLEy, type SectionParams } from '../../src/aircraft/shape';
 
 const EYE = CONFIG.aircraft.geometry.pilotEye;
@@ -69,7 +69,7 @@ describe('pilot eye point (left seat)', () => {
     expect(screenRow(depression(PANEL_LAYOUT.turn.y - PANEL_LAYOUT.turn.d / 2, PANEL.z))).toBeLessThan(0.95);
   });
 
-  it('the left door post (A-pillar trim) is slim: under 8° wide seen from the seat', () => {
+  it('the left door post (A-pillar trim) is slim: under 6° wide seen from the seat', () => {
     // Scan the cabin side at several heights; the solid run between the windshield opening and
     // the door-window opening is the post. Measure its angular width from the eye.
     for (const y of [0.45, 0.6, 0.75]) {
@@ -78,7 +78,7 @@ describe('pilot eye point (left seat)', () => {
         fuselageSection(z, sec);
         if (y > sec.top - 0.05) continue;
         const x = -sec.halfWidth * Math.pow(1 - Math.pow(Math.max(0, (y - sec.widthY) / (sec.top - sec.widthY)), sec.nTop), 1 / sec.nTop);
-        const open = windowDistance(x, y, z, sec) > CABIN_INSET;
+        const open = cabinOpenDistance(x, y, z, sec) > 0;
         if (!open) solid.push(z);
       }
       // The post is the solid run just behind the windshield's side edge.
@@ -95,7 +95,7 @@ describe('pilot eye point (left seat)', () => {
       const px = -sec.halfWidth + 0.035;
       const a0 = Math.atan2(px - EYE.x, EYE.z - z0);
       const a1 = Math.atan2(px - EYE.x, EYE.z - z1);
-      expect(Math.abs(a1 - a0) / DEG).toBeLessThan(8);
+      expect(Math.abs(a1 - a0) / DEG).toBeLessThan(6);
     }
   });
 
@@ -134,9 +134,8 @@ describe('property: glareshield profile', () => {
       fc.property(
         fc.double({ min: -0.5, max: 0.5, noNaN: true }),
         fc.double({ min: -1.24, max: PANEL.z, noNaN: true }),
-        // Head within ±2 cm up/down and ±4 cm fore/aft of the eye point (the rebuilt 172RG panel sits at
-        // the edge of the sightline for a head 3 cm low — see RESUME.md §5).
-        fc.double({ min: -0.02, max: 0.02, noNaN: true }),
+        // Head within ±3 cm up/down and ±4 cm fore/aft of the eye point.
+        fc.double({ min: -0.03, max: 0.03, noNaN: true }),
         fc.double({ min: -0.04, max: 0.04, noNaN: true }),
         (x, z, dy, dz) => {
           const y = glareshieldTopY(x, z);
@@ -154,5 +153,27 @@ describe('property: glareshield profile', () => {
       ),
       fcParams(300),
     );
+  });
+});
+
+describe('glareshield sightline over the whole head box (grid, not sampled)', () => {
+  it('keeps ≥ 0.25° between the glareshield and the cowling sightline for a head ±3 cm up/down and ±4 cm fore/aft', () => {
+    fuselageSection(FUSE_Z0 + 0.02, sec);
+    const cowlTop = sec.top;
+    let worst = Infinity;
+    for (let dy = -0.03; dy <= 0.0301; dy += 0.01) {
+      for (let dz = -0.04; dz <= 0.0401; dz += 0.02) {
+        const ey = EYE.y + dy;
+        const ez = EYE.z + dz;
+        const cowl = Math.atan2(ey - cowlTop, ez - FUSE_Z0 - 0.02);
+        for (let x = -0.5; x <= 0.5001; x += 0.05) {
+          for (let z = -1.24; z <= PANEL.z; z += 0.004) {
+            const y = glareshieldTopY(x, z);
+            worst = Math.min(worst, (Math.atan2(ey - y, ez - z) - cowl) / DEG);
+          }
+        }
+      }
+    }
+    expect(worst).toBeGreaterThanOrEqual(0.25);
   });
 });

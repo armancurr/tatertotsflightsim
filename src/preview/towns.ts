@@ -90,6 +90,21 @@ function gallery(): Building[] {
   const naveD = 26;
   add({ archetype: 'gable', use: 'church', width: naveW, depth: naveD, wallHeight: 9, roofHeight: pitch(naveW, 52), ridgeAxis: 1, style: STYLE.church, floorHeight: 0, wallColor: 0xcfc6b4, roofColor: 0x4a4f57, z: -naveD / 2 - 6.2 }, 0, -naveW / 2 - 3);
   add({ archetype: 'hip', use: 'steeple', width: 6, depth: 6, wallHeight: 24, roofHeight: 15, ridge: 0, style: STYLE.church, floorHeight: 0, wallColor: 0xcfc6b4, roofColor: 0x5e8c7a, z: -3 }, FLAG.steeple, naveW / 2 + 10);
+  // main street, civic buildings, yards, industry (added with the realism pass)
+  add({ archetype: 'flat', use: 'shop', width: 11, depth: 15, wallHeight: 10.2, roofHeight: 1.1, floorHeight: 3.2, style: STYLE.shop, wallColor: 0xa3553f, roofColor: 0x7a7a7c }, FLAG.shopfront | FLAG.awning, 0.7);
+  add({ archetype: 'gable', use: 'shop', width: 9, depth: 14, wallHeight: 7, roofHeight: pitch(14, 35), floorHeight: 3.2, style: STYLE.shop, wallColor: 0xe0d4bc, roofColor: 0x4a4f57 }, FLAG.shopfront | FLAG.awning, 0.7);
+  add({ archetype: 'flat', use: 'shop', width: 12, depth: 15, wallHeight: 7, roofHeight: 0.9, floorHeight: 3.2, style: STYLE.shop, wallColor: 0x8e4a36, roofColor: 0x4a4b4d }, FLAG.shopfront | FLAG.awning, 6);
+  add({ archetype: 'hip', use: 'townhall', width: 30, depth: 18, wallHeight: 12.2, roofHeight: pitch(18, 28), ridge: 12 / 30, floorHeight: 3.8, style: STYLE.civic, wallColor: 0xd8cfbd, roofColor: 0x4a4f57 }, FLAG.stone, 8);
+  add({ archetype: 'flat', use: 'school', width: 56, depth: 15, wallHeight: 8.3, roofHeight: 0.9, floorHeight: 3.7, style: STYLE.civic, wallColor: 0xa3553f, roofColor: 0x8a8886 }, FLAG.ribbon | FLAG.solar, 8);
+  add({ archetype: 'gable', use: 'house', width: 12, depth: 9, wallHeight: 3.3, roofHeight: pitch(9, 30), wallColor: 0xb4c0c6, roofColor: 0x3e3f41 }, FLAG.solar, 2);
+  add({ archetype: 'gable', use: 'garage', width: 6.5, depth: 6.5, wallHeight: 2.8, roofHeight: pitch(6.5, 25), wallColor: 0xb4c0c6, roofColor: 0x3e3f41 }, FLAG.garage, 3);
+  add({ archetype: 'flat', use: 'pool', width: 5, depth: 9, wallHeight: 0.4, roofHeight: 0.12, style: STYLE.pool, floorHeight: 0, wallColor: 0xd9d5ca, roofColor: 0x3fa6c4 }, 0, 3);
+  add({ archetype: 'silo', use: 'tree', width: 8, depth: 8, wallHeight: 2.5, roofHeight: 8, style: STYLE.tree, floorHeight: 0, wallColor: 0x4f6b35, roofColor: 0x4a3c30 }, 0, 2);
+  add({ archetype: 'silo', use: 'tree', width: 6, depth: 6, wallHeight: 2, roofHeight: 6.5, style: STYLE.tree, floorHeight: 0, wallColor: 0x5a7a3a, roofColor: 0x4a3c30 }, 0, 2);
+  add({ archetype: 'silo', use: 'tree', width: 4.5, depth: 4.5, wallHeight: 1, roofHeight: 10, style: STYLE.tree, floorHeight: 0, wallColor: 0x2f4a33, roofColor: 0x4a3c30 }, 0, 6);
+  add({ archetype: 'silo', use: 'watertower', width: 12, depth: 12, wallHeight: 34, roofHeight: 2.6, style: STYLE.civic, floorHeight: 0, wallColor: 0xb9d0dc, roofColor: 0xb9d0dc }, 0, 10);
+  add({ archetype: 'silo', use: 'tank', width: 18, depth: 18, wallHeight: 11, roofHeight: 1.4, ridge: 0, style: 10, floorHeight: 0, wallColor: 0xe6e8e6, roofColor: 0xd8dcdc }, 0, 4);
+  add({ archetype: 'silo', use: 'tower', width: 28, depth: 28, wallHeight: 80, roofHeight: 1.6, style: STYLE.office, floorHeight: 3.8, wallColor: 0x5d7f8c, roofColor: 0x7a7a7c }, FLAG.glass, 10);
   // farm
   add({ archetype: 'gable', use: 'farmhouse', width: 12, depth: 9, wallHeight: 6.1, roofHeight: pitch(9, 40), wallColor: 0xf2efe8, roofColor: 0x3a3c40, farm: 0 }, FLAG.chimney);
   add({ archetype: 'gambrel', use: 'barn', width: 13, depth: 26, wallHeight: 5, roofHeight: 6, ridgeAxis: 1, style: STYLE.barn, floorHeight: 0, wallColor: 0x8e2b22, roofColor: 0x4e5156, farm: 0 }, FLAG.cupola);

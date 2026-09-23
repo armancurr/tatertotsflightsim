@@ -183,11 +183,19 @@ flying fast never hitches.
   path, a depth/shore map baked in a worker around the camera (turquoise shallows over sand, dark
   deep water, surf lines and foam), a continuous flowing river ribbon that coarse terrain can never
   hide, and calm mirror-like lakes on still mornings.
-- **Airport (`src/world/airport`)** — pavement with aggregate, rubber marks, cracks and patches,
-  worn FAA paint, the control tower, five hangars (one open with an aircraft inside), the FBO with
-  its sign, fuel station, windsock, fence, 15 parked Cessnas and Pipers, cars, signs, and ~290
-  lights in one draw call: edge, threshold, taxiway, approach lights with the sequenced "rabbit",
-  the rotating beacon and two working **PAPIs**. Buildings are obstacles.
+- **Airport (`src/world/airport`)** — two runways: 36/18 and **03/21** crossing it at 30° in its
+  northern half (`CONFIG.world.airport.runways`; `runway.ts` `runwayFrames()` / `runwayEndFrame()`;
+  `?rwy=03` starts on any runway end). Pavement pieces are cut so no two surfaces overlap (36/18
+  owns the intersection, 03/21 owns its taxiway crossings), with aggregate, rubber marks, cracks
+  and patches, worn FAA paint (03/21's interrupted inside 36/18, hold positions on it and on the
+  taxiways that cross it), the control tower, hangars (a maintenance hangar with its doors open),
+  T-hangar rows, an ARFF station, a flight school, the FBO, a fuel farm, VOR/DME, the ILS localizer
+  and glideslope for 36, windsocks at every runway end, a perimeter road and fence with gates,
+  ~26 parked Cessnas and Pipers, King Airs, a helicopter on its pad, ARFF trucks, refuelers, a
+  patrolling ops pickup, cars, signs, and ~400 lights in one draw call: edge, threshold, REILs,
+  taxiway, MALSR with the sequenced "rabbit", the rotating beacon and four working **PAPIs**.
+  `field.ts` is the pure layout of everything beyond `layout.ts` (landcover reads its pavement
+  for the physics' surface types); buildings, aircraft and vehicles are obstacles.
 - **Roads (`src/world/roads`)** — a junction network (2,000+ nodes) turned into road surfaces with
   sidewalks, shoulders and soft verges, US-style markings (double yellow, dashed lines, crosswalks,
   stop bars), dirt farm tracks, bridges with decks, piers and guard rails, and ~4,000 street lights
@@ -367,8 +375,8 @@ speed, AGL, angle of attack, RPM, engine, camera, paused, crash reason, last lan
 headingDeg, speedKt})`, `setTimeOfDay(i)`, `selectAircraft(id)`, `fleet()`, `debug()`, plus
 `aircraft` (the fleet id being flown) and `combat` (weapons status, stats, the range and
 `list()` of every target). Browser tests and the QA pilot read it
-instead of reading pixels. URL options: `?spawn=x,z,aglFt,hdg,kt` (or `?spawn=range`), `&cam=`,
-`&tod=`, `&pause=1`, `&no=`, `&aircraft=c172rg|f16|a10`, `&veil=0`.
+instead of reading pixels. URL options: `?spawn=x,z,aglFt,hdg,kt` (or `?spawn=range`), `&rwy=36|18|03|21`,
+`&cam=`, `&tod=`, `&pause=1`, `&no=`, `&aircraft=c172rg|f16|a10`, `&veil=0`.
 
 ## 13. Testing
 

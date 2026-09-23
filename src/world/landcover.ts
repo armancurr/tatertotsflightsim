@@ -10,9 +10,10 @@ import { CONFIG, type Config } from '../config';
 import type { SurfaceType } from '../types';
 import { createSimplex2D, fbm } from './noise';
 import { getHeightfield, newTerrainSample, type Heightfield, type TerrainSample } from './heightfield';
-import { runwayFrame, isOnRunway, toRunwayCoords, type RunwayFrame } from './runway';
+import { runwayFrames, toRunwayCoords, type RunwayFrame } from './runway';
 import type { OrientedRect, Town } from './layout';
 import { fieldAt, newFieldInfo } from './fields';
+import { fieldPaving, type WorldPave } from './airport/field';
 
 export interface LandcoverWeights {
   forest: number;
@@ -63,14 +64,15 @@ export interface Landcover {
   treeDensity(x: number, z: number): number;
   /** Tree density from an existing sample + weights (for batch use in workers). */
   treeDensityFrom(s: TerrainSample, w: LandcoverWeights, x: number, z: number): number;
-  /** True on a paved airport surface (runway, taxiways, apron). */
+  /** True on a paved airport surface (any runway, taxiways, aprons, car parks, the perimeter road). */
   isPaved(x: number, z: number): boolean;
 }
 
 export function createLandcover(hf: Heightfield = getHeightfield(), cfg: Config = CONFIG): Landcover {
   const seed = cfg.world.seed | 0;
   const L = hf.layout;
-  const rw: RunwayFrame = runwayFrame(cfg);
+  // Every runway (36/18 first, then the crossing 03/21): approach corridors, mown airfield, surfaces.
+  const runways: RunwayFrame[] = runwayFrames(cfg);
   const nForest = createSimplex2D(seed + 201);
   const nSnow = createSimplex2D(seed + 202);
   const nUrban = createSimplex2D(seed + 203);
@@ -79,26 +81,85 @@ export function createLandcover(hf: Heightfield = getHeightfield(), cfg: Config 
   const towns: Town[] = L.towns;
   const flatR = L.airport.flatRadius;
   const taxiApron = [...L.airport.taxiways.map((t) => t.rect), L.airport.apron];
+  // The airfield beyond layout.ts (airport/field.ts): the crossing runway's pieces, its taxiways,
+  // the GA ramps, T-hangar lanes, car parks and the perimeter road — convex polygons, world x/z.
+  const field: WorldPave[] = fieldPaving(cfg);
+  let fx0 = Infinity, fx1 = -Infinity, fz0 = Infinity, fz1 = -Infinity;
+  for (const f of field) {
+    fx0 = Math.min(fx0, f.x0);
+    fx1 = Math.max(fx1, f.x1);
+    fz0 = Math.min(fz0, f.z0);
+    fz1 = Math.max(fz1, f.z1);
+  }
+  const inPoly = (poly: { x: number; z: number }[], x: number, z: number, eps: number): boolean => {
+    // convex, either winding: every edge cross product has the same sign (within eps metres)
+    let sgn = 0;
+    const n = poly.length;
+    for (let i = 0; i < n; i++) {
+      const A = poly[i];
+      const B = poly[(i + 1) % n];
+      const ex = B.x - A.x;
+      const ez = B.z - A.z;
+      const l = Math.sqrt(ex * ex + ez * ez);
+      if (l < 1e-12) continue;
+      const cr = (ex * (z - A.z) - ez * (x - A.x)) / l;
+      if (sgn === 0) {
+        let area = 0;
+        for (let k = 0; k < n; k++) area += poly[k].x * poly[(k + 1) % n].z - poly[(k + 1) % n].x * poly[k].z;
+        sgn = area >= 0 ? 1 : -1;
+      }
+      if (cr * sgn < -eps) return false;
+    }
+    return true;
+  };
+  const onAnyRunway = (x: number, z: number, eps: number): boolean => {
+    for (let i = 0; i < runways.length; i++) {
+      const rw = runways[i];
+      const q = toRunwayCoords(x, z, rw);
+      if (q.along >= -eps && q.along <= rw.length + eps && Math.abs(q.across) <= rw.halfWidth + eps) return true;
+    }
+    return false;
+  };
+  /** Kind of field pavement at x, z (null if none). */
+  const fieldAtXZ = (x: number, z: number, eps: number): WorldPave['kind'] | null => {
+    if (x < fx0 - eps || x > fx1 + eps || z < fz0 - eps || z > fz1 + eps) return null;
+    for (let i = 0; i < field.length; i++) {
+      const f = field[i];
+      if (x < f.x0 - eps || x > f.x1 + eps || z < f.z0 - eps || z > f.z1 + eps) continue;
+      if (inPoly(f.poly, x, z, eps)) return f.kind;
+    }
+    return null;
+  };
 
   /** 0..1 presence of cleared airport ground (no forest, no fields): the airfield + approach corridors. */
   const airportClear = (x: number, z: number, dA: number): number => {
     let c = 1 - smooth(flatR + 300, flatR + 800, dA);
-    const q = toRunwayCoords(x, z, rw);
-    const past = q.along < 0 ? -q.along : q.along > rw.length ? q.along - rw.length : 0;
-    if (past < 4000) {
-      const halfW = 160 + 0.12 * past;
-      const corridor = (1 - smooth(halfW, halfW + 150, Math.abs(q.across))) * (1 - smooth(3500, 4000, past));
-      if (corridor > c) c = corridor;
+    for (let i = 0; i < runways.length; i++) {
+      const rw = runways[i];
+      const q = toRunwayCoords(x, z, rw);
+      const past = q.along < 0 ? -q.along : q.along > rw.length ? q.along - rw.length : 0;
+      if (past < 4000) {
+        const halfW = 160 + 0.12 * past;
+        const corridor = (1 - smooth(halfW, halfW + 150, Math.abs(q.across))) * (1 - smooth(3500, 4000, past));
+        if (corridor > c) c = corridor;
+      }
     }
     return c;
   };
 
   /** 0..1: the grass airfield itself (no crops within ~330 m of the runway/taxiway/apron strip). */
   const airfieldGrass = (x: number, z: number): number => {
-    const q = toRunwayCoords(x, z, rw);
-    const out = q.along < 0 ? -q.along : q.along > rw.length ? q.along - rw.length : 0;
-    const acr = q.across < 0 ? -q.across * 1.6 : q.across; // less room needed west of the runway
-    return (1 - smooth(330, 430, acr)) * (1 - smooth(260, 380, out));
+    let g = 0;
+    for (let i = 0; i < runways.length; i++) {
+      const rw = runways[i];
+      const q = toRunwayCoords(x, z, rw);
+      const out = q.along < 0 ? -q.along : q.along > rw.length ? q.along - rw.length : 0;
+      // 36/18: less room needed west of the runway; the crossing runways: a narrower mown strip
+      const acr = i === 0 ? (q.across < 0 ? -q.across * 1.6 : q.across) : Math.abs(q.across) * 1.9;
+      const v = (1 - smooth(330, 430, acr)) * (1 - smooth(260, 380, out));
+      if (v > g) g = v;
+    }
+    return g;
   };
 
   const urbanPresence = (x: number, z: number): number => {
@@ -133,7 +194,7 @@ export function createLandcover(hf: Heightfield = getHeightfield(), cfg: Config 
     const dA = s.airportD;
     // The paved airfield is drawn by the terrain shader (and wave-2 meshes) from the layout's
     // rectangles; its landcover is the mown grass around it (no town texture, no trees).
-    const onPaved = dA < flatR && (isOnRunway(x, z, rw) || taxiApron.some((r) => inRect(r, x, z, 2)));
+    const onPaved = dA < flatR && (onAnyRunway(x, z, 0) || taxiApron.some((r) => inRect(r, x, z, 2)) || fieldAtXZ(x, z, 2) !== null);
     // Alpine zonation: forest → meadow/scree → rock → snow; snow lies ~200 m lower on north faces.
     const northness = nz < 0 ? Math.min(1, -nz * 3) : 0;
     const snowLine = 2060 + 170 * nSnow(x / 3200, z / 3200) - 220 * northness;
@@ -199,16 +260,14 @@ export function createLandcover(hf: Heightfield = getHeightfield(), cfg: Config 
 
   // Pavement tests carry a micrometre tolerance so points exactly on an edge don't flip with rounding.
   const EPS = 1e-6;
-  const onRunway = (x: number, z: number): boolean => {
-    const q = toRunwayCoords(x, z, rw);
-    return q.along >= -EPS && q.along <= rw.length + EPS && Math.abs(q.across) <= rw.halfWidth + EPS;
-  };
-  const isPaved = (x: number, z: number): boolean => onRunway(x, z) || taxiApron.some((r) => inRect(r, x, z, EPS));
+  const isPaved = (x: number, z: number): boolean => onAnyRunway(x, z, EPS) || taxiApron.some((r) => inRect(r, x, z, EPS)) || fieldAtXZ(x, z, EPS) !== null;
 
   const sw = newLandcover();
   const surfaceAt = (x: number, z: number): SurfaceType => {
-    if (onRunway(x, z)) return 'runway';
+    if (onAnyRunway(x, z, EPS)) return 'runway';
     if (taxiApron.some((r) => inRect(r, x, z, EPS))) return 'asphalt';
+    const fk = fieldAtXZ(x, z, EPS);
+    if (fk !== null) return fk === 'runway' ? 'runway' : 'asphalt';
     hf.sample(x, z, ts);
     if (ts.roadD < ts.roadHalfWidth) return 'asphalt';
     hf.normalInto(x, z, nrm);

@@ -38,11 +38,26 @@ export const PAINT = {
 } as const;
 type Rgb = readonly [number, number, number] | readonly number[];
 
+/**
+ * Animated parts (vertex attribute `aPart`: kind, centre y, centre z, radius — hull/turret frame):
+ * the shader turns wheels and runs the tracks with the odometer and spins the radar dish.
+ */
+export const PART = { body: 0, wheel: 1, track: 2, dish: 3 } as const;
+
 class Parts {
   readonly list: THREE.BufferGeometry[] = [];
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private e = new THREE.Euler();
+  private tag: [number, number, number, number] = [0, 0, 0, 0];
+
+  /** Tag the parts added inside `fn` (wheels, track runs, the radar dish). */
+  tagged(kind: number, cy: number, cz: number, r: number, fn: () => void): void {
+    const prev = this.tag;
+    this.tag = [kind, cy, cz, r];
+    fn();
+    this.tag = prev;
+  }
 
   add(geo: THREE.BufferGeometry, color: Rgb, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1): void {
     let g = geo.index ? geo.toNonIndexed() : geo;
@@ -60,6 +75,9 @@ class Parts {
       c[i * 3 + 2] = color[2];
     }
     g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    const t = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) t.set(this.tag, i * 4);
+    g.setAttribute('aPart', new THREE.BufferAttribute(t, 4));
     if (!g.getAttribute('normal')) g.computeVertexNormals();
     this.list.push(g);
     g = geo;
@@ -118,26 +136,28 @@ class Parts {
 function runningGear(P: Parts, lod: Lod, o: { halfTrack: number; trackW: number; len: number; wheels: number; r: number; wy: number; z0: number; z1: number; sprocketRear: boolean; top: number }): void {
   for (const sx of [-1, 1]) {
     const x = sx * o.halfTrack;
-    // the track: top run, bottom run and the ends (a flattened loop)
-    P.box(o.trackW, 0.09, o.len, PAINT.track, x, o.top, 0);
-    P.box(o.trackW, 0.09, o.len - 0.9, PAINT.track, x, 0.045, 0);
-    if (lod === 2) {
-      P.box(o.trackW, o.top - 0.05, o.len - 0.4, PAINT.track, x, o.top / 2, 0);
-      continue;
-    }
+    // the track: top run, bottom run and the ends (a flattened loop); links run with the odometer
+    P.tagged(PART.track, o.top / 2, 0, 0, () => {
+      P.box(o.trackW, 0.09, o.len, PAINT.track, x, o.top, 0);
+      P.box(o.trackW, 0.09, o.len - 0.9, PAINT.track, x, 0.045, 0);
+      if (lod === 2) P.box(o.trackW, o.top - 0.05, o.len - 0.4, PAINT.track, x, o.top / 2, 0);
+    });
+    if (lod === 2) continue;
     const seg = lod === 0 ? 14 : 8;
     for (let k = 0; k < o.wheels; k++) {
       const z = o.z0 + ((o.z1 - o.z0) * k) / (o.wheels - 1);
-      P.cylX(o.r, o.trackW * 0.8, PAINT.greenDark, x, o.wy, z, seg);
-      if (lod === 0) P.cylX(o.r * 0.45, o.trackW * 0.86, PAINT.steel, x, o.wy, z, 8);
+      P.tagged(PART.wheel, o.wy, z, o.r, () => {
+        P.cylX(o.r, o.trackW * 0.8, PAINT.greenDark, x, o.wy, z, seg);
+        if (lod === 0) P.cylX(o.r * 0.45, o.trackW * 0.86, PAINT.steel, x, o.wy, z, 8);
+      });
     }
     const zs = o.sprocketRear ? o.len / 2 - 0.35 : -o.len / 2 + 0.35;
     const zi = o.sprocketRear ? -o.len / 2 + 0.35 : o.len / 2 - 0.35;
-    P.cylX(0.32, o.trackW * 0.9, PAINT.steel, x, o.top - 0.3, zs, seg);
-    P.cylX(0.28, o.trackW * 0.8, PAINT.greenDark, x, o.top - 0.34, zi, seg);
+    P.tagged(PART.wheel, o.top - 0.3, zs, 0.32, () => P.cylX(0.32, o.trackW * 0.9, PAINT.steel, x, o.top - 0.3, zs, seg));
+    P.tagged(PART.wheel, o.top - 0.34, zi, 0.28, () => P.cylX(0.28, o.trackW * 0.8, PAINT.greenDark, x, o.top - 0.34, zi, seg));
     // track wrapping the sprocket and idler
-    P.cylX(0.4, o.trackW, PAINT.track, x, o.top - 0.35, zs, seg);
-    P.cylX(0.36, o.trackW, PAINT.track, x, o.top - 0.37, zi, seg);
+    P.tagged(PART.wheel, o.top - 0.35, zs, 0.4, () => P.cylX(0.4, o.trackW, PAINT.track, x, o.top - 0.35, zs, seg));
+    P.tagged(PART.wheel, o.top - 0.37, zi, 0.36, () => P.cylX(0.36, o.trackW, PAINT.track, x, o.top - 0.37, zi, seg));
   }
 }
 
@@ -244,8 +264,10 @@ function btr80(lod: Lod): ClassModel {
   const seg = lod === 0 ? 16 : lod === 1 ? 10 : 6;
   for (const sx of [-1, 1]) {
     for (const z of [-2.3, -0.9, 0.9, 2.3]) {
-      H.cylX(0.56, 0.36, PAINT.rubber, sx * 1.18, 0.56, z, seg);
-      if (lod === 0) H.cylX(0.3, 0.38, PAINT.greenDark, sx * 1.19, 0.56, z, 10);
+      H.tagged(PART.wheel, 0.56, z, 0.56, () => {
+        H.cylX(0.56, 0.36, PAINT.rubber, sx * 1.18, 0.56, z, seg);
+        if (lod === 0) H.cylX(0.3, 0.38, PAINT.greenDark, sx * 1.19, 0.56, z, 10);
+      });
     }
     if (lod < 2) H.box(0.06, 0.75, 0.9, PAINT.greenDark, sx * 1.46, 1.35, 0.0); // side doors
   }
@@ -282,8 +304,10 @@ function ural(lod: Lod): ClassModel {
     for (const sx of [-1, 1]) H.box(0.18, 0.18, 0.05, PAINT.lamp, sx * 0.9, 1.5, -3.4);
   }
   for (const sx of [-1, 1]) for (const z of [-2.55, 1.0, 2.4]) {
-    H.cylX(0.54, 0.4, PAINT.rubber, sx * 1.02, 0.54, z, seg);
-    if (lod === 0) H.cylX(0.28, 0.42, PAINT.greenDark, sx * 1.02, 0.54, z, 10);
+    H.tagged(PART.wheel, 0.54, z, 0.54, () => {
+      H.cylX(0.54, 0.4, PAINT.rubber, sx * 1.02, 0.54, z, seg);
+      if (lod === 0) H.cylX(0.28, 0.42, PAINT.greenDark, sx * 1.02, 0.54, z, 10);
+    });
   }
   return { hull: H.merge(), turret: null, ring: { y: 0, z: 0 }, turretCg: 0 };
 }
@@ -303,7 +327,11 @@ function zsu(lod: Lod): ClassModel {
   if (lod < 2) {
     for (const sx of [-1, 1]) T.box(0.3, 0.45, 0.5, PAINT.greenDark, sx * 0.55, 0.42, -1.55);
     T.cylY(0.07, 0.07, 0.55, PAINT.steel, 0, 0.8, 1.1, 8);
-    T.add(new THREE.CylinderGeometry(0.62, 0.62, 0.08, lod === 0 ? 18 : 10), PAINT.greenLight, 0, 1.45, 1.05, Math.PI / 2 - 0.35, 0, 0);
+    // the RPK-2 dish on its mast: spins about the mast (shader)
+    T.tagged(PART.dish, 1.45, 1.1, 0.62, () => {
+      T.add(new THREE.CylinderGeometry(0.62, 0.62, 0.08, lod === 0 ? 18 : 10), PAINT.greenLight, 0, 1.45, 1.05, Math.PI / 2 - 0.35, 0, 0);
+      T.box(0.14, 0.14, 0.3, PAINT.steel, 0, 1.4, 1.2);
+    });
     T.cylY(0.3, 0.32, 0.12, G, -0.6, 0.8, 0.4, 10);
     T.cylY(0.3, 0.32, 0.12, G, 0.6, 0.8, 0.4, 10);
   }

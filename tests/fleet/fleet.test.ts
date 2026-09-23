@@ -24,6 +24,24 @@ describe('fleet registry', () => {
     expect(g.leftMainWheel.z - g.noseWheel.z).toBeCloseTo(4.0, 2);
     expect(g.rightMainWheel.x - g.leftMainWheel.x).toBeCloseTo(2.36, 2);
   });
+  it('the 747-400 geometry matches the real jumbo (and fits the runway)', () => {
+    const d = getAircraftDef('b747');
+    expect(d.shortName).toBe('747');
+    const g = d.config.aircraft.geometry;
+    const span = Math.max(...g.structuralPoints.map((p) => Math.abs(p.x))) * 2;
+    expect(span).toBeCloseTo(64.44, 1);
+    expect(g.length).toBeCloseTo(70.66, 2);
+    expect(g.verticalTailTop.y - g.noseWheel.y).toBeCloseTo(19.41, 2);
+    expect(g.leftMainWheel.z - g.noseWheel.z).toBeCloseTo(25.6, 2);
+    expect(g.rightMainWheel.x - g.leftMainWheel.x).toBeCloseTo(11, 1);
+    // The wing-gear track fits the 30 m runway with room to spare.
+    expect(g.rightMainWheel.x - g.leftMainWheel.x).toBeLessThan(30 - 8);
+    // Four engines' worth of thrust and no weapons.
+    expect(d.config.aircraft.engine.jet!.milThrustN).toBeGreaterThan(900000);
+    expect(d.config.weapons.gun).toBeNull();
+    expect(d.config.weapons.missiles).toBeNull();
+  });
+
   it('every aircraft spawns resting on its gear on the runway and stays put at idle', () => {
     for (const d of FLEET) {
       let s = createInitialState(FLAT_ENV, d.config);

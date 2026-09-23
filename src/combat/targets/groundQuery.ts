@@ -63,6 +63,9 @@ export function createRangeGround(site: { x: number; z: number }, opts: RangeGro
       for (let q = 0; q <= n; q++) mark(a.x + ((b.x - a.x) * q) / n, a.z + ((b.z - a.z) * q) / n, w, 1);
     }
   }
+  const roads = net.roads
+    .filter((r) => r.points.some((p) => inWindow(p.x, p.z, 0)))
+    .map((r) => ({ kind: r.kind as string, width: r.width, points: r.points.map((p) => ({ x: p.x, z: p.z })) }));
   const keepOut = (x: number, z: number): number => {
     const i = Math.floor((x - x0) / cell);
     const j = Math.floor((z - z0) / cell);
@@ -76,5 +79,6 @@ export function createRangeGround(site: { x: number; z: number }, opts: RangeGro
     water: (x, z) => env.waterLevel(x, z),
     obstacle: (x, z) => trees.top(x, z),
     keepOut,
+    roads,
   };
 }

@@ -7,11 +7,12 @@
  */
 import * as THREE from 'three';
 import { MeshBuilder } from './builder';
-import { toWorld, type AirportPlan } from './plan';
+import { pavementAt, toWorld, type AirportPlan } from './plan';
+import { fromRunwayCoords, toRunwayCoords } from '../runway';
 import { runwayDesignator } from './markings';
 import type { HeightFn } from './ground';
 
-type Style = 'mandatory' | 'location' | 'distance' | 'fbo' | 'fuel' | 'blank';
+type Style = 'mandatory' | 'location' | 'distance' | 'fbo' | 'fuel' | 'arff' | 'blank';
 interface Face {
   text: string;
   style: Style;
@@ -20,7 +21,7 @@ interface Face {
 }
 
 const ATLAS_W = 1024;
-const ATLAS_H = 512;
+const ATLAS_H = 1024;
 const CELL_H = 64;
 
 export interface SignsBuild {
@@ -80,6 +81,14 @@ function drawFace(g: CanvasRenderingContext2D, f: Face) {
       g.fillText(f.text, x + w / 2, y + h * 0.55);
       break;
     }
+    case 'arff': {
+      g.fillStyle = '#a3130f';
+      g.fillRect(x, y, w, h);
+      g.fillStyle = '#f5f3ee';
+      g.font = font(h * 0.5);
+      g.fillText(f.text, x + w / 2, y + h * 0.55);
+      break;
+    }
     case 'fuel': {
       g.fillStyle = '#f3f1ea';
       g.fillRect(x, y, w, h);
@@ -105,8 +114,12 @@ export function buildSigns(plan: AirportPlan, heightAt: HeightFn): SignsBuild {
   const d18 = runwayDesignator(plan.rw.headingDeg + 180);
   const faces: Face[] = [];
   let cx = 0, cy = 0;
+  const seen = new Map<string, Face>();
   const face = (text: string, style: Style, cells = 1, rows = 1): Face => {
-    const wpx = Math.round(CELL_H * (style === 'fbo' ? 10 : style === 'fuel' ? 2 : Math.max(1.4, text.length * 0.62 + 0.4)) * cells);
+    const key = `${style}|${text}`;
+    const hit = seen.get(key);
+    if (hit) return hit;
+    const wpx = Math.round(CELL_H * (style === 'fbo' || style === 'arff' ? 10 : style === 'fuel' ? 2 : Math.max(1.4, text.length * 0.62 + 0.4)) * cells);
     const hpx = CELL_H * rows;
     if (cx + wpx > ATLAS_W) {
       cx = 0;
@@ -115,6 +128,7 @@ export function buildSigns(plan: AirportPlan, heightAt: HeightFn): SignsBuild {
     const f: Face = { text, style, uv: [cx / ATLAS_W, 1 - (cy + hpx) / ATLAS_H, wpx / ATLAS_W, hpx / ATLAS_H] };
     cx += wpx + 4;
     faces.push(f);
+    seen.set(key, f);
     return f;
   };
   const blank = face('', 'blank');
@@ -160,16 +174,25 @@ export function buildSigns(plan: AirportPlan, heightAt: HeightFn): SignsBuild {
   // holding-position signs on the pilot's left at each hold line, location sign on the back
   const rwyText = `${d36}-${d18}`;
   const mandatory = face(rwyText, 'mandatory');
-  const side = plan.holdLines[0]?.side ?? 1;
-  const towardRunway = side > 0 ? (plan.rw.headingDeg + 270) % 360 : (plan.rw.headingDeg + 90) % 360;
-  const faceHolding = (towardRunway + 180) % 360; // the sign front faces the pilot coming from the taxiway
   for (const h of plan.holdLines) {
-    // pilot heading toward the runway: their left is toward −a when the taxiway is on the +c side
+    const side = h.side;
+    const towardRunway = side > 0 ? (plan.rw.headingDeg + 270) % 360 : (plan.rw.headingDeg + 90) % 360;
+    const faceHolding = (towardRunway + 180) % 360; // the sign front faces the pilot coming from the taxiway
+    // pilot heading toward the runway: their left is toward −a when the taxiway is on the +c side;
+    // the designator on the pilot's left comes first ("36-18" from the east, "18-36" from the west)
     const leftA = side > 0 ? h.a - h.halfWidth - 4.5 : h.a + h.halfWidth + 4.5;
     const p = toWorld(plan, leftA, h.c + side * 0.5);
     const loc = face(h.name, 'location');
-    panel(p.x, p.z, faceHolding, 0.9 + rwyText.length * 0.36, 0.76, 0.32, mandatory, loc);
+    const text = side > 0 ? rwyText : `${d18}-${d36}`;
+    panel(p.x, p.z, faceHolding, 0.9 + text.length * 0.36, 0.76, 0.32, side > 0 ? mandatory : face(text, 'mandatory'), loc);
   }
+  // the crossing runway's holding positions (taxiways A, B, C and on the runway itself)
+  for (const h of plan.field.holds)
+    for (const sgn of h.signs) {
+      if (pavementAt(plan, sgn.a, sgn.c) !== null) continue; // never on a taxiway
+      const p = toWorld(plan, sgn.a, sgn.c);
+      panel(p.x, p.z, sgn.faceDeg, 0.9 + h.sign.length * 0.36, 0.76, 0.32, face(h.sign, 'mandatory'), face(h.name, 'location'));
+    }
   // runway distance remaining (thousands of feet), west side: front for 36 departures, back for 18
   const L = plan.rw.length;
   const lft = L / FT;
@@ -179,6 +202,37 @@ export function buildSigns(plan: AirportPlan, heightAt: HeightFn): SignsBuild {
     if (back < 1) continue;
     const p = toWorld(plan, a, -(plan.rw.halfWidth + 16));
     panel(p.x, p.z, (plan.rw.headingDeg + 180) % 360, 1.2, 1.0, 0.35, face(String(k), 'distance'), face(String(back), 'distance'));
+  }
+  // the crossing runway's distance-remaining signs (its left side seen from 3, clear of other pavement)
+  {
+    const fr = plan.rw2;
+    const Lx = fr.length / FT;
+    for (let k = 1; k * 1000 < Lx; k++) {
+      const t = fr.length - k * 1000 * FT;
+      const back = Math.floor(t / FT / 1000);
+      if (back < 1) continue;
+      const w = fromRunwayCoords(t, -(fr.halfWidth + 16), fr);
+      const q = toRunwayCoords(w.x, w.z, plan.rw);
+      let clear = true;
+      for (const [da, dc] of [[0, 0], [8, 0], [-8, 0], [0, 8], [0, -8]]) if (pavementAt(plan, q.along + da, q.across + dc) !== null) clear = false;
+      if (!clear) continue;
+      panel(w.x, w.z, (fr.headingDeg + 180) % 360, 1.2, 1.0, 0.35, face(String(k), 'distance'), face(String(back), 'distance'));
+    }
+  }
+  // the flight school's name on its fascia band and the ARFF station's over its bays
+  for (const bld of plan.field.buildings) {
+    if (bld.kind !== 'flightSchool' && bld.kind !== 'fireStation') continue;
+    const c = toWorld(plan, bld.a, bld.c);
+    const hd = (bld.headingDeg * Math.PI) / 180;
+    const off = bld.depth / 2 + 0.2;
+    const x = c.x + Math.sin(hd) * off, z = c.z - Math.cos(hd) * off;
+    if (bld.kind === 'flightSchool') panel(x, z, bld.headingDeg, 14, 0.8, 6.4, face('TATER FLIGHT ACADEMY', 'fbo'), null, 0.06, false);
+    else {
+      // over the bays (−X half of the front)
+      const r = -hd;
+      const lx = -bld.width / 4;
+      panel(x + lx * Math.cos(r), z - lx * Math.sin(r), bld.headingDeg, 9, 0.8, 6.7, face('ARFF  ·  STATION 1', 'arff'), null, 0.06, false);
+    }
   }
   // FBO sign on the terminal's airside fascia
   const t = plan.terminal;

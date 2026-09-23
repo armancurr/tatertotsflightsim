@@ -137,7 +137,12 @@ export function buildMaverick(): THREE.BufferGeometry {
   return merge(g);
 }
 
-/** AIM-9M about its own centre (canards forward, fins with rollerons aft). */
+/** AIM-9M Sidewinder about its own centre (axis z, nose −z): one geometry, a mesh per rail. */
+export function buildAim9m(): THREE.BufferGeometry {
+  return merge(aim9(0, 0, 0));
+}
+
+/** AIM-9M at (cx, cy, cz) (canards forward, fins with rollerons aft). */
 function aim9(cx: number, cy: number, cz: number): THREE.BufferGeometry[] {
   const L = 2.87;
   const R = 0.0635;
@@ -156,6 +161,8 @@ function aim9(cx: number, cy: number, cz: number): THREE.BufferGeometry[] {
   g.push(...finSet(R, zn + 0.28, zn + 0.5, 0.56, 0.1, 0.12, 0.01, body));
   g.push(...finSet(R, zt - 0.36, zt - 0.04, 0.64, 0.14, 0.2, 0.01, body));
   for (const x of g) x.translate(cx, cy, 0);
+  // Launcher shoe on top (rides the LAU-105 rail).
+  g.push(tint(box(0.03, 0.03, 1.1, V(cx, cy + R + 0.012, cz - 0.1)), DARK, 0.55, 0.3));
   return g;
 }
 
@@ -212,6 +219,8 @@ function pylon(x: number, z0: number, z1: number, bottom: number, thick = 0.12):
 export interface StoresBuild {
   /** Maverick geometry about its centre (one geometry, four meshes). */
   maverick: THREE.BufferGeometry;
+  /** AIM-9M geometry about its centre (one geometry, a mesh per LAU-105 rail). */
+  aim9m: THREE.BufferGeometry;
   /** Static stores/pylons on the right outer panel (stations 9–11), left outer (1–3), centre (4–8). */
   right: THREE.BufferGeometry;
   left: THREE.BufferGeometry;
@@ -240,7 +249,7 @@ function lau88(side: 1 | -1): THREE.BufferGeometry[] {
 export function buildStores(): StoresBuild {
   const maverick = buildMaverick();
 
-  // Right outer panel: LAU-88 (st 9), empty st 10 pylon, LAU-105 + 2 × AIM-9M (st 11).
+  // Right outer panel: LAU-88 (st 9), empty st 10 pylon, LAU-105 (st 11; its two AIM-9Ms are separate meshes).
   const right: THREE.BufferGeometry[] = [...lau88(1)];
   {
     const x = STATION_X[11];
@@ -248,7 +257,8 @@ export function buildStores(): StoresBuild {
     right.push(tint(box(0.16, 0.12, 1.5, V(x, -0.58, 0.5)), 0x5f6467, 0.6, 0.1));
     for (const s of [-1, 1]) {
       right.push(tint(box(0.07, 0.04, 1.3, V(x + s * 0.13, -0.64, 0.5)).rotateZ(0), 0x555a5d, 0.6, 0.15));
-      right.push(...aim9(x + s * 0.24, -0.73, 0.35));
+      // Rail down to the missile's shoe.
+      right.push(tint(box(0.06, 0.03, 1.2, V(x + s * 0.24, -0.645, 0.3)), 0x46494b, 0.6, 0.2));
     }
     right.push(...pylon(STATION_X[10], -0.1, 1.15, -0.45));
   }
@@ -285,5 +295,5 @@ export function buildStores(): StoresBuild {
     centre.push(...pylon(x, -0.45, 1.2, -1.0, 0.11));
     centre.push(...gbu12(x, -1.0 - 0.137 - 0.02, 0.2));
   }
-  return { maverick, right: merge(right), left: merge(left), centre: merge(centre) };
+  return { maverick, aim9m: buildAim9m(), right: merge(right), left: merge(left), centre: merge(centre) };
 }

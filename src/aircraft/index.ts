@@ -15,6 +15,7 @@ import { computeAnimation, createAnimation, createPropDisc, propDiscParams, stro
 import type { BreakupPart } from '../fleet/types';
 import { createBreakupRig, splitByTriangles } from './breakup';
 import { buildCockpit } from './cockpit';
+import { createCabinLight } from './cabinLight';
 import { buildFuselage } from './fuselage';
 import { buildGear, GEAR_PART } from './gear';
 import { createFuselageTextures, doorOutlineDistance } from './livery';
@@ -186,6 +187,34 @@ function fuselageDetails(): { fuselage: THREE.BufferGeometry[]; engine: THREE.Bu
   return { fuselage: out, engine, tail };
 }
 
+/**
+ * Move every vertex of `geo` that lies inside the fuselage's upper cabin section (between the
+ * windshield and the rear window) up to just under the skin, so nothing of it shows inside the cabin.
+ */
+export function tuckInsideFuselage(geo: THREE.BufferGeometry): number {
+  const sec: SectionParams = { top: 0, bottom: 0, halfWidth: 0, widthY: 0, nTop: 2, nBot: 2 };
+  const p = geo.getAttribute('position') as THREE.BufferAttribute;
+  let moved = 0;
+  for (let i = 0; i < p.count; i++) {
+    const z = p.getZ(i);
+    const y = p.getY(i);
+    if (z < -0.75 || z > 1.3 || y < 0.5) continue;
+    fuselageSection(z, sec);
+    const r = Math.abs(p.getX(i)) / sec.halfWidth;
+    if (r >= 1 || y <= sec.widthY) continue;
+    const top = sec.widthY + (sec.top - sec.widthY) * Math.pow(1 - Math.pow(r, sec.nTop), 1 / sec.nTop) - 0.003;
+    if (y < top) {
+      p.setY(i, top);
+      moved++;
+    }
+  }
+  if (moved) {
+    p.needsUpdate = true;
+    geo.computeBoundingSphere();
+  }
+  return moved;
+}
+
 export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): AircraftModel {
   const quality = opts.quality ?? 'high';
   const hasDom = typeof document !== 'undefined';
@@ -256,8 +285,12 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const glass = glassMesh(glassParts[0], PART.glass, P.fuselage);
   const glassMeshes = [glass, glassMesh(glassParts[1], 'glass.door.left', P.leftDoor), glassMesh(glassParts[2], 'glass.door.right', P.rightDoor)];
 
-  // Wing (each side with half the centre section and its strut), flaps and ailerons.
+  // Wing (each side with half the centre section and its strut), flaps and ailerons. The centre
+  // section's underside dips inside the fuselage (hidden by the skin from outside, but in the cabin
+  // it would hang below the headliner): tuck those vertices up under the skin.
   const wing = buildWing(quality);
+  tuckInsideFuselage(wing.paint.left);
+  tuckInsideFuselage(wing.paint.right);
   const wingMeshes = [
     shadowed(new THREE.Mesh(wing.paint.left, mats.paint)),
     shadowed(new THREE.Mesh(wing.paint.right, mats.paint)),
@@ -459,11 +492,21 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const cabinFill = { value: new THREE.Color(0, 0, 0) };
   addCabinFill(mats.cabin, cabinFill);
   addCabinFill(interiorParts, cabinFill);
+  // Daylight through the glass only: sun and sky light enter the cabin by the windows (cabinLight.ts).
+  const cabinLight = createCabinLight();
+  for (const m of [mats.cabin, interiorParts, mats.panel]) cabinLight.apply(m);
+  const syncCabinLight = () => cabinLight.update(root);
+  cockpit.group.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && o.name !== 'cabinShell') m.onBeforeRender = syncCabinLight;
+  });
   let fillScene: THREE.Object3D | null = null;
+  const _sunTarget = new THREE.Vector3();
   let fillSun: THREE.DirectionalLight | null = null;
   const shell = cockpit.group.getObjectByName('cabinShell');
   if (shell) {
     shell.onBeforeRender = (_r, scene) => {
+      syncCabinLight();
       if (scene !== fillScene) {
         fillScene = scene;
         fillSun = null;
@@ -472,8 +515,15 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
         });
       }
       const sun = fillSun as THREE.DirectionalLight | null;
-      if (sun) cabinFill.value.copy(sun.color).multiplyScalar(sun.intensity * CONFIG.aircraft.model.cabinFill);
-      else cabinFill.value.setRGB(0, 0, 0);
+      if (sun) {
+        cabinFill.value.copy(sun.color).multiplyScalar(sun.intensity * CONFIG.aircraft.model.cabinFill);
+        cockpit.glint.sunColor.value.copy(sun.color).multiplyScalar(sun.intensity);
+        sun.getWorldPosition(cockpit.glint.sunDir.value).sub(sun.target.getWorldPosition(_sunTarget));
+        if (cockpit.glint.sunDir.value.lengthSq() < 1e-12) cockpit.glint.sunDir.value.set(0, 1, 0);
+      } else {
+        cabinFill.value.setRGB(0, 0, 0);
+        cockpit.glint.sunColor.value.setRGB(0, 0, 0);
+      }
     };
   }
 

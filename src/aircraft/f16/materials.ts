@@ -11,7 +11,10 @@ export interface F16Textures {
   map: THREE.Texture;
   roughness: THREE.Texture;
   bump: THREE.Texture;
-  screens: THREE.Texture;
+  /** Static cockpit atlas (panel face, console tops, ICP). */
+  cockpit: THREE.Texture;
+  /** Live instrument canvas (MFDs, DED, RWR, gauges, lights). */
+  live: THREE.Texture;
 }
 
 export interface F16Materials {
@@ -19,9 +22,14 @@ export interface F16Materials {
   radome: THREE.MeshStandardMaterial;
   parts: THREE.MeshStandardMaterial;
   interior: THREE.MeshStandardMaterial;
+  /** Cockpit fine relief (vertex colours) whose uv carries motion weights: throttle, gear handle, stick, landing switch. */
+  detail: THREE.MeshStandardMaterial;
+  /** Offsets (body frame, m) applied through the detail weights. */
+  motion: { throttle: THREE.Vector3; handle: THREE.Vector3; stick: THREE.Vector3; landing: THREE.Vector3 };
   canopy: THREE.MeshPhysicalMaterial;
   hud: THREE.MeshPhysicalMaterial;
-  screens: THREE.MeshBasicMaterial;
+  /** Live instruments: lit faces with a per-vertex self-lit fraction (rm.y). */
+  live: THREE.MeshStandardMaterial;
   panel: THREE.MeshStandardMaterial;
   nav: THREE.MeshBasicMaterial;
   formation: THREE.MeshBasicMaterial;
@@ -85,6 +93,10 @@ export function createF16Materials(tex: F16Textures | null): F16Materials {
   const radome = new THREE.MeshStandardMaterial({ name: 'f16.radome', color: 0x5e6468, roughness: 0.5, metalness: 0 });
   const parts = createPartsMaterial('f16-parts');
   const interior = createPartsMaterial('f16-interior');
+  const detail = createPartsMaterial('f16-detail');
+  const motion = { throttle: new THREE.Vector3(), handle: new THREE.Vector3(), stick: new THREE.Vector3(), landing: new THREE.Vector3() };
+  addMotion(detail, motion);
+  detail.userData.motion = motion;
   addF16Soot(paint, char, 'f16-paint');
   addF16Soot(radome, char, 'f16-radome');
   addF16Soot(parts, char, 'f16-parts');
@@ -113,9 +125,19 @@ export function createF16Materials(tex: F16Textures | null): F16Materials {
     envMapIntensity: 0.6,
   });
   premultipliedGlass(hud, 'f16-hud');
-  const screens = new THREE.MeshBasicMaterial({ name: 'f16.screens', color: tex ? 0x9a9a9a : 0x061006, map: tex?.screens ?? null });
-  // The painted instrument panel (lit), sharing the screen canvas.
-  const panel = new THREE.MeshStandardMaterial({ name: 'f16.panel', color: tex ? 0xffffff : 0x2a2d30, map: tex?.screens ?? null, roughness: 0.8, metalness: 0 });
+  // The painted panel, consoles and ICP (lit; vertex colours are white).
+  const panel = new THREE.MeshStandardMaterial({ name: 'f16.panel', color: tex ? 0xffffff : 0x5c6164, map: tex?.cockpit ?? null, roughness: 0.72, metalness: 0 });
+  const live = new THREE.MeshStandardMaterial({
+    name: 'f16.live',
+    color: tex ? 0xffffff : 0x0a0c0b,
+    map: tex?.live ?? null,
+    emissive: tex ? 0xffffff : 0x000000,
+    emissiveMap: tex?.live ?? null,
+    emissiveIntensity: 1.15,
+    roughness: 0.2,
+    metalness: 0,
+  });
+  liveGlow(live);
 
   const nav = new THREE.MeshBasicMaterial({ name: 'f16.nav', vertexColors: true });
   const formation = new THREE.MeshBasicMaterial({ name: 'f16.formation', color: 0x2a3326 });
@@ -162,8 +184,8 @@ export function createF16Materials(tex: F16Textures | null): F16Materials {
     blending: THREE.AdditiveBlending,
   });
 
-  const all: THREE.Material[] = [paint, radome, parts, interior, canopy, hud, screens, panel, nav, formation, strobe, lamp, glow];
-  return { paint, radome, parts, interior, canopy, hud, screens, panel, nav, formation, strobe, lamp, glow, char, all };
+  const all: THREE.Material[] = [paint, radome, parts, interior, detail, canopy, hud, live, panel, nav, formation, strobe, lamp, glow];
+  return { paint, radome, parts, interior, detail, motion, canopy, hud, live, panel, nav, formation, strobe, lamp, glow, char, all };
 }
 
 /** Glass: diffuse tint scaled by opacity, reflections at full strength (premultiplied blend). */
@@ -180,4 +202,46 @@ function premultipliedGlass(m: THREE.MeshPhysicalMaterial, key: string) {
     );
   };
   m.customProgramCacheKey = () => key;
+}
+
+/**
+ * Cockpit detail motion: uv.x ∈ [0, 1] × throttle offset, uv.x ∈ [2, 3] × (w − 2) gear-handle offset,
+ * uv.y ∈ [0, 1] × stick offset, uv.y ∈ [2, 3] × (w − 2) landing-switch offset (see cockpit.ts).
+ */
+function addMotion(m: THREE.MeshStandardMaterial, motion: F16Materials['motion']) {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    prev.call(m, shader, renderer);
+    shader.uniforms.uThrottle = { value: motion.throttle };
+    shader.uniforms.uHandle = { value: motion.handle };
+    shader.uniforms.uStick = { value: motion.stick };
+    shader.uniforms.uLanding = { value: motion.landing };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uThrottle;\nuniform vec3 uHandle;\nuniform vec3 uStick;\nuniform vec3 uLanding;')
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        {
+          float wx = uv.x;
+          float wy = uv.y;
+          transformed += uThrottle * (wx <= 1.0 ? wx : 0.0) + uHandle * (wx >= 2.0 ? wx - 2.0 : 0.0);
+          transformed += uStick * (wy <= 1.0 ? wy : 0.0) + uLanding * (wy >= 2.0 ? wy - 2.0 : 0.0);
+        }`,
+      );
+  };
+  m.customProgramCacheKey = () => 'f16-detail|motion';
+}
+
+/** Live instruments: roughness = rm.x, self-lit fraction = rm.y (emissive × it, diffuse × its complement). */
+function liveGlow(m: THREE.MeshStandardMaterial) {
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 rm;\nvarying vec2 vRM;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRM = rm;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vRM;')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vRM.x;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= vRM.y;\ndiffuseColor.rgb *= 1.0 - 0.92 * vRM.y;');
+  };
+  m.customProgramCacheKey = () => 'f16-live';
 }

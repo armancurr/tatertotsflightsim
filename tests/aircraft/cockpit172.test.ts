@@ -4,7 +4,10 @@
  * their shafts, a clear view ahead through the windshield, the panel drawer robust to any
  * readings, and dispose freeing everything.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Building the aircraft and ray-casting its cabin takes seconds on a loaded machine.
+vi.setConfig({ testTimeout: 30_000 });
 import fc from 'fast-check';
 import * as THREE from 'three';
 import { fcParams } from '../support/fc';
@@ -117,7 +120,9 @@ describe('the 3D cockpit', () => {
     const blockers: THREE.Object3D[] = [];
     const interior = ac.root.getObjectByName('interior')!;
     interior.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh && o.name !== 'cabinShell' && o.name !== 'sunVisors') blockers.push(o);
+      // The airframe (shell, windshield post and header trim) is not furniture: the posts are
+      // checked on their own in cockpitRealism.test.ts. Visors and the windshield glint are see-through.
+      if ((o as THREE.Mesh).isMesh && !['cabinShell', 'cabinTrim', 'sunVisors', 'windshieldGlint'].includes(o.name)) blockers.push(o);
     });
     const rc = new THREE.Raycaster();
     const eye = new THREE.Vector3(EYE.x, EYE.y, EYE.z);

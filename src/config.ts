@@ -759,6 +759,15 @@ export const CONFIG = {
       elevation: 30,
       /** Runway 36/18: centre point, true heading of runway 36, dimensions (m). */
       runway: { center: { x: 0, z: 0 }, headingDeg: 360, length: 1600, width: 30, name: '36/18' },
+      /**
+       * Every runway (the one named like `runway` is `runway` itself — the default for spawn and
+       * reset). 03/21 crosses 36/18 at 30° in its northern half: its centreline meets 36/18's at
+       * z ≈ −400 (800 m from the 03 threshold, 400 m from the 21 threshold); it also crosses taxiway A.
+       */
+      runways: [
+        { center: { x: 0, z: 0 }, headingDeg: 360, length: 1600, width: 30, name: '36/18' },
+        { center: { x: -100, z: -227 }, headingDeg: 30, length: 1200, width: 25, name: '03/21' },
+      ],
       /** Radius of the flattened airport plateau and the blend band around it, m. */
       flatRadius: 1300,
       blendWidth: 900,
@@ -874,6 +883,9 @@ export const CONFIG = {
       minAngularSize: 0.0016,
       /** LOD switch hysteresis, as a fraction of the switch distance. */
       hysteresis: 0.06,
+      /** Trees: detailed crowns nearer than treeLodStart (m), the mid-LOD blob beyond treeLodEnd (dithered cross-fade between). */
+      treeLodStart: 600,
+      treeLodEnd: 800,
       /** Farmsteads: one candidate per jittered grid cell of this size (m), kept with this probability. */
       farmsteadSpacing: 900,
       farmsteadChance: 0.62,
@@ -1002,8 +1014,12 @@ export const CONFIG = {
       riverLiftPerKm: 1.2,
       /** Rivers stay at least this many pixels wide at any distance (coverage-faded, never dashed). */
       riverMinPixels: 1.4,
-      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = as windy as midday. */
+      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = the full wind; later in the day (cat's paws between calm patches). */
       lakeMorningCalm: 0.85,
+      lakeDayCalm: 0.45,
+      /** Reeds at the water's edge (slow lowland river reaches, lowland lakes): candidate spacing along a bank (m), drawn within reedFar (m). */
+      reedSpacing: 3,
+      reedFar: 1800,
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
     },
@@ -1190,6 +1206,26 @@ export const CONFIG = {
     cloudResolution: 0.75,
     /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
     cloudBudgetMs: 2.5,
+    /**
+     * Quality presets (src/render/quality.ts). URL override: ?quality=auto|low|medium|high.
+     * 'auto' (default): start at ≤ startMegapixels of rendered pixels and let dynamic resolution climb
+     * to maxPixelRatio when there is headroom (fast first ramp), down to floorPixelRatio when there
+     * isn't; software renderers and older integrated GPUs start lower (and without MSAA / volumetric
+     * clouds on software). 'high' = start at the cap (the look screenshots are judged by).
+     */
+    quality: {
+      default: 'auto' as 'auto' | 'low' | 'medium' | 'high',
+      /** Rendered megapixels the 'auto' preset starts at (1440×900 at 1× ≈ 1.3). */
+      startMegapixels: 1.3,
+      /** …times this on an older integrated / mobile GPU. */
+      weakGpuStartScale: 0.5,
+      /** Lowest pixel ratio the auto/low/medium presets may drop to (config minPixelRatio is the 'high' floor). */
+      floorPixelRatio: 0.5,
+      /** Seconds of headroom per raise during the first ramp up from the conservative start (then upDelay). */
+      rampUpDelay: 1,
+      /** Seconds after start (or a reset) during which slow frames — streaming, shader compiles — are not judged. */
+      warmup: 3,
+    },
   },
 
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────
@@ -1854,7 +1890,42 @@ export const CONFIG = {
         regroupS: 55,
         /** Wrecks on the track are bypassed this far to the side, m. */
         bypass: 7,
+        /** Closest a follower may close up on the vehicle ahead (centre to centre), m. */
+        minGap: 13,
+        /** Pivot turns at the ends of a lane (deg/s): tracked hulls neutral-steer, wheeled ones shuffle round slower. */
+        turnRateDeg: [24, 14] as [number, number],
+        /** Pause (s) at each end of the lane before and after turning round. */
+        endPauseS: 4,
+        /** Speed while pulling off the road to scatter, m/s, and the angle off the road, deg. */
+        scatterSpeed: 4.5,
+        scatterAngleDeg: 42,
+        /** Dust kicked up behind a moving vehicle: puffs per metre driven, and the colour (linear, HDR-calibrated). */
+        dustPerM: 0.3,
+        dustColor: [0.42, 0.35, 0.25] as [number, number, number],
       },
+      /**
+       * The column drives the real farm lane through the range (read from the road network): the
+       * longest stretch of a lane of these kinds within `radius` m of the site that stays off farm
+       * yards and water, ≥ minLength m (it may pass under a hedgerow's canopy for ≤ maxCanopy m); the
+       * column turns round at each end where every vehicle has a clear circle of `turnClear` m.
+       */
+      route: { kinds: ['drive', 'lane', 'access'] as string[], radius: 800, minLength: 650, turnClear: 4.6, endMargin: 14, maxCanopy: 40 },
+      /**
+       * Soft contact shadows / ambient occlusion under every vehicle (multiplied onto the ground), and
+       * their sun-cast shadow (reach ≤ castMax m); the occlusion's soft rim widens by `grow`·distance
+       * (a dark patch that still reads from 2 km), fading a little over farFade m; lift/pull as the roads'.
+       */
+      shadow: { strength: 0.8, castMax: 5.5, farFade: [2500, 9000] as [number, number], lift: 0.0017, pull: 0.0016, grow: 0.0008 },
+      /** Earth berms and revetments (fresh-dug earth, linear albedo). */
+      berm: { color: [0.105, 0.078, 0.05] as [number, number, number], grass: [0.05, 0.062, 0.028] as [number, number, number] },
+      /**
+       * Far vehicles are drawn a little larger (a game-visibility aid, like other sims' "model
+       * enlargement"): scale 1 up to `far[0]` m, growing to `far[2]` at `far[1]` m and beyond. Hit boxes
+       * are unchanged (the centre is the same, so the pipper still lands on the hull).
+       */
+      farScale: [900, 2600, 1.45] as [number, number, number],
+      /** Turrets traverse (deg/s) between scan bearings every scanS s. The ZSU's radar dish spins (rev/s). */
+      turret: { slewDeg: 16, scanS: [4, 10] as [number, number], radarRevS: 0.55 },
       /** Tank platoon dug in behind berms, facing the airport; AAA site (ZSU-23-4s in revetments); logistics park. */
       platoon: { count: 4, spacing: 42 },
       aaa: { count: 2, spacing: 85 },
@@ -1894,6 +1965,71 @@ export const CONFIG = {
       attack: { name: 'Su-25', length: 15.33, width: 14.36, height: 4.8, health: 90, armor: { front: 0.7, side: 0.8, rear: 0.9, top: 0.85 }, speed: 165, air: true } as TargetClassConfig,
       /** Mi-24 Hind: fuselage + stub wings (the rotor disc isn't solid). */
       helo: { name: 'Mi-24', length: 17.5, width: 6.5, height: 3.9, health: 80, armor: { front: 0.6, side: 0.8, rear: 0.9, top: 0.9 }, speed: 70, air: true } as TargetClassConfig,
+    },
+    /**
+     * Enemy aircraft to shoot down (src/combat/air + the airTargets system): MiG-29 pairs on racetrack
+     * CAPs, a Su-25 pair making attack passes at the range, a Mi-24 pair circling low near it. Game
+     * targets — they never shoot back. Kinematic flight (coordinated banked turns, climbs, speed
+     * changes), deterministic from `seed`. Positions are relative to the range (world.range).
+     */
+    air: {
+      seed: 0x5a1729,
+      /** Flight envelopes per class (kinematic model, src/combat/air/flight.ts). Speeds m/s, rates deg/s. */
+      flight: {
+        fighter: { cruise: 190, min: 120, max: 290, accel: 6, decel: 9, maxG: 7, cruiseBankDeg: 55, breakBankDeg: 80, rollRateDeg: 160, maxClimbDeg: 22, maxDiveDeg: 22, aoaPerG: 1.4, minAglM: 180, noseDownDeg: 0, heloPitch: false },
+        attack: { cruise: 165, min: 105, max: 235, accel: 4, decel: 7, maxG: 6, cruiseBankDeg: 55, breakBankDeg: 75, rollRateDeg: 110, maxClimbDeg: 18, maxDiveDeg: 20, aoaPerG: 1.8, minAglM: 110, noseDownDeg: 0, heloPitch: false },
+        helo: { cruise: 55, min: 18, max: 80, accel: 2.5, decel: 3.5, maxG: 2.2, cruiseBankDeg: 25, breakBankDeg: 50, rollRateDeg: 40, maxClimbDeg: 12, maxDiveDeg: 12, aoaPerG: 0, minAglM: 35, noseDownDeg: 7, heloPitch: true },
+      },
+      /** Pure-pursuit path following: look-ahead = speed × lookaheadS (≥ minLookaheadM); altitude hold time constant, s. */
+      lookaheadS: 4,
+      minLookaheadM: 250,
+      altitudeTauS: 9,
+      /** Terrain avoidance: ground sampled this many seconds ahead; hard floor (never below ground + hardFloorM). */
+      terrainLookS: [0, 2, 4, 7, 11] as number[],
+      hardFloorM: 25,
+      /** MiG-29 pairs on racetrack CAPs: centre (bearing deg / distance m from the range), axis (deg), straight leg (m), altitude (ft MSL). */
+      caps: [
+        { bearingDeg: 355, distanceM: 4200, axisDeg: 80, legM: 5000, altFt: 6500 },
+        { bearingDeg: 290, distanceM: 4500, axisDeg: 20, legM: 4500, altFt: 3800 },
+      ] as { bearingDeg: number; distanceM: number; axisDeg: number; legM: number; altFt: number }[],
+      /** Wingman station: this far behind along the path (m) and to the side (m, + right). */
+      wingman: { trailM: 900, sideM: 350 },
+      /** Su-25 pair: run in from the IP (bearing/distance from the range), pull off pullOffM short, pattern at patternFt, run-in down to runInAglFt. */
+      attack: { ipBearingDeg: 25, ipDistanceM: 9500, pullOffM: 2600, turnRadiusM: 1700, patternFt: 3000, runInAglFt: 1000, trailM: 5200 },
+      /** Mi-24 pair circling near the range: circle centre (bearing/distance from the range), radius, heights AGL (ft). */
+      helo: { bearingDeg: 100, distanceM: 1500, radiusM: 1100, aglFt: [250, 420] as [number, number] },
+      /** Keep-outs: ≥ this from the runway centre (the circuit + 1 km); ≥ playerMinM from the player unless it chases from behind (rear cone, deg). */
+      airportKeepOutM: 3800,
+      playerMinM: 600,
+      chaseConeDeg: 70,
+      /** Evasive break: duration (s), cooldown before another lock-triggered break (s), gun rounds passing within gunNearM (at ≤ gunRangeM) trigger it. */
+      breakS: [5, 8] as [number, number],
+      breakCooldownS: 9,
+      gunNearM: 120,
+      gunRangeM: 2600,
+      /** Flares per salvo, seconds between flares, burn time. */
+      flares: { count: [4, 8] as [number, number], intervalS: 0.18, burnS: 3.2, ejectMs: 30 },
+      /** Replacement after a kill (s); it joins its path ≥ respawnMinDistM from the player. */
+      respawnS: 60,
+      respawnMinDistM: 5000,
+      /** Shoot-down: terminal speeds of the falling wreck and a separated part, spin, fire/smoke on the ground (s), how many wrecks stay. */
+      wreck: {
+        terminalMs: 105,
+        partTerminalMs: 38,
+        heloDescentMs: 17,
+        partChance: 0.6,
+        spinChance: 0.35,
+        fireS: [70, 120] as [number, number],
+        columnS: [200, 320] as [number, number],
+        maxWrecks: 10,
+        maxFires: 3,
+        /** Smoke puffs along the falling trail, every this many metres. */
+        trailStepM: 4.5,
+      },
+      /** Drawing: LOD distances (m, full < lod[0] ≤ low < lod[1] ≤ dot only), far dots from dotFromM, lights. */
+      render: { lod: [650, 5500] as [number, number], dotFromM: 1400, dotMinPx: 2.2, maxDrawM: 16000, lodHysteresis: 0.08 },
+      /** Weapons HUD: the gun lead pipper on a locked aircraft (shown inside leadMaxRangeM, "IN RNG" inside leadInRangeM), px radius at 900 px. */
+      hud: { leadMaxRangeM: 2400, leadInRangeM: 1200, leadRadiusPx: 15 },
     },
     /** Destroyed vehicles come back after a reset (R) or after this long, s (0 = only on reset). */
     respawnS: 0,
@@ -2697,3 +2833,152 @@ export const F16_WEAPONS: WeaponsConfig = {
     ],
   },
 };
+
+/**
+ * Boeing 747-400 "Queen of the Skies" — for giggles, flown light (≈ 220 t: no payload, little fuel)
+ * so it fits Tater Field's 1,600 m runway. Four ~252 kN turbofans, 541 m² swept wing (37.5°).
+ *
+ * GEOMETRY IS FIXED (orchestrator contract, real dimensions: 70.66 m long, 64.44 m span, 19.41 m
+ * tall, 25.6 m wheelbase, wing-gear track 11 m): the 3D model and the physics contact points both
+ * read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch the ground at y = −5.0.
+ * Nose tip z = −32.0 (CG ≈ 32 m aft of the nose), tail end z = +38.66. The physics has three
+ * contacts (nose, left main, right main = the wing-gear bogies); the model draws all 18 wheels
+ * (nose pair, two wing-gear and two body-gear bogies). Captain's eye on the upper-deck flight deck.
+ * Engine pods: inboard x = ±11.9 (intake z ≈ −12), outboard x = ±21.2 (intake z ≈ −3).
+ *
+ * FLIGHT MODEL: placeholder (A-10 derivatives with 747 mass, geometry and engines) until src/physics
+ * calibrates it.
+ */
+function makeB747(): AircraftConfig {
+  const a10 = structuredClone(A10_AIRCRAFT);
+  return {
+    ...a10,
+    name: 'Boeing 747-400',
+    registration: 'N747TT',
+    /** Light: OEW 178.8 t + ~41 t of fuel, no payload. */
+    mass: 220000,
+    /** NASA CR-2144 values at 289 t, scaled by mass. */
+    inertia: { pitch: 34.2e6, yaw: 51.3e6, roll: 18.8e6 },
+    wingArea: 541,
+    wingSpan: 64.44,
+    meanChord: 8.32,
+    oswald: 0.8,
+    aero: {
+      ...a10.aero,
+      cl0: 0.25,
+      clAlpha: 5.0,
+      stallAlphaDeg: 16,
+      cd0: 0.018,
+      cdGear: 0.02,
+      /** Triple-slotted Fowler flaps at 30°. */
+      cdFlapsFull: 0.1,
+      clFlapsFull: 1.3,
+      stallAlphaFlapsShiftDeg: -2,
+      /** Spoilers as speed brakes. */
+      cdSpeedBrake: 0.04,
+    },
+    engine: {
+      ...a10.engine,
+      jet: {
+        ...a10.engine.jet!,
+        /** 4 × ~252 kN (PW4056 / CF6-80C2B1F / RB211-524H class). */
+        milThrustN: 1008000,
+        maxThrustN: 1008000,
+        idleThrustN: 36000,
+        spoolUpTauIdle: 4.5,
+        spoolUpTauMil: 1.2,
+        spoolDownTau: 2.5,
+        lowSpeedLapse: 1.0,
+        ramDry: 0.6,
+        /** All four combined: the pods hang ~2 m below the CG, so power pitches the nose up. */
+        thrustPoint: { x: 0, y: -2.1, z: -1 },
+      },
+      staticThrustN: 1008000,
+      startTime: 10,
+    },
+    flaps: { notchesDeg: [0, 5, 10, 20, 25, 30], rateDegPerSec: 2, vfeKt: 250, autoWithGearDeg: 0, autoRetractKt: 0 },
+    gear: { retractable: true, transitTime: 10, vleKt: 270, vloKt: 270, retractDelay: 1.5, squatSwitch: true },
+    surfaces: { elevatorMaxDeg: 20, aileronMaxDeg: 20, rudderMaxDeg: 30, flapMaxDeg: 30, trimTabMaxDeg: 10, nosewheelSteerMaxDeg: 70 },
+    geometry: {
+      ...a10.geometry,
+      length: 70.66,
+      height: 19.41,
+      noseWheel: { x: 0, y: -5.0, z: -23.6 },
+      leftMainWheel: { x: -5.5, y: -5.0, z: 2.0 },
+      rightMainWheel: { x: 5.5, y: -5.0, z: 2.0 },
+      mainWheelRadius: 0.62,
+      noseWheelRadius: 0.62,
+      strutTravel: 0.45,
+      propHub: { x: 0, y: -2.4, z: -12 },
+      propRadius: 1.35,
+      spinnerTip: { x: 0, y: 0, z: -32.0 },
+      pilotEye: { x: -0.55, y: 3.9, z: -28.6 },
+      wingRootLeadingEdge: { x: 0, y: -2.2, z: -9 },
+      wingRootChord: 14.5,
+      wingTipChord: 4.1,
+      wingTaperStart: 0.3,
+      dihedralDeg: 7,
+      horizontalTail: { x: 0, y: 1.5, z: 34, span: 22.17, chord: 5.5 },
+      verticalTailTop: { x: 0, y: 14.41, z: 37.5 },
+      structuralPoints: [
+        { name: 'noseTip', x: 0, y: 0, z: -32.0 },
+        { name: 'chin', x: 0, y: -2.6, z: -28 },
+        { name: 'bellyForward', x: 0, y: -3.2, z: -15 },
+        { name: 'bellyMid', x: 0, y: -3.3, z: 0 },
+        { name: 'bellyAft', x: 0, y: -2.9, z: 16 },
+        /** Tail strike at ≈ 10° of pitch on the ground. */
+        { name: 'tailBumper', x: 0, y: -0.6, z: 26.5 },
+        { name: 'tailcone', x: 0, y: 1.2, z: 38.6 },
+        { name: 'finTop', x: 0, y: 14.41, z: 37.5 },
+        { name: 'leftWingtip', x: -32.22, y: 1.4, z: 21 },
+        { name: 'rightWingtip', x: 32.22, y: 1.4, z: 21 },
+        { name: 'leftStab', x: -11.08, y: 2.2, z: 36 },
+        { name: 'rightStab', x: 11.08, y: 2.2, z: 36 },
+        { name: 'leftInboardEngine', x: -11.9, y: -3.75, z: -9.5 },
+        { name: 'rightInboardEngine', x: 11.9, y: -3.75, z: -9.5 },
+        { name: 'leftOutboardEngine', x: -21.2, y: -2.9, z: -1.5 },
+        { name: 'rightOutboardEngine', x: 21.2, y: -2.9, z: -1.5 },
+        { name: 'upperDeckRoof', x: 0, y: 5.2, z: -26 },
+      ],
+    },
+    ground: {
+      ...a10.ground,
+      /** ~1 MN per main (wing + body gear lumped), ~170 kN on the nose; ~0.15 m / 0.12 m static compression. */
+      springMain: 6.7e6,
+      damperMain: 9.0e5,
+      springNose: 1.4e6,
+      damperNose: 1.7e5,
+      brakeFriction: 0.45,
+      steeringFadeSpeed: 15,
+      steeringMinFraction: 0.05,
+    },
+    fbw: null,
+    limits: {
+      ...a10.limits,
+      vsoKt: 115,
+      vs1Kt: 140,
+      vrKt: 150,
+      vxKt: 180,
+      vyKt: 250,
+      vaKt: 250,
+      vnoKt: 340,
+      /** VMO 365 KIAS. */
+      vneKt: 365,
+      gLimitPos: 2.5,
+      gLimitNeg: -1,
+      structuralFailureG: 3.75,
+      structuralFailureNegG: -1.5,
+      overspeedFailureFactor: 1.15,
+      maxAngularRate: 3,
+    },
+    landing: { ...a10.landing, butterFpm: 100, smoothFpm: 250, firmFpm: 450, hardFpm: 700, maxBankDeg: 8, minPitchDeg: -1 },
+    spawn: {
+      /** The tail is 38.7 m behind the CG: start with the CG 45 m past the threshold. */
+      runwayStartOffset: 45,
+      /** 3° final from 9 km at 150 kt, gear down, flaps 30 (notch 5). */
+      approach: { distance: 9000, height: 470, speedKt: 150, flapsNotch: 5, throttle: 0.5, aimPointM: 350 },
+    },
+  };
+}
+
+export const B747_AIRCRAFT: AircraftConfig = makeB747();

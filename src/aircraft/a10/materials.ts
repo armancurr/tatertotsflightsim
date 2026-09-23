@@ -5,13 +5,16 @@
  * over every painted/parts material (`char` uniform).
  */
 import * as THREE from 'three';
-import { createPartsMaterial } from '../materials';
+import { addCabinFill, createPartsMaterial } from '../materials';
 
 export interface A10Textures {
   map: THREE.Texture;
   roughness: THREE.Texture;
   bump: THREE.Texture;
+  /** MFCD pages, lamp faces, CDU (unlit). */
   screens: THREE.Texture;
+  /** Front dash and console tops (lit). */
+  panel: THREE.Texture;
 }
 
 export interface A10Materials {
@@ -29,6 +32,8 @@ export interface A10Materials {
   lamp: THREE.MeshBasicMaterial;
   glow: THREE.ShaderMaterial;
   char: { value: number };
+  /** Cockpit bounce light (linear RGB irradiance), set from the scene's sun every frame. */
+  cabinFill: { value: THREE.Color };
   all: THREE.Material[];
 }
 
@@ -87,6 +92,8 @@ export function createA10Materials(tex: A10Textures | null): A10Materials {
   if (!tex) paint.roughness = 0.65;
   const parts = createPartsMaterial('a10-parts');
   const interior = createPartsMaterial('a10-interior');
+  const cabinFill = { value: new THREE.Color(0, 0, 0) };
+  addCabinFill(interior, cabinFill);
   addA10Soot(paint, char, 'a10-paint');
   addA10Soot(parts, char, 'a10-parts');
 
@@ -114,8 +121,9 @@ export function createA10Materials(tex: A10Textures | null): A10Materials {
     envMapIntensity: 0.6,
   });
   premultipliedGlass(hud, 'a10-hud');
-  const screens = new THREE.MeshBasicMaterial({ name: 'a10.screens', color: tex ? 0x9a9a9a : 0x061006, map: tex?.screens ?? null });
-  const panel = new THREE.MeshStandardMaterial({ name: 'a10.panel', color: tex ? 0xffffff : 0x2a2d30, map: tex?.screens ?? null, roughness: 0.8, metalness: 0 });
+  const screens = new THREE.MeshBasicMaterial({ name: 'a10.screens', color: tex ? 0xa8a8a8 : 0x061006, map: tex?.screens ?? null });
+  const panel = new THREE.MeshStandardMaterial({ name: 'a10.panel', color: tex ? 0xffffff : 0x4a5157, map: tex?.panel ?? null, roughness: 0.78, metalness: 0 });
+  addCabinFill(panel, cabinFill);
   const gunBlur = new THREE.MeshStandardMaterial({
     name: 'a10.gunBlur',
     color: 0x2c2e30,
@@ -171,7 +179,7 @@ export function createA10Materials(tex: A10Textures | null): A10Materials {
   });
 
   const all: THREE.Material[] = [paint, parts, interior, canopy, hud, screens, panel, gunBlur, nav, strobe, lamp, glow];
-  return { paint, parts, interior, canopy, hud, screens, panel, gunBlur, nav, strobe, lamp, glow, char, all };
+  return { paint, parts, interior, canopy, hud, screens, panel, gunBlur, nav, strobe, lamp, glow, char, cabinFill, all };
 }
 
 /** Glass: diffuse tint scaled by opacity, reflections at full strength (premultiplied blend). */

@@ -116,16 +116,39 @@ describe('licence and community files', () => {
 
 describe('CI workflow', () => {
   const ci = read('.github/workflows/ci.yml');
-  it('runs on Linux for two Node versions: npm ci → Playwright Chromium → typecheck → test → build → artifact', () => {
-    expect(ci).toMatch(/runs-on:\s*ubuntu-latest/);
-    expect(ci).toMatch(/node-version:\s*\[\s*\d+\s*,\s*\d+\s*\]/);
-    const order = ['npm ci', 'npx playwright install --with-deps chromium', 'npm run typecheck', 'npm test', 'npm run build', 'actions/upload-artifact'];
+  const job = (name: string) => {
+    const m = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [a-z0-9-]+:\\n|(?![\\s\\S]))`, 'm').exec(ci);
+    expect(m, `job ${name}`).not.toBeNull();
+    return m![1];
+  };
+  const inOrder = (text: string, order: string[]) => {
     let at = -1;
     for (const step of order) {
-      const i = ci.indexOf(step);
+      const i = text.indexOf(step, at + 1);
       expect(i, step).toBeGreaterThan(at);
       at = i;
     }
+  };
+
+  it('every push/PR, on Linux for two Node versions: npm ci → typecheck → unit/fuzz/functional tests → build → sub-path build → artifact', () => {
+    const test = job('test');
+    expect(ci).toMatch(/^\s*push:/m);
+    expect(ci).toMatch(/^\s*pull_request:/m);
+    expect(test).toMatch(/runs-on:\s*ubuntu-latest/);
+    expect(test).toMatch(/node-version:\s*\[\s*\d+\s*,\s*\d+\s*\]/);
+    inOrder(test, ['npm ci', 'npm run typecheck', 'npx vitest run --exclude "**/*.e2e.test.ts"', 'npm run build', '--base=/', 'actions/upload-artifact']);
+    // No browser here: CPU-only runners draw WebGL at well under 1 fps.
+    expect(test).not.toMatch(/playwright install/);
+    expect(Number(/timeout-minutes:\s*(\d+)/.exec(test)![1])).toBeLessThanOrEqual(45);
+  });
+
+  it('the browser end-to-end tests run nightly and on demand, with Playwright Chromium and a generous timeout', () => {
+    const e2e = job('e2e');
+    expect(ci).toMatch(/schedule:\s*\n\s*- cron:/);
+    expect(ci).toMatch(/workflow_dispatch:/);
+    expect(e2e).toMatch(/if:.*schedule.*workflow_dispatch/);
+    inOrder(e2e, ['npm ci', 'npx playwright install --with-deps chromium', 'npx vitest run .e2e.test.ts']);
+    expect(Number(/timeout-minutes:\s*(\d+)/.exec(e2e)![1])).toBeGreaterThanOrEqual(90);
   });
 
   it('the Node versions CI tests all satisfy engines.node', () => {

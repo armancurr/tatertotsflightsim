@@ -17,6 +17,8 @@ import type { BuildingSpot } from '../layout';
 import type { LightDef } from './lights';
 import { WINDSOCK_MAST } from './windsock';
 import type { HeightFn } from './ground';
+import { fireStation, flightSchool, fuelFarm, glideslope, localizerArray, tHangarRow, vorStation } from './facilities';
+import { fromRunwayCoords } from '../runway';
 
 const DEG = Math.PI / 180;
 const rotOf = (headingDeg: number) => -headingDeg * DEG;
@@ -496,6 +498,55 @@ function windsockSite(b: MeshBuilder, plan: AirportPlan, heightAt: HeightFn) {
   }
 }
 
+// ─── the field's buildings and navaids (facilities.ts) ────────────────────────
+
+function fieldBuildings(b: MeshBuilder, plan: AirportPlan, heightAt: HeightFn) {
+  for (const f of plan.field.buildings) {
+    if (f.kind === 'maintHangar') continue; // a HangarPlan (plan.hangars)
+    const p = fromRunwayCoords(f.a, f.c, plan.rw);
+    b.pushTR(p.x, heightAt(p.x, p.z), p.z, rotOf(f.headingDeg));
+    switch (f.kind) {
+      case 'thangar':
+        tHangarRow(b, f.width, f.depth, 10, f.seed ?? 0);
+        break;
+      case 'flightSchool':
+        flightSchool(b, 26, 14);
+        break;
+      case 'fireStation':
+        fireStation(b, 36, 22, 3);
+        break;
+      case 'fuelFarm':
+        fuelFarm(b);
+        break;
+      case 'vor':
+        vorStation(b);
+        break;
+      case 'localizer':
+        localizerArray(b, 30);
+        break;
+      case 'glideslope':
+        glideslope(b);
+        break;
+    }
+    b.pop();
+  }
+}
+
+/** A plain windsock mast (the sock itself is the instanced windsock mesh). */
+function sockMast(b: MeshBuilder, x: number, z: number, heightAt: HeightFn) {
+  const g = heightAt(x, z);
+  b.pushTR(x, g, z, 0);
+  b.set({ mat: MAT.concrete, color: 0xb3aea4 });
+  b.cylinder(0, -0.1, 0, 0.4, 0.22, 10);
+  b.set({ mat: MAT.paint, color: 0xe9e7e2 });
+  b.tube([0, 0.12, 0], [0, WINDSOCK_MAST.height, 0], 0.07, 0.05, 8);
+  b.set({ mat: MAT.metal, color: 0x5a5f63 });
+  b.cylinder(0, WINDSOCK_MAST.height - 0.1, 0, 0.07, 0.25, 8);
+  b.set({ mat: MAT.lamp, color: 0xd02010 });
+  b.cylinder(0, WINDSOCK_MAST.height + 0.15, 0, 0.07, 0.14, 8);
+  b.pop();
+}
+
 // ─── light fixtures ───────────────────────────────────────────────────────────
 
 function fixtures(b: MeshBuilder, lights: readonly LightDef[], heightAt: HeightFn, plan: AirportPlan) {
@@ -520,6 +571,16 @@ function fixtures(b: MeshBuilder, lights: readonly LightDef[], heightAt: HeightF
       }
       default:
         break;
+    }
+    if (l.kind === 'reil') {
+      b.set({ mat: MAT.paint, color: 0xd8b21a });
+      b.tube([l.x, g - 0.02, l.z], [l.x, g + h - 0.15, l.z], 0.04, 0.035, 5);
+      b.pushTR(l.x, g + h, l.z, rotOf(l.facingDeg ?? 0));
+      b.set({ mat: MAT.metal, color: 0x2e3134 });
+      b.box(-0.16, -0.16, -0.12, 0.16, 0.14, 0.2, '');
+      b.set({ mat: MAT.lamp, color: 0xf2f6ff });
+      b.poly(circle(0, -0.01, -0.125, 0.11), [0, 0, -1], { wallUV: true });
+      b.pop();
     }
     if (l.kind === 'approach' || l.kind === 'rabbit') {
       b.set({ mat: MAT.paint, color: 0xd8d8d2 });
@@ -665,6 +726,8 @@ export function buildStructures(plan: AirportPlan, lights: readonly LightDef[], 
   for (const h of plan.hangars) (h.roof === 'arched' ? archedHangar : gabledHangar)(b, h, gAt(h.spot));
   fuelStation(b, plan, heightAt);
   windsockSite(b, plan, heightAt);
+  fieldBuildings(b, plan, heightAt);
+  for (const w of plan.field.windsocks) sockMast(b, w.x, w.z, heightAt);
   fixtures(b, lights, heightAt, plan);
   fencePosts(b, plan, heightAt);
   return b.toGeometry(['color', 'mat', 'uv']);

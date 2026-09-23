@@ -59,9 +59,30 @@ const mod: SystemModule = {
       if (!d) return;
       audio.impact({ speed: num(d.speed), distanceM: distanceTo(vec(d.position)) });
     };
-    const unlock = () => void audio.resume();
-    w.addEventListener?.('keydown', unlock);
-    w.addEventListener?.('pointerdown', unlock);
+    // Unlock on the first gesture. iOS Safari only counts pointerup/touchend (not a touch pointerdown) as activation.
+    let hidden = false;
+    const unlock = () => {
+      if (!hidden) void audio.resume();
+    };
+    const UNLOCK = ['keydown', 'pointerdown', 'pointerup', 'touchend'] as const;
+    for (const t of UNLOCK) w.addEventListener?.(t, unlock);
+    // A hidden tab stops the frame loop (no requestAnimationFrame), which would leave the engine droning
+    // at its last level: suspend the context while hidden, resume (if it was running) when shown again.
+    const doc = typeof document !== 'undefined' ? document : null;
+    let suspendedByUs = false;
+    const onVisibility = () => {
+      const c = audio.context as AudioContext | null;
+      hidden = !!doc?.hidden;
+      if (!c || typeof c.suspend !== 'function') return;
+      if (hidden && c.state === 'running') {
+        suspendedByUs = true;
+        void c.suspend().catch(() => {});
+      } else if (!hidden && suspendedByUs) {
+        suspendedByUs = false;
+        void c.resume().catch(() => {});
+      }
+    };
+    doc?.addEventListener('visibilitychange', onVisibility);
     w.addEventListener?.('sim:explosion', onExplosion);
     w.addEventListener?.('sim:impact', onImpact);
 
@@ -205,8 +226,8 @@ const mod: SystemModule = {
       dispose() {
         unsubscribe?.();
         audio.dispose();
-        w.removeEventListener?.('keydown', unlock);
-        w.removeEventListener?.('pointerdown', unlock);
+        for (const t of UNLOCK) w.removeEventListener?.(t, unlock);
+        doc?.removeEventListener('visibilitychange', onVisibility);
         w.removeEventListener?.('sim:explosion', onExplosion);
         w.removeEventListener?.('sim:impact', onImpact);
         if (w.runAudioSelfTest === runAudioSelfTest) delete w.runAudioSelfTest;
