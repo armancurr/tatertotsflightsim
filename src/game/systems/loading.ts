@@ -11,6 +11,7 @@ import { CONFIG } from '../../config';
 import { createLoadingVeil, type LoadingVeil } from '../../ui/veil';
 import { loadAircraftChoice, safeLocalStorage } from '../../ui/picker';
 import { FLEET, getAircraftDef } from '../../fleet';
+import { departureRunwayName } from '../../world/runway';
 import type { SystemModule } from './types';
 
 /** The aircraft the app is about to build: ?aircraft=, else the remembered choice, else the default. */
@@ -22,6 +23,15 @@ function aircraftName(): string {
     return getAircraftDef(id).name;
   } catch {
     return CONFIG.aircraft.name;
+  }
+}
+
+/** The runway end the app starts on (?rwy=, else the default). */
+function runwayName(): string {
+  try {
+    return departureRunwayName(new URLSearchParams(location.search).get('rwy'));
+  } catch {
+    return '36';
   }
 }
 
@@ -39,7 +49,7 @@ function wanted(): boolean {
 
 let veil: LoadingVeil | null = null;
 if (wanted()) {
-  veil = createLoadingVeil(document, CONFIG, { aircraftName: aircraftName() });
+  veil = createLoadingVeil(document, CONFIG, { aircraftName: aircraftName(), runway: runwayName() });
   // One painted frame before the app's synchronous start-up work (capped, in case rAF is paused in a background tab).
   await Promise.race([
     new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0))),

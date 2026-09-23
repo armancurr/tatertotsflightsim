@@ -117,6 +117,15 @@ export function runwayEndFrame(designator: string | null | undefined, cfg: Confi
   return e ? e.frame : null;
 }
 
+/**
+ * Two-digit name of the runway end the app starts on for a `?rwy=` value ('3' or '03' → '03',
+ * '21'); anything that isn't a runway end here starts on the default runway (36/18's first end).
+ */
+export function departureRunwayName(designator: string | null | undefined, cfg: Config = CONFIG): string {
+  const f = runwayEndFrame(designator, cfg) ?? runwayFrame(cfg);
+  return designatorOf(f.headingDeg).padStart(2, '0');
+}
+
 /** Point where the centrelines of two runways cross (null if parallel or outside either runway). */
 export function runwayCrossing(a: RunwayFrame, b: RunwayFrame): { x: number; z: number } | null {
   const den = a.dir.x * b.dir.z - a.dir.z * b.dir.x;

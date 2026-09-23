@@ -204,4 +204,13 @@ describe('loading veil DOM', () => {
     veil = createLoadingVeil(document);
     expect(document.querySelector('.fsv-sub')!.textContent).toContain(CONFIG.aircraft.name);
   });
+
+  it('names the departure runway it was given (?rwy=03 starts on runway 03), default 36', () => {
+    veil = createLoadingVeil(document, CONFIG, { runway: '03' });
+    expect(document.querySelector('.fsv-sub')!.textContent).toMatch(/Runway 03$/);
+    expect(document.querySelector('.fsv-sub')!.textContent).not.toContain('36');
+    veil.dispose();
+    veil = createLoadingVeil(document);
+    expect(document.querySelector('.fsv-sub')!.textContent).toMatch(/Runway 36$/);
+  });
 });

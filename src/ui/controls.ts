@@ -4,7 +4,7 @@
  * mouse and the jet / A-10 notes. `controlGroups()` is pure (tested: nothing bound is ever missing — an unknown new
  * binding lands in Sim); `buildControlsSheet()` renders it (system fonts, no network).
  */
-import { CONFIG, type Config } from '../config';
+import { B747_AIRCRAFT, CONFIG, type Config } from '../config';
 import { keyLabel } from './messages';
 
 export type KeyAction = keyof Config['controls']['keys'];
@@ -56,7 +56,7 @@ const LAYOUT: { id: ControlGroupId; title: string; rows: RowSpec[] }[] = [
       { action: 'Landing gear up / down', parts: ['gear'] },
       { action: 'Brakes (hold)', parts: ['brake'] },
       { action: 'Parking brake', parts: ['parkingBrake'] },
-      { action: 'Speed brake (F-16)', parts: ['speedBrake'] },
+      { action: 'Speed brake (jets) · spoilers (747)', parts: ['speedBrake'] },
       { action: 'Landing light', parts: ['landingLight'] },
     ],
   },
@@ -69,8 +69,16 @@ const LAYOUT: { id: ControlGroupId; title: string; rows: RowSpec[] }[] = [
         parts: ['fireGun'],
         note: () => 'A-10: GAU-8/A 30 mm, 1,150 rounds · F-16: M61A1 20 mm',
       },
-      { action: 'Lock target / next target (Maverick)', parts: ['lockTarget'] },
-      { action: 'Launch a Maverick (after LOCK)', parts: ['fireMissile'], note: () => 'A-10: four AGM-65D, fire-and-forget' },
+      {
+        action: 'Lock target / next target',
+        parts: ['lockTarget'],
+        note: () => 'The vehicle or aircraft nearest the nose: Maverick or Sidewinder',
+      },
+      {
+        action: 'Launch a missile (after LOCK)',
+        parts: ['fireMissile'],
+        note: () => 'AGM-65 Maverick at a vehicle · AIM-9 Sidewinder at an aircraft',
+      },
     ],
   },
   {
@@ -134,6 +142,8 @@ export function controlNotes(cfg: Config = CONFIG): string[] {
     `F-16: push the throttle past ~${cfg.menu.afterburnerFromPct} % for afterburner; ${keyLabel(cfg.controls.keys.speedBrake[0])} opens and closes the speed brake.`,
     `Cessna: full throttle, rotate at about ${CONFIG.aircraft.limits.vrKt} kt, gear up once climbing. Esc opens this menu at any time.`,
     `A-10: the tank range is north of the airport — follow the RANGE caret. ${keyLabel(cfg.controls.keys.lockTarget[0])} locks a Maverick on the vehicle nearest the nose, ${keyLabel(cfg.controls.keys.fireMissile[0])} launches it at LOCK; hold ${keyLabel(cfg.controls.keys.fireGun[0])} to fire the gun at the pipper (hit tanks from above or behind).`,
+    `F-16 and A-10: point the nose at an enemy aircraft, ${keyLabel(cfg.controls.keys.lockTarget[0])} locks a Sidewinder on it, ${keyLabel(cfg.controls.keys.fireMissile[0])} launches it.`,
+    `747: flaps 10 for take-off, rotate at about ${B747_AIRCRAFT.limits.vrKt} kt and ease it off; ${keyLabel(cfg.controls.keys.speedBrake[0])} works the spoilers. Heavy and slow to answer — small inputs, early.`,
   ];
 }
 

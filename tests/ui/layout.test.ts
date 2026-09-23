@@ -123,3 +123,25 @@ describe('HUD layout: cockpit and exterior-jet placement (orchestrator play-test
     }
   });
 });
+
+describe('help sheet (H) placement', () => {
+  it('property: the sheet always sits below the top bar and above the bottom edge, at any window size', async () => {
+    const { HUD_CSS } = await import('../../src/ui/hudStyle');
+    const rule = /\.fsh-help \{([^}]*)\}/.exec(HUD_CSS)![1];
+    const top = /top:\s*calc\(50% \+ (\d+)px\)/.exec(rule);
+    const maxH = /max-height:\s*calc\(100vh - (\d+)px\)/.exec(rule);
+    expect(top, 'top: calc(50% + Npx)').not.toBeNull();
+    expect(maxH, 'max-height: calc(100vh - Mpx)').not.toBeNull();
+    const n = Number(top![1]);
+    const m = Number(maxH![1]);
+    fc.assert(
+      fc.property(fc.integer({ min: 480, max: 2560 }), fc.integer({ min: 400, max: 1600 }), fc.integer({ min: 0, max: 5000 }), (w, h, content) => {
+        const height = Math.min(content, h - m); // translate(-50%, -50%) centres the rendered height on top
+        const y0 = h / 2 + n - height / 2;
+        expect(y0).toBeGreaterThanOrEqual(topBarHeight(w) + 4);
+        expect(y0 + height).toBeLessThanOrEqual(h - 4);
+      }),
+      { numRuns: 300 },
+    );
+  });
+});

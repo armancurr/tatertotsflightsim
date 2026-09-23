@@ -220,6 +220,8 @@ export interface LoadingVeil {
 export interface VeilOptions {
   /** The aircraft about to be flown (default: the config's). */
   aircraftName?: string;
+  /** The runway end it starts on, e.g. '03' for ?rwy=03 (default: '36'). */
+  runway?: string;
 }
 
 export function createLoadingVeil(doc: Document, cfg: Config = CONFIG, opts: VeilOptions = {}): LoadingVeil {
@@ -257,7 +259,7 @@ export function createLoadingVeil(doc: Document, cfg: Config = CONFIG, opts: Vei
   const sub = doc.createElement('div');
   sub.className = 'fsv-sub';
   const ap = cfg.world.airport as { name?: string; icao?: string };
-  sub.textContent = `${opts.aircraftName ?? cfg.aircraft.name} · ${ap.name ?? 'Tater Field'}${ap.icao ? ` (${ap.icao})` : ''} · Runway 36`;
+  sub.textContent = `${opts.aircraftName ?? cfg.aircraft.name} · ${ap.name ?? 'Tater Field'}${ap.icao ? ` (${ap.icao})` : ''} · Runway ${opts.runway ?? '36'}`;
   const progress = doc.createElement('div');
   progress.className = 'fsv-progress';
   const track = doc.createElement('div');

@@ -100,8 +100,8 @@ export const HUD_CSS = `
 @keyframes fsh-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 .fsh-help {
-  left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(780px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+  left: 50%; top: calc(50% + 24px); transform: translate(-50%, -50%);
+  width: min(780px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow: auto;
   padding: 20px 24px 22px; border-radius: 16px;
   --fsh-glass-bg: linear-gradient(180deg, rgba(16,22,32,0.86), rgba(6,9,14,0.9));
   font-size: 13px;

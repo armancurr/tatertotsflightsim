@@ -28,7 +28,12 @@ describe('control groups', () => {
     expect(row('lockTarget').keys).toEqual(['T']);
     expect(row('lockTarget').action).toMatch(/lock/i);
     expect(row('fireMissile').keys).toEqual(['Z']);
-    expect(row('fireMissile').action).toMatch(/maverick/i);
+    expect(row('fireMissile').action).toMatch(/missile/i);
+    // Both missiles are documented: Mavericks at vehicles, Sidewinders at aircraft (T locks either).
+    expect(`${row('lockTarget').action} ${row('lockTarget').note ?? ''}`).toMatch(/maverick/i);
+    expect(`${row('lockTarget').action} ${row('lockTarget').note ?? ''}`).toMatch(/sidewinder/i);
+    expect(`${row('fireMissile').action} ${row('fireMissile').note ?? ''}`).toMatch(/maverick/i);
+    expect(`${row('fireMissile').action} ${row('fireMissile').note ?? ''}`).toMatch(/sidewinder/i);
     expect(JSON.stringify(w)).toMatch(/A-10/);
     // Nothing weapons-related is left over in Sim.
     const sim = controlGroups().find((g) => g.id === 'sim')!;
@@ -60,6 +65,16 @@ describe('control groups', () => {
     expect(cams).toMatch(/drag/i);
     expect(cams).toMatch(/wheel/i);
     expect(controlNotes().join(' ')).toMatch(/afterburner/i);
+  });
+
+  it('documents every aircraft of the fleet: X is the 747 spoilers too, and a 747 note', () => {
+    const all = controlGroups();
+    const sb = all.flatMap((g) => g.rows).find((r) => r.ids.includes('speedBrake'))!;
+    expect(sb.action).toMatch(/spoiler/i);
+    expect(sb.action).toMatch(/747/);
+    const notes = controlNotes().join(' ');
+    for (const who of ['Cessna', 'F-16', 'A-10', '747']) expect(notes).toContain(who);
+    expect(notes).toMatch(/747.*spoiler/i);
   });
 
   it('property: any extra binding added to the config shows up somewhere (the sheet never goes stale)', () => {

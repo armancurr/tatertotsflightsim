@@ -16,6 +16,7 @@ import {
   toRunwayCoords,
   fromRunwayCoords,
   runwayCrossing,
+  departureRunwayName,
 } from '../../src/world/runway';
 
 const [rw36, rw03] = runwayFrames();
@@ -90,6 +91,32 @@ describe('runway ends as departure frames', () => {
     expect(runwayEndFrame('36')).toEqual(runwayFrame());
     expect(runwayEndFrame('9')).toBeNull();
     expect(runwayEndFrame(null)).toBeNull();
+  });
+});
+
+describe('departure runway name (the loading veil, ?rwy=)', () => {
+  it('names the runway end the app starts on, two digits: 03, 21, 18, 36; anything else is the default 36', () => {
+    expect(departureRunwayName('03')).toBe('03');
+    expect(departureRunwayName('3')).toBe('03');
+    expect(departureRunwayName('21')).toBe('21');
+    expect(departureRunwayName('18')).toBe('18');
+    expect(departureRunwayName('36')).toBe('36');
+    expect(departureRunwayName(null)).toBe('36');
+    expect(departureRunwayName('')).toBe('36');
+    expect(departureRunwayName('9')).toBe('36');
+    expect(departureRunwayName('abc')).toBe('36');
+  });
+
+  it('property: the name always denotes the runway end the app will start on', () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.constantFrom('03', '3', '21', '18', '36', '9', '27', '0', '360'), fc.string({ maxLength: 4 })), (param) => {
+        const name = departureRunwayName(param);
+        expect(name).toMatch(/^\d\d$/);
+        const start = runwayEndFrame(param) ?? runwayFrame();
+        expect(runwayEndFrame(name)!.headingDeg).toBeCloseTo(start.headingDeg, 6);
+      }),
+      { numRuns: 200 },
+    );
   });
 });
 
