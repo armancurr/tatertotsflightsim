@@ -187,9 +187,7 @@ describe('control surfaces move the right way', () => {
 });
 
 describe('render budget', () => {
-  it('stays within ~60 draw calls outside the cockpit and a sensible triangle count', () => {
-    const ac = createAircraft();
-    ac.setVisualState(state({ cameraMode: 'chase', propRpm: 2400 }), 1 / 60);
+  const count = (ac: ReturnType<typeof createAircraft>) => {
     let calls = 0;
     let tris = 0;
     ac.root.traverseVisible((o) => {
@@ -199,8 +197,25 @@ describe('render budget', () => {
       const g = m.geometry;
       tris += (g.index ? g.index.count : g.getAttribute('position').count) / 3;
     });
+    return { calls, tris };
+  };
+
+  it('stays within ~60 draw calls outside the cockpit and a sensible triangle count', () => {
+    const ac = createAircraft();
+    ac.setVisualState(state({ cameraMode: 'chase', propRpm: 2400 }), 1 / 60);
+    const { calls, tris } = count(ac);
     expect(calls).toBeLessThanOrEqual(60);
     expect(tris).toBeLessThan(200_000);
+    ac.dispose();
+  });
+
+  it('stays within 60 draw calls from the pilot seat (gear and wells, never visible from there, are skipped)', () => {
+    const ac = createAircraft();
+    ac.setVisualState(state({ cameraMode: 'cockpit', propRpm: 2400 }), 1 / 60);
+    expect(count(ac).calls).toBeLessThanOrEqual(60);
+    expect(ac.root.getObjectByName('gear')!.visible).toBe(false);
+    ac.setVisualState(state({ cameraMode: 'chase' }), 1 / 60);
+    expect(ac.root.getObjectByName('gear')!.visible).toBe(true);
     ac.dispose();
   });
 });

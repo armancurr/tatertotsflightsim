@@ -22,10 +22,10 @@ export interface HingedPart {
 }
 
 export interface WingBuild {
-  /** Plain-paint static geometry (both wings, struts). */
-  paint: THREE.BufferGeometry;
-  /** Tinted static details (fuel caps, pitot, stall-warning inlet, strut cuffs). */
-  parts: THREE.BufferGeometry[];
+  /** Plain-paint static geometry per side (half of the centre section, wing, tip, strut). */
+  paint: { left: THREE.BufferGeometry; right: THREE.BufferGeometry };
+  /** Tinted static details per side (fuel caps, pitot, stall-warning inlet, strut cuffs). */
+  parts: { left: THREE.BufferGeometry[]; right: THREE.BufferGeometry[] };
   ailerons: HingedPart[];
   flaps: HingedPart[];
   /** Nav light / strobe anchor at each tip (body frame), and the landing/taxi lamp spots. */
@@ -72,18 +72,19 @@ export function buildWing(quality: 'high' | 'low'): WingBuild {
   const flapRear = nacaRing({ m, p, t, n: Math.round(n * 0.6), from: WING.flapHinge });
   const ailRear = nacaRing({ m, p, t, n: Math.round(n * 0.6), from: WING.aileronHinge });
 
-  const paint: THREE.BufferGeometry[] = [];
+  const paintL: THREE.BufferGeometry[] = [];
+  const paintR: THREE.BufferGeometry[] = [];
   const ailerons: HingedPart[] = [];
   const flaps: HingedPart[] = [];
 
-  // Centre section across the cabin roof (both sides in one loft).
-  {
-    const xs = [-0.6, -0.3, 0, 0.3, 0.6];
-    const rings = xs.map((x) => place(x < 0 ? -1 : 1, Math.abs(x), full));
-    paint.push(plain(loftGeometry(rings, { capStart: true, capEnd: true })));
-  }
-
   for (const side of [-1, 1] as const) {
+    const paint = side < 0 ? paintL : paintR;
+    // This side's half of the centre section across the cabin roof (split at the centreline so
+    // each wing can separate in a crash).
+    {
+      const xs = side < 0 ? [0.6, 0.3, 0] : [0, 0.3, 0.6];
+      paint.push(plain(loftGeometry(xs.map((ax) => place(side, ax, full)), { capStart: true, capEnd: true })));
+    }
     const lin = (a: number, b: number, k: number) => Array.from({ length: k }, (_, i) => a + ((b - a) * i) / (k - 1));
     // Wing box ahead of the flap.
     paint.push(plain(loftGeometry(lin(0.6, 2.52, 3).map((ax) => place(side, ax, flapFront)), { capStart: true, capEnd: true })));
@@ -115,8 +116,10 @@ export function buildWing(quality: 'high' | 'low'): WingBuild {
   }
 
   // Details.
-  const parts: THREE.BufferGeometry[] = [];
+  const partsL: THREE.BufferGeometry[] = [];
+  const partsR: THREE.BufferGeometry[] = [];
   for (const side of [-1, 1]) {
+    const parts = side < 0 ? partsL : partsR;
     // Fuel filler cap on the upper surface.
     const cap = new THREE.CylinderGeometry(0.036, 0.038, 0.012, 20);
     const c = 0.24;
@@ -134,14 +137,14 @@ export function buildWing(quality: 'high' | 'low'): WingBuild {
     const tube = new THREE.CylinderGeometry(0.007, 0.008, 0.2, 10);
     tube.rotateX(Math.PI / 2);
     tube.translate(lo.x, lo.y - 0.1, lo.z - 0.07);
-    parts.push(tint(mast, 0xb8bcc0, 0.35, 0.8), tint(tube, 0xc4c8cc, 0.3, 0.9));
+    partsL.push(tint(mast, 0xb8bcc0, 0.35, 0.8), tint(tube, 0xc4c8cc, 0.3, 0.9));
   }
   // Stall warning inlet in the left leading edge.
   {
     const le = wingPoint(-1, 1.45, 0.004, 0, { x: 0, y: 0, z: 0 });
     const slot = new THREE.BoxGeometry(0.06, 0.018, 0.012);
     slot.translate(le.x, le.y - 0.01, le.z);
-    parts.push(tint(slot, 0x1a1a1a, 0.6, 0));
+    partsL.push(tint(slot, 0x1a1a1a, 0.6, 0));
   }
   // Strut cuffs where the strut meets wing and fuselage.
   for (const side of [-1, 1]) {
@@ -151,7 +154,7 @@ export function buildWing(quality: 'high' | 'low'): WingBuild {
       const cuff = new THREE.SphereGeometry(1, 14, 8);
       cuff.scale(0.07, 0.05, 0.11);
       cuff.translate(pnt.x, pnt.y + (end === 0 ? 0.02 : -0.015), pnt.z + 0.01);
-      parts.push(tint(cuff, 0xe8e8e4, 0.35, 0));
+      (side < 0 ? partsL : partsR).push(tint(cuff, 0xe8e8e4, 0.35, 0));
     }
   }
 
@@ -169,8 +172,8 @@ export function buildWing(quality: 'high' | 'low'): WingBuild {
   };
 
   return {
-    paint: mergePlain(paint),
-    parts,
+    paint: { left: mergePlain(paintL), right: mergePlain(paintR) },
+    parts: { left: partsL, right: partsR },
     ailerons,
     flaps,
     tipLight: { left: tip(-1), right: tip(1) },

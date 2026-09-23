@@ -3,13 +3,17 @@
  * the analytic fuselage surface (same (t, z) parameterisation as the loft), and
  * the paint scheme is evaluated there in metres: window cut-outs (alpha, used
  * with alphaTest) and their seals, the two-tone swoosh stripe, anti-glare
- * panel, door and cowl panel lines, gear wells and the registration.
+ * panel, door and cowl panel lines, gear wells, and the decals (the Tater
+ * mascot, registration and name — rasterised with canvas 2D in decals.ts).
  *
- * Needs a DOM canvas only for the registration lettering; returns null
- * without one (node tests).
+ * The painter itself (`paintLivery`) is pure: it runs in node, in a worker or on
+ * the main thread. `createFuselageTextures` needs a DOM canvas for the decals and
+ * returns null without one (node tests); its pixels are cached per quality, so
+ * rebuilding the model (aircraft switching) is instant.
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config';
+import { sampleDecal, rasterizeLiveryDecals, type DecalSample, type LiveryDecals } from './decals';
 import { CABIN_Z0, CABIN_Z1 } from './fuselage';
 import { wellCutDistance } from './gearKinematics';
 import {
@@ -46,7 +50,8 @@ export const FIN_UV = { z0: 2.1, z1: 6.05, y0: 0.15, y1: 1.55 };
 
 /** Paint seal band (m) round each window, and the inset of the cabin trim openings. */
 const SEAL = 0.013;
-const CABIN_INSET = 0.028;
+/** Kept just above SEAL so the inner trim hides the wall thickness but the door posts stay slim. */
+export const CABIN_INSET = 0.015;
 
 // ─── 2D distance helpers (side view: p = (z, y)) ─────────────────────────────
 
@@ -56,7 +61,9 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
   const dx = bx - ax;
   const dy = by - ay;
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+  const ex = px - ax - t * dx;
+  const ey = py - ay - t * dy;
+  return Math.sqrt(ex * ex + ey * ey);
 }
 
 /** Signed distance to a convex polygon (negative inside). */
@@ -180,8 +187,10 @@ const PILLAR_DY = PILLAR.y1 - PILLAR.y0;
 const PILLAR_L = Math.hypot(PILLAR_DZ, PILLAR_DY);
 const RW_COS = Math.cos(Math.atan2(REAR_WINDOW.yFront - REAR_WINDOW.yBack, REAR_WINDOW.z1 - REAR_WINDOW.z0));
 
-/** Registration box on the rear fuselage (side view). */
-const REG = { z0: 2.25, z1: 3.45, yBottom: -0.115, yTop: 0.105 };
+/** Signed distance (m, negative inside) to the cabin door outline in side view (z, y). */
+export function doorOutlineDistance(z: number, y: number): number {
+  return doorOutlineSd(z, y);
+}
 
 /**
  * Positive-inside distance (m) to the nearest window opening at a skin point
@@ -199,7 +208,7 @@ export function windowDistance(x: number, y: number, z: number, sec: SectionPara
     if (pY <= sec.widthY) xp = sec.halfWidth;
     else if (pY >= sec.top) xp = 0;
     else xp = sec.halfWidth * Math.pow(1 - Math.pow((pY - sec.widthY) / (sec.top - sec.widthY), sec.nTop), 1 / sec.nTop);
-    const d2 = (y > pY ? 1 : -1) * Math.hypot(ax - xp, y - pY);
+    const d2 = (y > pY ? 1 : -1) * Math.sqrt((ax - xp) * (ax - xp) + (y - pY) * (y - pY));
     const d3 = -0.5 - z;
     d = Math.max(d, Math.min(d1, d2, d3));
   }
@@ -251,6 +260,10 @@ function shade(t: Texel, k: number) {
 
 /** Texel footprint (m) used to anti-alias edges; set per texture. */
 let AA = 0.004;
+/** Texel size along z and around the section (m), for decal filtering; set per texture. */
+let AA_Z = 0.004;
+let AA_Y = 0.003;
+const _ds: DecalSample = { r: 0, g: 0, b: 0, a: 0 };
 /** Coverage of a signed distance (positive inside) over one texel. */
 const cov = (d: number) => (d >= AA * 0.5 ? 1 : d <= -AA * 0.5 ? 0 : d / AA + 0.5);
 /** Coverage of a thin line of half-width w at distance d. */
@@ -263,7 +276,7 @@ function paintSkin(
   nx: number,
   ny: number,
   sec: SectionParams,
-  reg: RegistrationSampler | null,
+  decals: LiveryDecals | null,
   t: Texel,
 ) {
   const ax = Math.abs(x);
@@ -296,12 +309,19 @@ function paintSkin(
     stripe(t, d, fade);
   }
 
-  // Registration (black) on both sides of the rear fuselage.
-  if (reg && side && z > REG.z0 && z < REG.z1 && y > REG.yBottom && y < REG.yTop) {
-    const u = x < 0 ? (z - REG.z0) / (REG.z1 - REG.z0) : (REG.z1 - z) / (REG.z1 - REG.z0);
-    const v = (REG.yTop - y) / (REG.yTop - REG.yBottom);
-    const k = reg(u, v) / 255;
-    if (k > 0) mix(t, [20, 22, 26], t.clear, t.rough, k);
+  // Decals: the mascot (same image both sides, always flying toward the nose), then the
+  // registration and name (mirrored in z on the right so they read from both sides).
+  if (decals && Math.abs(nx) > 0.08) {
+    const edge = smooth(0.08, 0.3, Math.abs(nx));
+    if (decals.art) {
+      sampleDecal(decals.art, z, y, AA_Z, AA_Y, _ds);
+      if (_ds.a > 0) mix(t, [_ds.r, _ds.g, _ds.b], 1, 0.3, _ds.a * edge);
+    }
+    if (decals.text) {
+      const tz = x < 0 ? z : decals.text.z0 + decals.text.z1 - z;
+      sampleDecal(decals.text, tz, y, AA_Z, AA_Y, _ds);
+      if (_ds.a > 0) mix(t, [_ds.r, _ds.g, _ds.b], 1, 0.3, _ds.a * edge);
+    }
   }
 
   // Panel lines: cowl joint and split line, doors, baggage door, tailcone rivet rows.
@@ -363,7 +383,7 @@ function swooshDistance(z: number, y: number): number {
     const b = SWOOSH[Math.min(lo + 1, SWOOSH.length - 1)];
     const dz = b[0] - a[0];
     const dy = b[1] - a[1];
-    const l = Math.hypot(dz, dy) || 1;
+    const l = Math.sqrt(dz * dz + dy * dy) || 1;
     const perp = Math.abs(((y - a[1]) * dz - (z - a[0]) * dy) / l);
     if (perp > 0.3) return (y > a[1] ? 1 : -1) * perp;
   }
@@ -387,58 +407,6 @@ function stripe(t: Texel, d: number, fade: number) {
   if (Math.abs(d) > 0.2) return;
   mix(t, COLORS.navy, 1, 0.28, cov(0.055 - Math.abs(d)) * fade);
   mix(t, COLORS.gold, 1, 0.28, cov(0.0175 - Math.abs(d + 0.095)) * fade);
-}
-
-// ─── Registration lettering ──────────────────────────────────────────────────
-
-type RegistrationSampler = (u: number, v: number) => number;
-
-function makeRegistrationSampler(text: string): RegistrationSampler | null {
-  if (typeof document === 'undefined') return null;
-  const W = 1400;
-  const H = 256;
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#fff';
-  ctx.textBaseline = 'alphabetic';
-  // Block letters, cap height fills the box (FAA-style sans).
-  let size = 300;
-  ctx.font = `700 ${size}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
-  const m = ctx.measureText('N');
-  const cap = m.actualBoundingBoxAscent || size * 0.72;
-  size = Math.floor((size * (H * 0.98)) / cap);
-  ctx.font = `700 ${size}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
-  const width = ctx.measureText(text).width;
-  const sx = Math.min(1, (W * 0.98) / width);
-  ctx.save();
-  ctx.translate(W * 0.01, H * 0.99);
-  ctx.scale(sx, 1);
-  // Slight letter spacing like painted registrations.
-  let penX = 0;
-  for (const ch of text) {
-    ctx.fillText(ch, penX, 0);
-    penX += ctx.measureText(ch).width + size * 0.02;
-  }
-  ctx.restore();
-  const img = ctx.getImageData(0, 0, W, H).data;
-  return (u: number, v: number) => {
-    const fx = u * (W - 1);
-    const fy = v * (H - 1);
-    const x0 = Math.floor(fx);
-    const y0 = Math.floor(fy);
-    if (x0 < 0 || y0 < 0 || x0 >= W - 1 || y0 >= H - 1) return 0;
-    const ax = fx - x0;
-    const ay = fy - y0;
-    const i00 = (y0 * W + x0) * 4 + 3;
-    const i10 = i00 + 4;
-    const i01 = i00 + W * 4;
-    const i11 = i01 + 4;
-    return (img[i00] * (1 - ax) + img[i10] * ax) * (1 - ay) + (img[i01] * (1 - ax) + img[i11] * ax) * ay;
-  };
 }
 
 // ─── Texture generation ──────────────────────────────────────────────────────
@@ -480,16 +448,34 @@ function evalSection(s: SectionParams, sn: number, cs: number, out: { x: number;
   // Implicit-surface gradient of |x/W|^n + |dy/H|^n = 1.
   const gx = (Math.sign(out.x) * Math.pow(px, n - 1)) / s.halfWidth;
   const gy = ((upper ? 1 : -1) * Math.pow(py, n - 1)) / h;
-  const l = Math.hypot(gx, gy) || 1;
+  const l = Math.sqrt(gx * gx + gy * gy) || 1;
   out.nx = gx / l;
   out.ny = gy / l;
 }
 
-export function createFuselageTextures(quality: 'high' | 'low'): FuselageTextures | null {
-  if (typeof document === 'undefined') return null;
-  const reg = makeRegistrationSampler(CONFIG.aircraft.registration);
-  const W = quality === 'high' ? 1024 : 512; // around (u = t, arc length)
-  const H = quality === 'high' ? 2048 : 1024; // along (v = z)
+/** Raw pixels of every livery texture (what the painter produces; transferable from a worker). */
+export interface LiveryPixels {
+  map: Uint8Array;
+  orm: Uint8Array;
+  cabin: Uint8Array;
+  fin: Uint8Array;
+  size: { w: number; h: number; cw: number; ch: number; fw: number; fh: number };
+}
+
+/** Texture sizes per quality. */
+export function liverySizes(quality: 'high' | 'low') {
+  const w = quality === 'high' ? 1024 : 512; // around (u = t, arc length)
+  const h = quality === 'high' ? 2048 : 1024; // along (v = z)
+  return { w, h, cw: w, ch: h / 2, fw: quality === 'high' ? 1024 : 512, fh: quality === 'high' ? 384 : 192 };
+}
+
+/**
+ * Paint every livery texture. Pure (no DOM): `decals` come from `rasterizeLiveryDecals`, or null
+ * for a plain scheme. Deterministic for the same inputs.
+ */
+export function paintLivery(quality: 'high' | 'low', decals: LiveryDecals | null): LiveryPixels {
+  const size = liverySizes(quality);
+  const { w: W, h: H } = size;
   const map = new Uint8Array(W * H * 4);
   const orm = new Uint8Array(W * H * 4);
   const sec: SectionParams = { top: 0, bottom: 0, halfWidth: 1, widthY: 0, nTop: 2, nBot: 2 };
@@ -499,6 +485,8 @@ export function createFuselageTextures(quality: 'high' | 'low'): FuselageTexture
   const p = { x: 0, y: 0, nx: 0, ny: 0 };
   const t: Texel = { r: 0, g: 0, b: 0, a: 255, clear: 1, rough: 0.3 };
   AA = Math.max((FUSE_Z1 - FUSE_Z0) / H, 3.6 / W) * 1.2;
+  AA_Z = (FUSE_Z1 - FUSE_Z0) / H;
+  AA_Y = 3.4 / W;
   for (let r = 0; r < H; r++) {
     const z = FUSE_Z0 + ((r + 0.5) / H) * (FUSE_Z1 - FUSE_Z0);
     fuselageSection(z, sec);
@@ -506,7 +494,7 @@ export function createFuselageTextures(quality: 'high' | 'low'): FuselageTexture
     for (let c = 0; c < W; c++) {
       const th = 2 * Math.PI * angles[c];
       evalSection(sec, Math.sin(th), Math.cos(th), p);
-      paintSkin(p.x, p.y, z, p.nx, p.ny, sec, reg, t);
+      paintSkin(p.x, p.y, z, p.nx, p.ny, sec, decals, t);
       const i = (r * W + c) * 4;
       map[i] = t.r;
       map[i + 1] = t.g;
@@ -520,8 +508,7 @@ export function createFuselageTextures(quality: 'high' | 'low'): FuselageTexture
   }
 
   // Cabin inner shell (same t mapping, its own z range).
-  const CW = W;
-  const CH = H / 2;
+  const { cw: CW, ch: CH } = size;
   const cab = new Uint8Array(CW * CH * 4);
   const ci = { x: 0, y: 0, nx: 0, ny: 0 };
   AA = Math.max((CABIN_Z1 - CABIN_Z0) / CH, 3.6 / CW) * 1.2;
@@ -541,22 +528,54 @@ export function createFuselageTextures(quality: 'high' | 'low'): FuselageTexture
     }
   }
 
+  return { map, orm, cabin: cab, fin: paintFin(size.fw, size.fh, decals), size };
+}
+
+const pixelCache = new Map<string, LiveryPixels>();
+
+/** Wrap painted pixels as the model's textures. */
+export function liveryTextures(px: LiveryPixels): FuselageTextures {
+  const { w, h, cw, ch, fw, fh } = px.size;
+  const fin = dataTexture(px.fin, fw, fh, true);
+  fin.wrapS = THREE.ClampToEdgeWrapping;
   return {
-    map: dataTexture(map, W, H, true),
-    orm: dataTexture(orm, W, H, false),
-    cabin: dataTexture(cab, CW, CH, true),
-    fin: createFinTexture(quality),
+    map: dataTexture(px.map, w, h, true),
+    orm: dataTexture(px.orm, w, h, false),
+    cabin: dataTexture(px.cabin, cw, ch, true),
+    fin,
   };
+}
+
+/**
+ * The fuselage, cabin and fin textures with the full livery (decals drawn on a DOM canvas).
+ * Null without a DOM (node tests). Pixels are cached per quality and registration.
+ */
+export function createFuselageTextures(quality: 'high' | 'low'): FuselageTextures | null {
+  if (typeof document === 'undefined') return null;
+  const registration = CONFIG.aircraft.registration;
+  const key = `${quality}|${registration}`;
+  let px = pixelCache.get(key);
+  if (!px) {
+    const decals = rasterizeLiveryDecals((w, h) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      return { getContext: (type: '2d') => c.getContext(type, { willReadFrequently: true }) };
+    }, registration);
+    px = paintLivery(quality, decals);
+    pixelCache.set(key, px);
+  }
+  return liveryTextures(px);
 }
 
 // ─── Fin ─────────────────────────────────────────────────────────────────────
 
-function createFinTexture(quality: 'high' | 'low'): THREE.DataTexture {
-  const W = quality === 'high' ? 1024 : 512;
-  const H = quality === 'high' ? 384 : 192;
+function paintFin(W: number, H: number, decals: LiveryDecals | null): Uint8Array {
   const data = new Uint8Array(W * H * 4);
   const tx: Texel = { r: 0, g: 0, b: 0, a: 255, clear: 1, rough: 0.3 };
-  AA = Math.max((FIN_UV.z1 - FIN_UV.z0) / W, (FIN_UV.y1 - FIN_UV.y0) / H) * 1.2;
+  const dz = (FIN_UV.z1 - FIN_UV.z0) / W;
+  const dy = (FIN_UV.y1 - FIN_UV.y0) / H;
+  AA = Math.max(dz, dy) * 1.2;
   for (let r = 0; r < H; r++) {
     const y = FIN_UV.y0 + ((r + 0.5) / H) * (FIN_UV.y1 - FIN_UV.y0);
     for (let c = 0; c < W; c++) {
@@ -566,6 +585,10 @@ function createFinTexture(quality: 'high' | 'low'): THREE.DataTexture {
       tx.g = COLORS.white[1];
       tx.b = COLORS.white[2];
       stripe(tx, d, 1);
+      if (decals?.fin) {
+        sampleDecal(decals.fin, z, y, dz, dy, _ds);
+        if (_ds.a > 0) mix(tx, [_ds.r, _ds.g, _ds.b], 1, 0.3, _ds.a);
+      }
       const i = (r * W + c) * 4;
       data[i] = tx.r;
       data[i + 1] = tx.g;
@@ -573,7 +596,5 @@ function createFinTexture(quality: 'high' | 'low'): THREE.DataTexture {
       data[i + 3] = 255;
     }
   }
-  const tex = dataTexture(data, W, H, true);
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  return tex;
+  return data;
 }
