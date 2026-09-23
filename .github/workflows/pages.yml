@@ -26,6 +26,11 @@ jobs:
 
       - run: npm ci
 
+      - name: Typecheck and test (unit, fuzz, functional)
+        run: |
+          npm run typecheck
+          npx vitest run --exclude "**/*.e2e.test.ts"
+
       # Project pages live under https://<owner>.github.io/<repository>/, so every URL in the build
       # needs that prefix. (A user/organisation site named <owner>.github.io lives at the root: use --base=/.)
       - name: Build for https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/

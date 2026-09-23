@@ -17,6 +17,8 @@ interface Job {
 interface Slot {
   worker: Worker;
   inFlight: number;
+  /** Jobs dispatched to this worker and not yet built (re-queued if the worker fails). */
+  jobs: Map<number, Job>;
 }
 
 export class ChunkBuilderPool {
@@ -37,16 +39,21 @@ export class ChunkBuilderPool {
       for (let i = 0; i < workerCount; i++) {
         try {
           const worker = new Worker(new URL('./terrainWorker.ts', import.meta.url), { type: 'module' });
-          const slot: Slot = { worker, inFlight: 0 };
+          const slot: Slot = { worker, inFlight: 0, jobs: new Map() };
           worker.onmessage = (e: MessageEvent) => {
             const m = e.data;
-            if (m?.type !== 'built') return;
+            if (m?.type !== 'built' || !slot.jobs.delete(m.id)) return;
             slot.inFlight--;
             this.inFlight--;
             if (!this.disposed) this.onDone(m.id, m.chunk as ChunkData);
             this.pump();
           };
-          worker.onerror = (err) => console.error('terrain worker error', err.message);
+          // A worker that fails (script not found, module workers unsupported, a crash) must not strand
+          // its tiles: retire it and re-queue them (other workers, else the main thread build them).
+          worker.onerror = (err) => {
+            console.error('terrain worker failed; its tiles are rebuilt elsewhere:', err?.message ?? err);
+            this.retire(slot);
+          };
           worker.postMessage({ type: 'warmup' });
           this.slots.push(slot);
         } catch (err) {
@@ -121,9 +128,30 @@ export class ChunkBuilderPool {
         this.queued.delete(job.id);
         slot.inFlight++;
         this.inFlight++;
+        slot.jobs.set(job.id, job);
         slot.worker.postMessage({ type: 'build', id: job.id, ...job.req });
       }
     }
+  }
+
+  private retire(slot: Slot): void {
+    const i = this.slots.indexOf(slot);
+    if (i < 0) return;
+    this.slots.splice(i, 1);
+    try {
+      slot.worker.terminate();
+    } catch {
+      /* already gone */
+    }
+    this.inFlight -= slot.inFlight;
+    slot.inFlight = 0;
+    for (const job of slot.jobs.values()) {
+      this.queue.push(job);
+      this.queued.set(job.id, job);
+    }
+    slot.jobs.clear();
+    this.dirty = true;
+    this.pump();
   }
 
   dispose(): void {

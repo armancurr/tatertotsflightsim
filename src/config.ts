@@ -1199,6 +1199,26 @@ export const CONFIG = {
     cloudResolution: 0.75,
     /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
     cloudBudgetMs: 2.5,
+    /**
+     * Quality presets (src/render/quality.ts). URL override: ?quality=auto|low|medium|high.
+     * 'auto' (default): start at ≤ startMegapixels of rendered pixels and let dynamic resolution climb
+     * to maxPixelRatio when there is headroom (fast first ramp), down to floorPixelRatio when there
+     * isn't; software renderers and older integrated GPUs start lower (and without MSAA / volumetric
+     * clouds on software). 'high' = start at the cap (the look screenshots are judged by).
+     */
+    quality: {
+      default: 'auto' as 'auto' | 'low' | 'medium' | 'high',
+      /** Rendered megapixels the 'auto' preset starts at (1440×900 at 1× ≈ 1.3). */
+      startMegapixels: 1.3,
+      /** …times this on an older integrated / mobile GPU. */
+      weakGpuStartScale: 0.5,
+      /** Lowest pixel ratio the auto/low/medium presets may drop to (config minPixelRatio is the 'high' floor). */
+      floorPixelRatio: 0.5,
+      /** Seconds of headroom per raise during the first ramp up from the conservative start (then upDelay). */
+      rampUpDelay: 1,
+      /** Seconds after start (or a reset) during which slow frames — streaming, shader compiles — are not judged. */
+      warmup: 3,
+    },
   },
 
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────
