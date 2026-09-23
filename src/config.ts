@@ -2928,7 +2928,10 @@ export const F16_WEAPONS: WeaponsConfig = {
  * Nose tip z = −32.0 (CG ≈ 32 m aft of the nose), tail end z = +38.66. The physics has three
  * contacts (nose, left main, right main = the wing-gear bogies); the model draws all 18 wheels
  * (nose pair, two wing-gear and two body-gear bogies). Captain's eye on the upper-deck flight deck.
- * Engine pods: inboard x = ±11.9 (intake z ≈ −12), outboard x = ±21.2 (intake z ≈ −3).
+ * Engine pods: inboard x = ±11.9 (intake z −7.95), outboard x = ±21.2 (intake z +0.77); wingtip
+ * chord z 14.5 … 18.6; the tail cone ends at z 36.63 and the fin tip is the aftmost point — per
+ * Boeing's 747-400 airport-planning general dimensions (RB211-524H: inlets 24.05 / 32.77 m from
+ * the nose, wingtip 46.5 … 50.8 m, tail cone 68.63 m, body gear 3.07 m behind the wing gear).
  *
  * FLIGHT MODEL (src/physics; calibration table in src/physics/aircraft.ts, tests/physics/b747*.test.ts).
  * Real data: 747-400 OEW 178.8 t, MTOW 396.9 t; wing 541 m², span 64.44 m, MAC 8.32 m, AR 7.7,
@@ -3147,7 +3150,7 @@ function makeB747(): AircraftConfig {
       propRadius: 1.35,
       spinnerTip: { x: 0, y: 0, z: -32.0 },
       pilotEye: { x: -0.55, y: 3.9, z: -28.6 },
-      wingRootLeadingEdge: { x: 0, y: -2.2, z: -9 },
+      wingRootLeadingEdge: { x: 0, y: -2.2, z: -12 },
       wingRootChord: 14.5,
       wingTipChord: 4.1,
       wingTaperStart: 0.3,
@@ -3162,16 +3165,16 @@ function makeB747(): AircraftConfig {
         { name: 'bellyAft', x: 0, y: -2.9, z: 16 },
         /** Tail strike at ≈ 10° of pitch on the ground. */
         { name: 'tailBumper', x: 0, y: -0.6, z: 26.5 },
-        { name: 'tailcone', x: 0, y: 1.2, z: 38.6 },
+        { name: 'tailcone', x: 0, y: 1.3, z: 36.6 },
         { name: 'finTop', x: 0, y: 14.41, z: 37.5 },
-        { name: 'leftWingtip', x: -32.22, y: 1.4, z: 21 },
-        { name: 'rightWingtip', x: 32.22, y: 1.4, z: 21 },
+        { name: 'leftWingtip', x: -32.22, y: 1.4, z: 16.55 },
+        { name: 'rightWingtip', x: 32.22, y: 1.4, z: 16.55 },
         { name: 'leftStab', x: -11.08, y: 2.2, z: 36 },
         { name: 'rightStab', x: 11.08, y: 2.2, z: 36 },
-        { name: 'leftInboardEngine', x: -11.9, y: -3.75, z: -9.5 },
-        { name: 'rightInboardEngine', x: 11.9, y: -3.75, z: -9.5 },
-        { name: 'leftOutboardEngine', x: -21.2, y: -2.9, z: -1.5 },
-        { name: 'rightOutboardEngine', x: 21.2, y: -2.9, z: -1.5 },
+        { name: 'leftInboardEngine', x: -11.9, y: -3.75, z: -6.55 },
+        { name: 'rightInboardEngine', x: 11.9, y: -3.75, z: -6.55 },
+        { name: 'leftOutboardEngine', x: -21.2, y: -2.9, z: 2.17 },
+        { name: 'rightOutboardEngine', x: 21.2, y: -2.9, z: 2.17 },
         { name: 'upperDeckRoof', x: 0, y: 5.2, z: -26 },
       ],
     },
