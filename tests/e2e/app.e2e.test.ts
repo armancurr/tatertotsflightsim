@@ -12,6 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Browser, Page } from 'playwright';
+import { CONFIG, F16_AIRCRAFT, A10_AIRCRAFT, B747_AIRCRAFT } from '../../src/config';
 import {
   detectGpu, e2eTimeScale, launchChrome, mainCanvasSize, readSim, setE2ETimeScale, startViteServer, waitForSim, watchProblems,
   type E2EServer, type GpuInfo, type PageProblems, type Sim,
@@ -195,6 +196,27 @@ describe('flight simulator in Chrome (window.sim + keyboard)', () => {
     // Keeps rendering after the resize.
     const s0 = (await readSim(page))!;
     await waitForSim(page, (s) => (s.time as number) > (s0.time as number) + Math.min(0.5, runSimSeconds) && s.fps > minFps, 'still running after resize', 5000);
+    expect(problems.all()).toEqual([]);
+  }, STEP_TIMEOUT);
+
+  it('F steps the flaps through EVERY notch of the aircraft being flown (747: flaps 25 and 30) and V back to UP, for the whole fleet', async () => {
+    const notches: Record<string, number> = {
+      c172rg: CONFIG.aircraft.flaps.notchesDeg.length,
+      f16: F16_AIRCRAFT.flaps.notchesDeg.length,
+      a10: A10_AIRCRAFT.flaps.notchesDeg.length,
+      b747: B747_AIRCRAFT.flaps.notchesDeg.length,
+    };
+    for (const id of ['b747', 'f16', 'a10', 'c172rg']) {
+      await page.evaluate((a) => (window as unknown as { sim: { selectAircraft(x: string): void } }).sim.selectAircraft(a), id);
+      await waitForSim(page, (s) => s.aircraft === id && s.state === 'ground' && s.flapsNotch === 0, `${id} on the runway`, 10_000);
+      const last = notches[id] - 1;
+      // One press more than there are notches: the lever stops in the last gate.
+      for (let i = 0; i <= last; i++) await press('KeyF');
+      const down = await waitForSim(page, (s) => s.flapsNotch === last, `${id}: flap lever in its last gate (${last})`, 3000);
+      expect(down.flapsNotch, id).toBe(last);
+      for (let i = 0; i < last; i++) await press('KeyV');
+      await waitForSim(page, (s) => s.flapsNotch === 0, `${id}: flap lever back to UP after ${last} × V`, 3000);
+    }
     expect(problems.all()).toEqual([]);
   }, STEP_TIMEOUT);
 });

@@ -279,7 +279,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     // Input → smoothed controls + discrete actions.
     const inFrame = input.frame();
     // While paused, only discrete actions (unpause, cameras, help…) are honoured; control toggles are discarded.
-    const cu = updateControls(controlState, inFrame, paused ? 0 : frameDt);
+    // With the flown aircraft's config: its flap notches bound the F/V lever (the 747 has six gates).
+    const cu = updateControls(controlState, inFrame, paused ? 0 : frameDt, ac);
     if (!paused) controlState = cu.state;
     for (const a of cu.actions) handleAction(a);
     // Systems may add to the pilot's controls (the weapons system sets gunFiring → gun recoil).
