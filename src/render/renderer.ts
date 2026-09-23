@@ -63,6 +63,16 @@ export function toneMappingFromName(name: string): THREE.ToneMapping {
   }
 }
 
+/**
+ * Can EXT_disjoint_timer_query results be attributed to single passes on this
+ * GPU? ANGLE's Metal backend (Chrome/Edge on macOS, Apple GPUs) times whole
+ * command buffers: every pass reports roughly the frame ("clouds 10 ms" for a
+ * pass that costs 0.5 ms synchronised), so the cloud budget must not use it.
+ */
+export function passTimingReliable(rendererString: string): boolean {
+  return !/metal|apple/i.test(rendererString);
+}
+
 export function renderTargetSize(cssWidth: number, cssHeight: number, pixelRatio: number): { width: number; height: number } {
   return {
     width: Math.max(1, Math.floor(cssWidth * pixelRatio)),
@@ -198,7 +208,23 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   }
 
   const baseRender = renderer.render.bind(renderer);
-  const timer = createGpuTimer(renderer.getContext() as WebGL2RenderingContext);
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  const timer = createGpuTimer(gl);
+  // ?gpu=1: flush after every timed pass. ANGLE's Metal backend times whole command buffers, so
+  // without a flush every pass in the same buffer reports roughly the whole frame (misleading).
+  const exactTiming = typeof location !== 'undefined' && new URLSearchParams(location.search).get('gpu') === '1';
+  let rendererString = '';
+  try {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    rendererString = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  } catch {
+    /* no debug info: assume reliable */
+  }
+  const perPassTiming = passTimingReliable(rendererString);
+  const endPass = () => {
+    timer.end();
+    if (exactTiming) gl.flush();
+  };
   let lastFrame = 0;
   const handle: RendererHandle = {
     renderer,
@@ -220,6 +246,60 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     gpuTimer: timer,
   };
 
+  // Live profiling hooks (the game's window.sim has no handle on the renderer):
+  //   window.__render.gpu()            smoothed GPU ms per pass (timer queries; ?gpu=1 for per-pass accuracy)
+  //   window.__render.benchClouds(n)   GPU-synchronised ms of one cloud pass (re-runs it n times on the last frame)
+  let probe: { rt: THREE.WebGLRenderTarget; mat: THREE.ShaderMaterial; scene: THREE.Scene; cam: THREE.Camera } | null = null;
+  const createProbe = () => {
+    const rt = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { tSrc: { value: null } },
+      vertexShader: 'void main() { gl_Position = vec4( position.xy, 0.0, 1.0 ); }',
+      fragmentShader: 'uniform sampler2D tSrc; void main() { gl_FragColor = texture2D( tSrc, vec2( 0.5 ) ) + 0.5; }',
+      depthTest: false,
+      depthWrite: false,
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+    const m = new THREE.Mesh(g, mat);
+    m.frustumCulled = false;
+    const sc = new THREE.Scene();
+    sc.add(m);
+    return { rt, mat, scene: sc, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) as THREE.Camera };
+  };
+  let lastScene: THREE.Scene | null = null;
+  let lastCamera: THREE.Camera | null = null;
+  const benchClouds = (n = 30): number => {
+    const frame = lastScene ? getAtmosphereFrameData(lastScene) : undefined;
+    const clouds = frame?.clouds;
+    if (!clouds || !clouds.active || !target?.depthTexture || !lastCamera) return NaN;
+    const px = new Uint8Array(4);
+    // read back a pixel that depends on the cloud output → blocks until the GPU has finished the passes
+    probe ??= createProbe();
+    const sync = () => {
+      probe!.mat.uniforms.tSrc.value = clouds.outputA;
+      renderer.setRenderTarget(probe!.rt);
+      baseRender(probe!.scene, probe!.cam);
+      renderer.readRenderTargetPixels(probe!.rt, 0, 0, 1, 1, px);
+      renderer.setRenderTarget(null);
+    };
+    const run = (k: number) => {
+      sync();
+      const t0 = performance.now();
+      for (let i = 0; i < k; i++) clouds.render(renderer, target!.depthTexture!, lastCamera!, target!.width, target!.height, pixelRatio, depthMode);
+      sync();
+      return performance.now() - t0;
+    };
+    run(2);
+    const a = run(1);
+    const b = run(n + 1);
+    return Math.round(((b - a) / n) * 1000) / 1000;
+  };
+  if (typeof window !== 'undefined') {
+    const w = window as unknown as { __render?: Record<string, unknown> };
+    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, perPassTiming, pixelRatio: () => pixelRatio, benchClouds };
+  }
+
   function renderPipeline(scene: THREE.Scene, camera: THREE.Camera) {
     const now = performance.now();
     if (lastFrame > 0 && handle.dynamicResolution) {
@@ -232,6 +312,8 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
       return;
     }
     timer.poll();
+    lastScene = scene;
+    lastCamera = camera;
     const frame = getAtmosphereFrameData(scene);
     const clouds = frame?.clouds && frame.clouds.active ? frame.clouds : null;
     // the cloud march needs the scene depth: resolve it from the MSAA buffer only then
@@ -240,20 +322,22 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     renderer.setRenderTarget(target);
     timer.begin('scene');
     baseRender(scene, camera);
-    timer.end();
+    endPass();
     const depth = target.depthTexture;
     if (clouds && depth) {
       timer.begin('clouds');
       clouds.render(renderer, depth, camera, target.width, target.height, pixelRatio, depthMode);
-      timer.end();
-      clouds.gpuMs = timer.get('clouds');
+      endPass();
+      // (NaN = unknown → the budget controller's frame-rate rule; see passTimingReliable)
+      clouds.gpuMs = perPassTiming ? timer.get('clouds') : NaN;
+      clouds.frameGpuMs = perPassTiming ? timer.get('scene') + clouds.gpuMs + timer.get('post') : NaN;
     }
     if (frame?.clouds) frame.clouds.atMinQuality = handle.atMinQuality;
     renderer.setRenderTarget(null);
     output.update(frame, camera, post, clouds, depth, depthMode);
     timer.begin('post');
     baseRender(output.scene, output.camera);
-    timer.end();
+    endPass();
   }
 
   if (hdr) {

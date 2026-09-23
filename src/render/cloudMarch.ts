@@ -22,9 +22,13 @@ export interface MarchParams {
   dtMax: number;
   dtMaxIn: number;
   maxSteps: number;
+  /** In-cloud steps grow by up to (1 + grow)× as the transmittance falls (little is left to see). */
+  grow: number;
+  /** Early exit: the ray is opaque below this transmittance. */
+  tMin: number;
 }
 
-export const DEFAULT_MARCH: MarchParams = { k: 0.06, kIn: 0.015, dtMin: 8, dtMax: 900, dtMaxIn: 250, maxSteps: 128 };
+export const DEFAULT_MARCH: MarchParams = { k: 0.025, kIn: 0.004, dtMin: 8, dtMax: 900, dtMaxIn: 60, maxSteps: 192, grow: 1.5, tMin: 0.02 };
 
 const clamp = (x: number, a: number, b: number) => (x < a ? a : x > b ? b : x);
 
@@ -86,6 +90,128 @@ export function marchSchedule(
     s += dt;
   }
   return n;
+}
+
+/** Coarse step at distance t near (but outside) a cloud column. */
+export function stepOut(t: number, p: MarchParams): number {
+  return nextStep(t, p);
+}
+
+/** Step inside a cloud column at distance t with transmittance T so far. */
+export function stepIn(t: number, T: number, p: MarchParams): number {
+  return nextStepIn(t, p) * (1 + p.grow * (1 - clamp(T, 0, 1)));
+}
+
+/**
+ * Empty-space skip: with a horizontal clearance `free` (m) to the nearest cloud
+ * column (from the weather distance field) the ray can advance free / |dir.xz|
+ * without entering any column (horizontal distance is 1-Lipschitz along the
+ * ray at rate |dir.xz|). 0 without clearance.
+ */
+export function skipDistance(free: number, hLen: number): number {
+  if (!(free > 0)) return 0;
+  const s = free / Math.max(Math.abs(hLen) || 0, 1e-3);
+  return Math.min(s, 1e9);
+}
+
+/** Detail-noise weight: 1 near the camera, faded out between `near` and `far` (m). */
+export function detailLod(t: number, near = 3000, far = 9000): number {
+  const x = clamp((t - near) / (far - near), 0, 1);
+  return 1 - x * x * (3 - 2 * x);
+}
+
+/** Light march toward the sun: tap positions (m along the sun ray) and the segment each stands for. */
+export const LIGHT_TAPS: readonly { at: number; len: number }[] = [
+  { at: 30, len: 60 },
+  { at: 150, len: 180 },
+  { at: 480, len: 480 },
+];
+
+/** Optical depth toward the sun from the 3 taps: Σ σ(at_i)·len_i. */
+export function lightOpticalDepth(sigmaAt: (d: number) => number): number {
+  let tau = 0;
+  for (const tap of LIGHT_TAPS) tau += sigmaAt(tap.at) * tap.len;
+  return tau;
+}
+
+/** What the march asks the cloud field along one ray (distances t along the ray). */
+export interface MarchProbe {
+  /** Length of the ray direction's horizontal component. */
+  hLen: number;
+  /** Conservative horizontal clearance to the nearest column (m); ≤ 0 near/inside one. */
+  free(t: number): number;
+  /** Is the point inside a cloud column (weather map)? */
+  inColumn(t: number): boolean;
+  /** Extinction (1/m) at the point. */
+  sigma(t: number): number;
+}
+
+export interface MarchResult {
+  /** Density samples taken (written as (t, dt) pairs). */
+  samples: number;
+  /** Loop iterations used (skips + coarse steps + samples) ≤ maxSteps. */
+  iterations: number;
+  /** Transmittance at the end. */
+  transmittance: number;
+}
+
+/**
+ * The GPU march loop (volumetricClouds.ts MARCH_FRAGMENT), step for step:
+ * skip empty space with the distance field; coarse steps near clouds; when a
+ * coarse step lands inside a column, back up to where the last step began
+ * (never into skipped, guaranteed-empty space) and re-march finely; in-cloud
+ * steps grow with distance and as the transmittance falls; stop when opaque.
+ */
+export function marchRay(t0: number, t1: number, jitter: number, p: MarchParams, probe: MarchProbe, out: Float64Array, res: MarchResult): MarchResult {
+  res.samples = 0;
+  res.iterations = 0;
+  res.transmittance = 1;
+  if (!(t1 > t0) || !Number.isFinite(t0)) return res;
+  const jit = clamp(Number.isFinite(jitter) ? jitter : 0, 0, 1);
+  let s = t0 + jit * stepOut(t0, p);
+  let sPrev = t0;
+  let wasIn = false;
+  let fineUntil = -Infinity;
+  let T = 1;
+  for (let i = 0; i < p.maxSteps; i++) {
+    if (s >= t1) break;
+    res.iterations++;
+    const fine = s < fineUntil;
+    if (!fine) {
+      const free = probe.free(s);
+      if (free > 0) {
+        const safe = skipDistance(free, probe.hLen);
+        sPrev = s + safe;
+        s += Math.max(safe, stepOut(s, p));
+        wasIn = false;
+        continue;
+      }
+    }
+    const inCol = probe.inColumn(s);
+    if (inCol && !wasIn && !fine && s - sPrev > p.dtMin * 2) {
+      // a coarse step landed inside a column: back up, re-march that stretch finely
+      fineUntil = s;
+      s = sPrev + jit * stepIn(sPrev, T, p);
+      continue;
+    }
+    wasIn = inCol;
+    let dt = inCol || fine ? stepIn(s, T, p) : stepOut(s, p);
+    const t = s;
+    sPrev = s;
+    s += dt;
+    dt = Math.min(dt, t1 - t);
+    if (!inCol) continue;
+    if (res.samples * 2 + 1 < out.length) {
+      out[res.samples * 2] = t;
+      out[res.samples * 2 + 1] = dt;
+    }
+    res.samples++;
+    const sg = probe.sigma(t);
+    T *= Math.exp(-(Number.isFinite(sg) ? Math.max(0, sg) : 0) * dt);
+    if (T < p.tMin) break;
+  }
+  res.transmittance = T;
+  return res;
 }
 
 /** Henyey–Greenstein phase function (normalised over the sphere). */

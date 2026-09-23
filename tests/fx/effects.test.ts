@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import * as THREE from 'three';
 import { createEffects, type Effects } from '../../src/fx';
 import { CONFIG } from '../../src/config';
+import { SPARK_TILE } from '../../src/fx/sprites';
 
 const FX = CONFIG.fx;
 const DT = 1 / 60;
@@ -30,7 +31,7 @@ function run(fx: Effects, cam: THREE.PerspectiveCamera, seconds: number, wind?: 
 function instanceValuesFinite(fx: Effects) {
   const { geo } = parts(fx);
   const n = geo.instanceCount;
-  for (const name of ['iPos', 'iParams', 'iColor', 'iGround']) {
+  for (const name of ['iPos', 'iParams', 'iColor', 'iExtra', 'iVel']) {
     const a = geo.getAttribute(name) as THREE.InstancedBufferAttribute;
     const arr = a.array as Float32Array;
     for (let i = 0; i < n * a.itemSize; i++) if (!Number.isFinite(arr[i])) return false;
@@ -96,14 +97,14 @@ describe('createEffects', () => {
     const fx = make();
     const cam = camera();
     const { geo } = parts(fx);
-    const arrays = ['iPos', 'iParams', 'iColor', 'iGround'].map((n) => geo.getAttribute(n).array);
+    const arrays = ['iPos', 'iParams', 'iColor', 'iExtra', 'iVel'].map((n) => geo.getAttribute(n).array);
     for (let k = 0; k < 8; k++) {
       fx.crash(new THREE.Vector3(k * 5, 31, 0), 160);
       fx.touchdown(new THREE.Vector3(k * 5, 31.2, 40), -800);
       run(fx, cam, 0.4);
       expect(geo.instanceCount).toBeLessThanOrEqual(FX.smokeCapacity + FX.fireCapacity);
     }
-    ['iPos', 'iParams', 'iColor', 'iGround'].forEach((n, i) => expect(geo.getAttribute(n).array).toBe(arrays[i]));
+    ['iPos', 'iParams', 'iColor', 'iExtra', 'iVel'].forEach((n, i) => expect(geo.getAttribute(n).array).toBe(arrays[i]));
   });
   it('skips particles behind the camera', () => {
     const fx = make();
@@ -152,7 +153,9 @@ describe('createEffects', () => {
     const g = vi.spyOn(geo, 'dispose');
     const m = vi.spyOn(mat, 'dispose');
     const t = vi.spyOn(mat.uniforms.uAtlas.value as THREE.Texture, 'dispose');
+    const nz = vi.spyOn(mat.uniforms.uNoise.value as THREE.Texture, 'dispose');
     fx.dispose();
+    expect(nz).toHaveBeenCalled();
     expect(fx.object.parent).toBeNull();
     expect(g).toHaveBeenCalled();
     expect(m).toHaveBeenCalled();
@@ -200,5 +203,64 @@ describe('createEffects', () => {
         expect(parts(fx).geo.instanceCount).toBeLessThanOrEqual(FX.smokeCapacity + FX.fireCapacity);
       }
     }), { numRuns: 60 });
+  });
+});
+
+describe('per-particle look data', () => {
+  const attr = (fx: Effects, name: string) => (parts(fx).geo.getAttribute(name) as THREE.InstancedBufferAttribute).array as Float32Array;
+  it('each instance carries its ground height, seed, age fraction and aspect (iExtra) and its velocity (iVel)', () => {
+    const fx = make();
+    const cam = camera(new THREE.Vector3(0, 8, 40), new THREE.Vector3(0, 3, 0));
+    fx.sim.addFire(0, 1, 0, 0, 1, 60, 2, true);
+    run(fx, cam, 1.5);
+    fx.sim.sparks(3, 2, 0, 0, 6, 0, 30);
+    run(fx, cam, 0.2);
+    const n = parts(fx).geo.instanceCount;
+    expect(n).toBeGreaterThan(20);
+    const ex = attr(fx, 'iExtra'), vel = attr(fx, 'iVel'), par = attr(fx, 'iParams');
+    const seeds = new Set<number>();
+    let sparks = 0, tall = 0;
+    for (let k = 0; k < n; k++) {
+      expect(ex[k * 4]).toBeLessThanOrEqual(1e-3); // fade height: at or below the ground under the fire
+      expect(ex[k * 4]).toBeGreaterThan(-40);
+      seeds.add(ex[k * 4 + 1]);
+      expect(ex[k * 4 + 2]).toBeGreaterThanOrEqual(0); // age fraction
+      expect(ex[k * 4 + 2]).toBeLessThanOrEqual(1);
+      expect(ex[k * 4 + 3]).toBeGreaterThan(0); // aspect
+      if (ex[k * 4 + 3] < 0.7) tall++;
+      if (par[k * 4 + 3] === SPARK_TILE) {
+        sparks++;
+        expect(Math.hypot(vel[k * 4], vel[k * 4 + 1], vel[k * 4 + 2])).toBeGreaterThan(0.5);
+      }
+    }
+    expect(seeds.size).toBe(n); // no two particles alike
+    expect(sparks).toBeGreaterThan(10);
+    expect(tall).toBeGreaterThan(2);
+  });
+  it('the animation clock advances with dt and freezes while paused', () => {
+    const fx = make();
+    const cam = camera();
+    const u = parts(fx).mat.uniforms;
+    run(fx, cam, 0.5);
+    const t0 = u.uTime.value as number;
+    expect(t0).toBeGreaterThan(0.4);
+    for (let k = 0; k < 10; k++) fx.update(cam, 0);
+    expect(u.uTime.value).toBe(t0);
+  });
+  it('the shader animates flames, fireballs and puffs from a tiling noise texture and draws sparks as streaks', () => {
+    const { mat } = parts(make());
+    const noise = mat.uniforms.uNoise.value as THREE.Texture;
+    expect(noise.wrapS).toBe(THREE.RepeatWrapping);
+    expect(noise.wrapT).toBe(THREE.RepeatWrapping);
+    for (const k of ['smokeErosion', 'selfShadow', 'fireballTemperature', 'flameTemperature', 'fireRamp', 'uNoise', 'uTime']) expect(mat.fragmentShader).toContain(k);
+    for (const k of ['pixelScale', 'variation', 'iVel', 'iExtra', 'uShutter']) expect(mat.vertexShader).toContain(k);
+    expect(mat.uniforms.uMinPx.value).toBe(FX.minPixels);
+  });
+  it('the viewport height reaches the shader before each draw (for the minimum pixel size)', () => {
+    const fx = make();
+    const { mesh, mat } = parts(fx);
+    const fake = { getCurrentViewport: (v: THREE.Vector4) => v.set(0, 0, 1440, 900) } as unknown as THREE.WebGLRenderer;
+    mesh.onBeforeRender(fake, new THREE.Scene(), camera(), mesh.geometry, mat, null as unknown as THREE.Group);
+    expect(mat.uniforms.uViewportH.value).toBe(900);
   });
 });

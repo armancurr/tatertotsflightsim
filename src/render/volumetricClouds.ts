@@ -1,38 +1,60 @@
 /**
  * Volumetric cumulus: a raymarched cloud layer rendered at reduced
- * resolution, temporally accumulated, and composited against the scene depth
- * by the output pass (post.ts).
+ * resolution with checkerboard (quarter-pixel) temporal updates, composited
+ * against the scene depth by the output pass (post.ts). ~0.5 ms GPU on an
+ * M2 Max at 1440×900 (window.__render.benchClouds(); the timer queries are
+ * not per-pass accurate on ANGLE/Metal — see cloudBudget.ts).
  *
  * ─── Density ─────────────────────────────────────────────────────────────────
  * The weather map (cloudWeather.ts) gives, per world column, the cloud base
- * (flat condensation level) and the column top (the upper surface of the
- * cloud's puffs). Inside a column the base density ramps up over BASE_SOFT m
- * (sharp flat bases) and down over TOP_SOFT m below the top (domed, soft
- * tops); thin columns at the rim are weaker (EDGE_SOFT). That base shape is
- * eroded by a tileable Perlin-Worley/Worley volume (64³, lobes of 150–600 m)
- * and, near the camera, by a Worley detail volume (32³, 25–200 m billows —
- * wispy at the base, cauliflower at the top). Everything drifts with the wind.
+ * (flat condensation level) and the column interval [bottom, top] = the union
+ * of the cloud's puff spheres: a flat base that rounds up at the rim, bulging
+ * sides, domed tops. The lookup is domain-warped by the shape noise (±sideWarp
+ * m) so the sides wander with height instead of rising as vertical walls.
+ * Inside, the base density ramps up over BASE_SOFT m above the underside and
+ * down over TOP_SOFT m below the top, and is eroded by a tileable
+ * Perlin-Worley/Worley volume (64³, lobes of 150–600 m) and, near the camera
+ * (distance LOD), a Worley detail volume (32³, billows of ⅛–½ detailPeriod —
+ * wispy at the base, cauliflower at the top); the eroded density is
+ * multiplied by edgeSharpness and saturated (crisp surfaces, softened with
+ * distance to avoid sub-pixel sparkle). Everything drifts with the wind.
  *
  * ─── Lighting (per sample, energy-conserving integration, Hillaire 2016) ─────
- *   σ = density · σmax;  S = σ · (E_sun · Σ_i aⁱ·P(μ, cⁱg)·e^{−bⁱ τ_sun} · powder + L_amb)
+ *   σ = density · σmax;  S = σ · (E_sun · (Σ_i aⁱ·P(μ, cⁱg)·e^{−bⁱ τ_sun} · powder + D(h)) + L_amb)
  *   L += T · S · (1 − e^{−σ dt}) / σ;   T ·= e^{−σ dt}
- * τ_sun from a 5-tap light march toward the sun (25 → 400 m), dual-lobe HG
- * phase (strong forward lobe = silver lining when backlit, weak back lobe),
- * three multiple-scattering octaves (a = b = c = ½), a "powder" term that
- * darkens thin sun-facing edges, and sky ambient that fades from the sky
- * colour at the tops to the darker ground-bounce colour at the flat bases.
- * The result is hazed with the same aerial-perspective function as every
- * material (fog.ts), at the transmittance-weighted cloud distance, so distant
- * clouds sink into the horizon haze.
+ * τ_sun from a 3-tap light march toward the sun (cloudMarch.ts LIGHT_TAPS),
+ * dual-lobe HG phase (strong forward lobe = silver lining when backlit, weak
+ * back lobe), three multiple-scattering octaves (a = b = c = ½), a "powder"
+ * term that darkens thin sun-facing edges seen down-sun, D(h) = sunlight
+ * diffusing down through the cloud (bright in-cloud whiteout, darker flat
+ * base), and sky ambient from the sky colour at the tops to the darker
+ * ground-bounce colour at the base, occluded by the column above. The result is
+ * hazed with the same aerial-perspective function as every material (fog.ts)
+ * at the transmittance-weighted cloud distance, so distant clouds sink into
+ * the horizon haze.
  *
- * ─── Sampling ────────────────────────────────────────────────────────────────
- * Steps grow with distance and are finer inside cloud columns (cloudMarch.ts
- * mirrors the schedule); the start offset is a 64² blue-noise rank plus a
- * golden-ratio per-frame offset. Each pixel reprojects its cloud distance into
- * last frame's history (temporal.ts mirrors the math) and blends 1 − alpha of
- * it unless it fell off screen or the occluder depth changed (disocclusion).
- * The march stops at the scene depth, so terrain occludes clouds and clouds
- * cover what lies behind them; the output pass upsamples depth-aware.
+ * ─── Sampling (cloudMarch.ts marchRay mirrors the loop) ─────────────────────
+ * Empty space is skipped with a conservative distance field of the weather
+ * map (horizontal clearance / |dir.xz|); near clouds the ray takes coarse
+ * steps growing with distance; a coarse step that lands inside a column backs
+ * up and re-marches that stretch finely; in-cloud steps grow with distance and
+ * as the transmittance falls; the march stops when opaque. The start offset is
+ * a 64² blue-noise rank plus a golden-ratio per-frame offset.
+ *
+ * ─── Checkerboard temporal reconstruction (temporal.ts mirrors it) ───────────
+ * Pass 1 marches one pixel of every 2×2 block (Bayer order) into a half-size
+ * march buffer. Pass 2 (resolve) rebuilds the full buffer: each pixel
+ * reprojects its cloud point into last frame's buffer (two steps: with the
+ * fresh distance, then with the distance the history saw there), rejects it
+ * off screen or when the occluder depth changed (disocclusion), clamps it to
+ * the range of the fresh 3×3 neighbourhood (no ghosting), and blends: the
+ * freshly marched pixel mixes its new sample in with temporalAlpha, the others
+ * carry the clamped history (giving way to the fresh estimate when the clamp
+ * had to move it far); without usable history the depth-aware upsampled fresh
+ * samples are used (teleport, reset, time-of-day change, newly revealed sky).
+ * The march stops at the scene depth, so terrain and the aircraft occlude
+ * clouds and clouds cover what lies behind them; the output pass upsamples
+ * depth-aware and treats MSAA edge pixels as half near, half far.
  *
  * ─── Outputs (MRT, RGBA16F at cloud resolution) ─────────────────────────────
  *   A: rgb = in-scattered radiance (already hazed), a = transmittance
@@ -40,18 +62,19 @@
  *
  * The same density also feeds the cloud-shadow pass: for each texel of a
  * periodic map on the base plane, the opacity along the sun ray (shape noise
- * included, detail omitted), blurred, and copied into fog.ts's shared
- * `cloudShadowTexture` that every material's fog chunk samples.
+ * and warp included, detail omitted), blurred, and copied into fog.ts's shared
+ * `cloudShadowTexture` that every material's fog chunk samples — the shadows
+ * on the ground are cast by exactly the clouds overhead.
  */
 import * as THREE from 'three';
 import type { CloudField } from './cloudLayout';
-import { BASE_SOFT, COV_SOFT, EDGE_SOFT, TOP_SOFT, createWeatherMap, weatherRasterJob, type WeatherMap } from './cloudWeather';
+import { BASE_SOFT, COV_SOFT, EDGE_SOFT, TOP_SOFT, createDistanceField, warpedClearanceMargin, createWeatherMap, distanceFieldJob, weatherRasterJob, type CloudDistanceField, type WeatherMap } from './cloudWeather';
 import { DETAIL_NOISE, SHAPE_NOISE, noiseVolumeJob } from './cloudNoise';
 import { blueNoiseJob } from './blueNoise';
 import type { JobQueue } from './jobQueue';
-import { DEFAULT_MARCH } from './cloudMarch';
+import { DEFAULT_MARCH, LIGHT_TAPS, type MarchParams } from './cloudMarch';
 import { ATMO_FOG_GLSL, atmoFogData, cloudShadowTexture } from './fog';
-import { frameJitter } from './temporal';
+import { CLAMP_TAKEOVER, HISTORY_BOX_PAD, checkerOffset, frameJitter, marchBufferSize, type PixelOffset } from './temporal';
 import type { DepthMode } from './renderer';
 import type { RGB } from './atmosphereModel';
 import type { Vec3 } from '../types';
@@ -74,13 +97,41 @@ export interface VolumetricCloudsOptions {
   /** Erosion strength of the shape / detail noise (0..1). */
   shapeErosion: number;
   detailErosion: number;
+  /** Eroded density is multiplied by this and saturated (crisp surfaces). */
+  edgeSharpness: number;
+  /** Detail-noise period, m (rounded so the tile holds a whole number of periods). */
+  detailPeriod: number;
+  /** Max horizontal displacement of the weather lookup by the shape noise (m): wandering, non-vertical cloud sides. */
+  sideWarp: number;
   /** Multipliers on sun and ambient light (artistic calibration of the multiple-scattering approximation). */
   sunScale: number;
   ambientScale: number;
-  /** New-sample weight of the temporal accumulation. */
+  /** Weight of a freshly marched sample against its pixel's history (each pixel is marched every 4th frame). */
   temporalAlpha: number;
+  /** Distance-field texels per tile side (empty-space skipping). */
+  distanceSize: number;
+  /** Detail noise fades out by this distance (m). */
+  detailDistance: number;
+  /** Step schedule overrides (cloudMarch.ts DEFAULT_MARCH). */
+  march?: Partial<MarchParams>;
+  lighting: CloudLightingParams;
   /** Shadow map texels per side (must match fog.ts cloudShadowTexture). */
   shadowSize: number;
+}
+
+/** Look of the cloud lighting (config.atmosphere.clouds.volumetric.lighting). */
+export interface CloudLightingParams {
+  /** Forward / backward Henyey–Greenstein asymmetry and the weight of the back lobe. */
+  forwardG: number;
+  backG: number;
+  backWeight: number;
+  /** 0..1: how much thin, sun-facing edges darken when seen down-sun ("powder"). */
+  powder: number;
+  /** Sky light lost deep inside / under a column (0 = none). */
+  ambientOcclusion: number;
+  /** Sunlight diffusing down through a cloud (× sun colour) at its top, and the fraction of it left at the flat base. */
+  diffusion: number;
+  diffusionBase: number;
 }
 
 export interface CloudPassLighting {
@@ -94,6 +145,7 @@ export interface VolumetricClouds {
   /** Noise volumes, weather map and blue noise generated and uploaded. */
   readonly ready: boolean;
   readonly weather: WeatherMap;
+  readonly distanceField: CloudDistanceField;
   /** Global layer bounds used by the march and the composite. */
   readonly layerBottom: number;
   readonly layerTop: number;
@@ -112,6 +164,8 @@ export interface VolumetricClouds {
   render(renderer: THREE.WebGLRenderer, depth: THREE.Texture, camera: THREE.Camera, targetW: number, targetH: number, pixelRatio: number, depthMode: DepthMode): void;
   /** Recompute the cloud-shadow map for a sun direction (GPU, ~0.3 ms) into fog.ts's shared texture. */
   renderShadowMap(renderer: THREE.WebGLRenderer, sunDir: Vec3): void;
+  /** Live uniforms of the march / resolve passes (profiling and look development). */
+  readonly uniforms: { march: Record<string, THREE.IUniform>; resolve: Record<string, THREE.IUniform> };
   dispose(): void;
 }
 
@@ -134,67 +188,58 @@ uniform sampler3D tDetail;
 uniform vec4 uWeather;   // 1/tile, baseMin, baseRange, maxThickness
 uniform vec4 uWind;      // offset x, offset z, 1/shapeTile, 1/detailTile
 uniform vec4 uErosion;   // shape, detail, sigma, max distance
+uniform vec4 uShape;     // edge sharpness, side warp (m), light-march sharpness, sharpness LOD distance (m)
 float cSat( float x ) { return clamp( x, 0.0, 1.0 ); }
 float remap( float v, float lo, float hi, float nlo, float nhi ) { return nlo + ( v - lo ) * ( nhi - nlo ) / max( hi - lo, 1e-5 ); }
-// Base density + relative height in the column; returns 0 outside the column.
-float cloudBase( vec3 p, out float hf, out float colDens ) {
-	vec4 w = texture( tWeather, ( p.xz - uWind.xy ) * uWeather.x + 0.5 );
+// Shape noise at p: erodes the base shape and domain-warps the weather lookup.
+vec4 shapeAt( vec3 p ) {
+	return texture( tShape, vec3( p.x - uWind.x, p.y, p.z - uWind.y ) * uWind.z );
+}
+// Weather column at p (cloudWeather.ts cloudColumnDensity): base density inside [bottom, top] (0 outside) and the
+// relative height hf. The lookup is displaced by up to ±uShape.y m by the shape noise, so the column sides wander
+// with height instead of being vertical extrusions of the weather texels.
+float columnAt( vec3 p, vec4 sn, out float hf ) {
+	vec2 warp = ( sn.gb - 0.5 ) * ( 2.0 * uShape.y );
+	vec4 w = texture( tWeather, ( p.xz + warp - uWind.xy ) * uWeather.x + 0.5 );
 	float top = w.r * uWeather.w;
+	float bot = w.b * uWeather.w;
 	float base = uWeather.y + w.g * uWeather.z;
 	float h = p.y - base;
 	hf = h / max( top, 1.0 );
-	colDens = w.b;
-	if ( top < 1.0 || h <= 0.0 || h >= top ) return 0.0;
-	return cSat( h / ${BASE_SOFT.toFixed(1)} ) * cSat( ( top - h ) / ${TOP_SOFT.toFixed(1)} ) * cSat( top / ${EDGE_SOFT.toFixed(1)} ) * cSat( w.a / ${COV_SOFT.toFixed(3)} );
+	if ( top < 1.0 || h <= bot || h >= top ) return 0.0;
+	return cSat( ( h - bot ) / ${BASE_SOFT.toFixed(1)} ) * cSat( ( top - h ) / ${TOP_SOFT.toFixed(1)} ) * cSat( ( top - bot ) / ${EDGE_SOFT.toFixed(1)} ) * cSat( w.a / ${COV_SOFT.toFixed(3)} );
 }
-float cloudDensity( vec3 p, bool detail ) {
-	float hf, cd;
-	float b = cloudBase( p, hf, cd );
-	if ( b <= 0.0 ) return 0.0;
-	vec3 q = vec3( p.x - uWind.x, p.y, p.z - uWind.y );
-	vec4 sn = texture( tShape, q * uWind.z );
+// Erode a column's base density with the shape noise and (weighted by detailW, the distance LOD) the detail noise.
+float erodeDensity( vec3 p, vec4 sn, float b, float hf, float detailW, float sharp ) {
 	float fbm = sn.g * 0.625 + sn.b * 0.25 + sn.a * 0.125;
 	float shapeN = remap( sn.r, fbm - 1.0, 1.0, 0.0, 1.0 );
 	float d = remap( b, ( 1.0 - shapeN ) * uErosion.x, 1.0, 0.0, 1.0 );
 	if ( d <= 0.0 ) return 0.0;
-	if ( detail ) {
-		vec4 dn = texture( tDetail, q * uWind.w );
-		float m = mix( dn.a, 1.0 - dn.a, cSat( hf * 5.0 ) );
-		d = remap( d, m * uErosion.y, 1.0, 0.0, 1.0 );
+	if ( detailW > 0.01 ) {
+		vec4 dn = texture( tDetail, vec3( p.x - uWind.x, p.y, p.z - uWind.y ) * uWind.w );
+		// wispy (inverted billows) at the base, cauliflower billows toward the top
+		float m = mix( dn.a, 1.0 - dn.a, cSat( hf * 4.0 ) );
+		d = remap( d, m * uErosion.y * detailW, 1.0, 0.0, 1.0 );
 	}
-	return cSat( d ) * cd;
+	return cSat( d * sharp );
+}
+float cloudDensity( vec3 p, float detailW, float sharp ) {
+	vec4 sn = shapeAt( p );
+	float hf;
+	float b = columnAt( p, sn, hf );
+	if ( b <= 0.0 ) return 0.0;
+	return erodeDensity( p, sn, b, hf, detailW, sharp );
 }
 `;
 
-const MARCH_FRAGMENT = /* glsl */ `
-layout( location = 0 ) out highp vec4 outA;
-layout( location = 1 ) out highp vec4 outB;
-${ATMO_FOG_GLSL}
-${DENSITY_GLSL}
+/** Ray + scene clip distance of a cloud-buffer pixel (march and resolve agree exactly). */
+const RAY_GLSL = /* glsl */ `
 uniform sampler2D tDepth;
 uniform vec4 uDepth;        // near, far, mode (0 std, 1 reversed, 2 log), log2(far + 1)
 uniform vec2 uDepthSize;
-uniform vec2 uSize;         // cloud buffer size
 uniform mat4 uInvProj;
 uniform mat4 uCamWorld;
-uniform mat4 uPrevViewProj;
 uniform vec3 uCamPos;
-uniform vec3 uCamFwd;
-uniform sampler2D tHistA;
-uniform sampler2D tHistB;
-uniform vec2 uHist;         // history valid (0/1), alpha
-uniform sampler2D tBlue;
-uniform float uFrameJitter;
-uniform vec4 uLayer;        // bottom, top, sunScale, ambientScale
-uniform vec4 uMarch;        // k, kIn, dtMin, dtMax
-uniform float uDtMaxIn;
-uniform vec3 uSunDir;
-uniform vec3 uSunCol;
-uniform vec3 uAmbTop;
-uniform vec3 uAmbBottom;
-uniform float uDebug;
-varying vec2 vUv;
-
 float linDepth( float d ) {
 	if ( uDepth.z > 0.5 && uDepth.z < 1.5 ) {
 		if ( d <= 0.0 ) return 1e9;
@@ -205,24 +250,58 @@ float linDepth( float d ) {
 	float ndc = d * 2.0 - 1.0;
 	return 2.0 * uDepth.x * uDepth.y / ( uDepth.y + uDepth.x - ndc * ( uDepth.y - uDepth.x ) );
 }
+// uv of the pixel centre in [0,1]² → world ray direction; returns the distance along it to the scene (m).
+float pixelRay( vec2 uv, out vec3 rd ) {
+	vec4 vp = uInvProj * vec4( uv * 2.0 - 1.0, 1.0, 1.0 );
+	vec3 vdir = normalize( vp.xyz / vp.w );
+	rd = normalize( ( uCamWorld * vec4( vdir, 0.0 ) ).xyz );
+	ivec2 dp = ivec2( clamp( floor( uv * uDepthSize ), vec2( 0.0 ), uDepthSize - 1.0 ) );
+	float viewZ = linDepth( texelFetch( tDepth, dp, 0 ).r );
+	return min( viewZ / max( 1e-4, - vdir.z ), 1e6 );
+}
+`;
+
+/**
+ * The march: one ray per 2×2 block of the cloud buffer per frame (the pixel
+ * named by uOffset, Bayer order), into the half-size march buffer. The loop is
+ * cloudMarch.ts marchRay() step for step.
+ */
+const MARCH_FRAGMENT = /* glsl */ `
+layout( location = 0 ) out highp vec4 outA;
+layout( location = 1 ) out highp vec4 outB;
+${ATMO_FOG_GLSL}
+${DENSITY_GLSL}
+${RAY_GLSL}
+uniform sampler2D tBlue;
+uniform sampler2D tDist;
+uniform vec2 uDist;         // metres at code 1.0 (255·unit), margin (m)
+uniform vec2 uFull;         // cloud buffer size (px)
+uniform vec2 uOffset;       // marched pixel inside each 2×2 block this frame
+uniform float uFrameJitter;
+uniform vec4 uLayer;        // bottom, top, sunScale, ambientScale
+uniform vec4 uMarch;        // k, kIn, dtMin, dtMax
+uniform vec4 uMarch2;       // dtMaxIn, grow, tMin, detail LOD far (m)
+uniform vec4 uPhase;        // forward g, back g, back weight, powder strength
+uniform vec4 uLight;        // ambient occlusion by the column above, interior diffusion at the top, fraction left at the base, -
+uniform vec3 uSunDir;
+uniform vec3 uSunCol;
+uniform vec3 uAmbTop;
+uniform vec3 uAmbBottom;
+
 float hg( float mu, float g ) {
 	float g2 = g * g;
 	return ( 1.0 - g2 ) / ( 12.5663706 * pow( max( 1e-4, 1.0 + g2 - 2.0 * g * mu ), 1.5 ) );
 }
-float phase2( float mu, float g1, float g2, float w ) { return mix( hg( mu, g1 ), hg( mu, g2 ), w ); }
+float stepOut( float t ) { return clamp( t * uMarch.x, uMarch.z, uMarch.w ); }
+float stepIn( float t, float T ) { return clamp( t * uMarch.y, uMarch.z, uMarch2.x ) * ( 1.0 + uMarch2.y * ( 1.0 - T ) ); }
+float detailLod( float t ) { return 1.0 - smoothstep( uMarch2.w * 0.33, uMarch2.w, t ); }
 
 void main() {
-	// ray through the centre of this cloud pixel
-	vec2 ndc = vUv * 2.0 - 1.0;
-	vec4 vp = uInvProj * vec4( ndc, 1.0, 1.0 );
-	vec3 vdir = normalize( vp.xyz / vp.w );
-	vec3 rd = normalize( ( uCamWorld * vec4( vdir, 0.0 ) ).xyz );
+	ivec2 px = min( ivec2( gl_FragCoord.xy ) * 2 + ivec2( uOffset ), ivec2( uFull ) - 1 );
+	vec2 uv = ( vec2( px ) + 0.5 ) / uFull;
+	vec3 rd;
+	float clip = pixelRay( uv, rd );
 	vec3 ro = uCamPos;
-	// scene depth under this pixel → distance along the ray
-	ivec2 dp = ivec2( clamp( floor( vUv * uDepthSize ), vec2( 0.0 ), uDepthSize - 1.0 ) );
-	float viewZ = linDepth( texelFetch( tDepth, dp, 0 ).r );
-	float clip = viewZ / max( 1e-4, -vdir.z );
-	clip = min( clip, 1e6 );
 
 	// layer segment
 	float t0 = 0.0, t1 = -1.0;
@@ -242,65 +321,86 @@ void main() {
 	float tw = 0.0;
 	if ( t1 > t0 ) {
 		float mu = dot( rd, uSunDir );
-		float blue = texelFetch( tBlue, ivec2( mod( gl_FragCoord.xy, 64.0 ) ), 0 ).r;
+		float blue = texelFetch( tBlue, px & 63, 0 ).r;
 		float jit = fract( blue + uFrameJitter );
-		// the whole sample sequence is offset by the per-pixel jitter (not just the samples within
-		// fixed segments), so cloud boundaries are hit at different depths per pixel → noise, not bands
-		float s = t0 + jit * clamp( t0 * uMarch.x, uMarch.z, uMarch.w );
+		float hLen = max( length( rd.xz ), 1e-3 );
+		// phase: strong forward lobe (silver lining) + weak back-scatter; octaves halve g
+		float ph0 = mix( hg( mu, uPhase.x ), hg( mu, uPhase.y ), uPhase.z );
+		float ph1 = mix( hg( mu, uPhase.x * 0.5 ), hg( mu, uPhase.y * 0.5 ), uPhase.z );
+		float ph2 = mix( hg( mu, uPhase.x * 0.25 ), hg( mu, uPhase.y * 0.25 ), uPhase.z );
+		// powder: thin sun-facing edges scatter little toward a viewer looking down-sun
+		float powderMix = uPhase.w * cSat( 0.6 - 0.6 * mu );
+		float fadeStart = uErosion.w * 0.6;
+		float s = t0 + jit * stepOut( t0 );
 		float sPrev = t0;
 		bool wasIn = false;
-		float fadeStart = uErosion.w * 0.6;
+		float fineUntil = -1.0;
 		for ( int i = 0; i < ${MAX_STEPS}; i ++ ) {
 			if ( s >= t1 ) break;
 			vec3 p = ro + rd * s;
-			float hf, cd;
-			bool inCol = cloudBase( p, hf, cd ) > 0.0;
-			if ( inCol && !wasIn && s - sPrev > uMarch.z * 2.0 ) {
-				// entered a cloud column on a coarse step: re-march that stretch finely
-				s = sPrev + jit * clamp( sPrev * uMarch.y, uMarch.z, uDtMaxIn );
-				wasIn = true;
+			bool fine = s < fineUntil;
+			if ( !fine ) {
+				// empty-space skip: horizontal clearance to the nearest column (conservative distance field)
+				float free = texture( tDist, ( p.xz - uWind.xy ) * uWeather.x + 0.5 ).r * uDist.x - uDist.y;
+				if ( free > 0.0 ) {
+					float safe = free / hLen;
+					sPrev = s + safe;
+					s += max( safe, stepOut( s ) );
+					wasIn = false;
+					continue;
+				}
+			}
+			vec4 sn = shapeAt( p );
+			float hf;
+			float b = columnAt( p, sn, hf );
+			bool inCol = b > 0.0;
+			if ( inCol && !wasIn && !fine && s - sPrev > uMarch.z * 2.0 ) {
+				// a coarse step landed inside a column: back up and re-march that stretch finely
+				fineUntil = s;
+				s = sPrev + jit * stepIn( sPrev, T );
 				continue;
 			}
 			wasIn = inCol;
-			float dt = inCol ? clamp( s * uMarch.y, uMarch.z, uDtMaxIn ) : clamp( s * uMarch.x, uMarch.z, uMarch.w );
+			float dt = ( inCol || fine ) ? stepIn( s, T ) : stepOut( s );
 			float t = s;
 			sPrev = s;
 			s += dt;
 			dt = min( dt, t1 - t );
 			if ( !inCol ) continue;
-			float dens = cloudDensity( p, t < 9000.0 );
-			dens *= 1.0 - smoothstep( fadeStart, uErosion.w, t );
+			float lod = detailLod( t );
+			// far away the pixel footprint is tens of metres: softer surfaces instead of sub-pixel sparkle
+			float sharp = mix( uShape.x, min( uShape.x, 2.0 ), smoothstep( uShape.w * 0.25, uShape.w, t ) );
+			float dens = erodeDensity( p, sn, b, hf, lod, sharp ) * ( 1.0 - smoothstep( fadeStart, uErosion.w, t ) );
 			if ( dens < 0.003 ) continue;
 			float sigma = dens * uErosion.z;
-			// light march toward the sun
-			float tau = 0.0;
-			float ls = 25.0;
-			vec3 lp = p;
-			for ( int j = 0; j < 5; j ++ ) {
-				lp += uSunDir * ls;
-				tau += cloudDensity( lp, j < 1 && t < 4000.0 ) * ls;
-				ls *= 2.0;
-			}
-			tau *= uErosion.z;
-			float ms = 0.0;
-			float a = 1.0, b = 1.0, c = 1.0;
-			for ( int k = 0; k < 3; k ++ ) {
-				ms += a * phase2( mu, 0.8 * c, -0.3 * c, 0.3 ) * exp( - tau * b );
-				a *= 0.5; b *= 0.5; c *= 0.5;
-			}
-			float powder = 1.0 - exp( - 2.0 * sigma * 40.0 );
-			powder = mix( 1.0, powder, 0.6 * cSat( 0.5 - 0.5 * mu ) );
-			float cloudBaseHf;
-			cloudBase( p, cloudBaseHf, cd );
-			vec3 amb = mix( uAmbBottom, uAmbTop, cSat( 0.15 + cloudBaseHf * 1.1 ) );
-			vec3 src = uSunCol * ( ms * powder * uLayer.z ) + amb * uLayer.w;
+			// light march toward the sun: 3 taps (cloudMarch.ts LIGHT_TAPS)
+			// (softer density for the light: self-shadows between billows fade gradually)
+			float tau = ( cloudDensity( p + uSunDir * ${LIGHT_TAPS[0].at.toFixed(1)}, lod, uShape.z ) * ${LIGHT_TAPS[0].len.toFixed(1)}
+				+ cloudDensity( p + uSunDir * ${LIGHT_TAPS[1].at.toFixed(1)}, 0.0, uShape.z ) * ${LIGHT_TAPS[1].len.toFixed(1)}
+				+ cloudDensity( p + uSunDir * ${LIGHT_TAPS[2].at.toFixed(1)}, 0.0, uShape.z ) * ${LIGHT_TAPS[2].len.toFixed(1)} ) * uErosion.z;
+			// multiple-scattering octaves (energy ½, optical depth ½, anisotropy ½ each)
+			float ms = ph0 * exp( - tau ) + 0.5 * ph1 * exp( - 0.5 * tau ) + 0.25 * ph2 * exp( - 0.25 * tau );
+			float powder = mix( 1.0, 1.0 - exp( - 2.0 * sigma * 45.0 ), powderMix );
+			// sky light: bluish from above at the tops, darker ground bounce under the flat base, dimmed deep inside
+			float up = cSat( 0.1 + hf * 1.15 );
+			vec3 amb = mix( uAmbBottom, uAmbTop, up ) * mix( 1.0, exp( - uLight.x * ( 1.0 - hf ) ), 0.5 );
+			// sunlight diffusing down through the cloud from its sunlit top: roughly linear in height in a
+			// conservative slab (bright in-cloud whiteout; the flat base keeps a fraction uLight.z of it)
+			// (only where the direct light is already attenuated: no double counting on sunlit surfaces)
+			float diffuse = uLight.y * cSat( uSunDir.y * 1.5 + 0.1 ) * mix( uLight.z, 1.0, cSat( hf ) ) * ( 1.0 - exp( - tau ) );
+			vec3 src = uSunCol * ( ms * powder * uLayer.z + diffuse ) + amb * uLayer.w;
 			float Ts = exp( - sigma * dt );
 			float op = T * ( 1.0 - Ts );
 			L += src * op;
 			wsum += op;
 			tw += op * t;
 			T *= Ts;
-			if ( T < 0.015 ) break;
+			if ( T < uMarch2.z ) {
+				// opaque: extrapolate the rest instead of letting 2 % of the background through
+				L /= max( 1.0 - T, 1e-3 );
+				T = 0.0;
+				break;
+			}
 		}
 	}
 	float dist = wsum > 1e-5 ? tw / wsum : ( t1 > t0 ? 0.5 * ( t0 + min( t1, t0 + 8000.0 ) ) : min( clip, 20000.0 ) );
@@ -309,31 +409,103 @@ void main() {
 		vec3 ins = atmoFogScatter( rd * dist, uCamPos.y, Tair );
 		L = L * Tair + ins * ( 1.0 - T );
 	}
-	vec4 cur = vec4( L, T );
-	if ( uDebug > 0.5 ) {
-		float blue = texelFetch( tBlue, ivec2( mod( gl_FragCoord.xy, 64.0 ) ), 0 ).r;
-		if ( uDebug < 1.5 ) { outA = vec4( vec3( blue * 1000.0 ), 0.0 ); outB = vec4( 0.0, 1000.0, 0.0, 1.0 ); return; }
-		if ( uDebug < 2.5 ) { outA = cur; outB = vec4( dist * 0.001, clip * 0.001, 0.0, 1.0 ); return; }
+	outA = vec4( L, T );
+	outB = vec4( dist * 0.001, clip * 0.001, 0.0, 1.0 );
+}
+`;
+
+/**
+ * The resolve: rebuilds the full cloud buffer from this frame's march samples
+ * and the reprojected history (temporal.ts mirrors it): fresh pixels blend
+ * their new sample in, the others carry history clamped to the fresh
+ * neighbourhood; no usable history → depth-aware upsampled march samples.
+ */
+const RESOLVE_FRAGMENT = /* glsl */ `
+layout( location = 0 ) out highp vec4 outA;
+layout( location = 1 ) out highp vec4 outB;
+${RAY_GLSL}
+uniform sampler2D tMarchA;
+uniform sampler2D tMarchB;
+uniform sampler2D tHistA;
+uniform sampler2D tHistB;
+uniform vec2 uFull;
+uniform vec2 uMarchSize;
+uniform vec2 uOffset;
+uniform mat4 uPrevViewProj;
+uniform vec4 uHist;         // history valid, fresh alpha, box pad, -
+float clipSim( float a, float b ) { return exp( - 25.0 * abs( a - b ) / max( 1e-4, min( a, b ) ) ); }
+void main() {
+	ivec2 px = ivec2( gl_FragCoord.xy );
+	vec2 uv = ( vec2( px ) + 0.5 ) / uFull;
+	vec3 rd;
+	float clipKm = pixelRay( uv, rd ) * 0.001;
+	ivec2 mmax = ivec2( uMarchSize ) - 1;
+	vec2 mc = ( vec2( px ) - uOffset ) * 0.5;
+	bool fresh = ( px.x & 1 ) == int( uOffset.x ) && ( px.y & 1 ) == int( uOffset.y );
+	vec4 F;
+	float fDist;
+	if ( fresh ) {
+		ivec2 m = clamp( ivec2( mc ), ivec2( 0 ), mmax );
+		F = texelFetch( tMarchA, m, 0 );
+		fDist = texelFetch( tMarchB, m, 0 ).r;
+	} else {
+		vec2 fl = floor( mc );
+		vec2 f = mc - fl;
+		ivec2 i0 = ivec2( fl );
+		vec4 acc = vec4( 0.0 );
+		float dacc = 0.0;
+		float ws = 0.0;
+		for ( int k = 0; k < 4; k ++ ) {
+			ivec2 o = ivec2( k & 1, k >> 1 );
+			ivec2 m = clamp( i0 + o, ivec2( 0 ), mmax );
+			vec4 B = texelFetch( tMarchB, m, 0 );
+			float w = ( o.x == 1 ? f.x : 1.0 - f.x ) * ( o.y == 1 ? f.y : 1.0 - f.y ) * clipSim( B.g, clipKm ) + 1e-6;
+			acc += texelFetch( tMarchA, m, 0 ) * w;
+			dacc += B.r * w;
+			ws += w;
+		}
+		F = acc / ws;
+		fDist = dacc / ws;
 	}
-	float clipKm = clip * 0.001;
-	// temporal reprojection
-	vec3 wp = ro + rd * dist;
-	vec4 pc = uPrevViewProj * vec4( wp, 1.0 );
-	float wH = 0.0;
-	vec4 hA = cur;
-	if ( uHist.x > 0.5 && pc.w > 1e-4 ) {
-		vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
-		if ( puv.x >= 0.0 && puv.x <= 1.0 && puv.y >= 0.0 && puv.y <= 1.0 ) {
-			vec4 hB = texture( tHistB, puv );
-			float rel = abs( hB.g - clipKm ) / max( 1e-4, min( hB.g, clipKm ) );
-			if ( rel < 0.1 ) {
-				wH = 1.0 - uHist.y;
-				hA = texture( tHistA, puv );
+	// neighbourhood of fresh samples (3×3 march texels)
+	ivec2 c = ivec2( floor( mc + 0.5 ) );
+	vec4 lo = vec4( 1e9 );
+	vec4 hi = vec4( -1e9 );
+	for ( int j = -1; j <= 1; j ++ ) {
+		for ( int i = -1; i <= 1; i ++ ) {
+			vec4 v = texelFetch( tMarchA, clamp( c + ivec2( i, j ), ivec2( 0 ), mmax ), 0 );
+			lo = min( lo, v );
+			hi = max( hi, v );
+		}
+	}
+	// history at the reprojected cloud point; a second step re-projects with the distance the history
+	// itself saw there (sharper cloud edges when the camera translates, e.g. orbiting the aircraft)
+	bool ok = false;
+	vec4 H = F;
+	if ( uHist.x > 0.5 ) {
+		vec4 pc = uPrevViewProj * vec4( uCamPos + rd * ( fDist * 1000.0 ), 1.0 );
+		if ( pc.w > 1e-4 ) {
+			vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+			float hDist = texture( tHistB, puv ).r;
+			pc = uPrevViewProj * vec4( uCamPos + rd * ( hDist * 1000.0 ), 1.0 );
+			if ( pc.w > 1e-4 ) puv = pc.xy / pc.w * 0.5 + 0.5;
+			if ( puv.x >= 0.0 && puv.x <= 1.0 && puv.y >= 0.0 && puv.y <= 1.0 ) {
+				float hClip = texture( tHistB, puv ).g;
+				if ( abs( hClip - clipKm ) / max( 1e-4, min( hClip, clipKm ) ) < 0.1 ) {
+					ok = true;
+					H = texture( tHistA, puv );
+				}
 			}
 		}
 	}
-	outA = mix( cur, hA, wH );
-	outB = vec4( dist * 0.001, clipKm, wH, 1.0 );
+	vec4 pad = ( hi - lo ) * uHist.z;
+	vec4 Hc = clamp( H, lo - pad, hi + pad );
+	// how far the clamp moved the history (transmittance, and radiance relative to the neighbourhood)
+	const vec3 LUMA = vec3( 0.2126, 0.7152, 0.0722 );
+	float moved = max( abs( Hc.a - H.a ), abs( dot( Hc.rgb - H.rgb, LUMA ) ) / max( dot( hi.rgb, LUMA ), 1e-3 ) );
+	float w = ok ? max( fresh ? uHist.y : 0.0, clamp( moved / ${CLAMP_TAKEOVER.toFixed(3)}, 0.0, 1.0 ) ) : 1.0;
+	outA = mix( Hc, F, w );
+	outB = vec4( fDist, clipKm, w, 1.0 );
 }
 `;
 
@@ -354,7 +526,7 @@ void main() {
 		float y = uLayerY.x + ( float( k ) + 0.5 ) * dy;
 		float t = ( y - uLayerY.x ) / sy;
 		vec3 p = vec3( q.x + uSunDir.x * t, y, q.y + uSunDir.z * t );
-		tau += cloudDensity( p, false ) * ds;
+		tau += cloudDensity( p, 0.0, uShape.x ) * ds;
 	}
 	float op = 1.0 - exp( - tau * uErosion.z );
 	gl_FragColor = vec4( op, op, op, 1.0 );
@@ -368,12 +540,12 @@ varying vec2 vUv;
 void main() {
 	float s = texture2D( tSrc, vUv ).r * 0.3;
 	s += ( texture2D( tSrc, vUv + uStep ).r + texture2D( tSrc, vUv - uStep ).r ) * 0.235;
-	s += ( texture2D( tSrc, vUv + 2.2 * uStep ).r + texture2D( tSrc, vUv - 2.2 * uStep ).r ) * 0.115;
+	s += ( texture2D( tSrc, vUv + 2.0 * uStep ).r + texture2D( tSrc, vUv - 2.0 * uStep ).r ) * 0.115;
 	gl_FragColor = vec4( s, s, s, 1.0 );
 }
 `;
 
-function makeTarget(w: number, h: number): THREE.WebGLRenderTarget {
+function makeTarget(w: number, h: number, name: string): THREE.WebGLRenderTarget {
   const rt = new THREE.WebGLRenderTarget(w, h, {
     count: 2,
     type: THREE.HalfFloatType,
@@ -386,17 +558,19 @@ function makeTarget(w: number, h: number): THREE.WebGLRenderTarget {
     wrapS: THREE.ClampToEdgeWrapping,
     wrapT: THREE.ClampToEdgeWrapping,
   });
-  rt.textures[0].name = 'clouds A';
-  rt.textures[1].name = 'clouds B';
+  rt.textures[0].name = `${name} A`;
+  rt.textures[1].name = `${name} B`;
   return rt;
 }
 
 export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricClouds {
   const field = o.field;
   const weather = createWeatherMap(field, { size: o.weatherSize, baseMin: o.baseMin, baseRange: o.baseRange, maxThickness: o.maxThickness });
+  const distField = createDistanceField(weather, o.distanceSize);
   const layerBottom = o.baseMin;
   const layerTop = o.baseMin + o.baseRange + o.maxThickness;
   const tile = weather.tile;
+  const march = { ...DEFAULT_MARCH, ...o.march };
 
   // ── Textures (filled by time-sliced jobs) ────────────────────────────────
   const weatherTex = new THREE.DataTexture(weather.data, weather.size, weather.size, THREE.RGBAFormat);
@@ -404,6 +578,12 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
   weatherTex.minFilter = weatherTex.magFilter = THREE.LinearFilter;
   weatherTex.generateMipmaps = false;
   weatherTex.name = 'cloud weather';
+  const distTex = new THREE.DataTexture(distField.data, distField.size, distField.size, THREE.RedFormat, THREE.UnsignedByteType);
+  distTex.wrapS = distTex.wrapT = THREE.RepeatWrapping;
+  distTex.minFilter = distTex.magFilter = THREE.LinearFilter;
+  distTex.generateMipmaps = false;
+  distTex.unpackAlignment = 1;
+  distTex.name = 'cloud distance';
 
   const shapeData = new Uint8Array(SHAPE_NOISE.size ** 3 * 4);
   const shapeTex = new THREE.Data3DTexture(shapeData, SHAPE_NOISE.size, SHAPE_NOISE.size, SHAPE_NOISE.size);
@@ -423,12 +603,17 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
   blueTex.wrapS = blueTex.wrapT = THREE.RepeatWrapping;
   blueTex.generateMipmaps = false;
 
-  let pendingJobs = 4;
+  let pendingJobs = 5;
   const jobDone = () => {
     pendingJobs--;
   };
   o.jobs.add('clouds:weather', weatherRasterJob(field, weather), () => {
     weatherTex.needsUpdate = true;
+    jobDone();
+  });
+  // FIFO queue: runs after the weather raster it reads
+  o.jobs.add('clouds:distance', distanceFieldJob(weather, distField), () => {
+    distTex.needsUpdate = true;
     jobDone();
   });
   o.jobs.add('clouds:blue-noise', blueNoiseJob(64, o.seed + 1), (ranks) => {
@@ -446,9 +631,9 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
   });
 
   const shapeScale = 32 / tile; // 1 / shape tile (the tile is a whole number of noise periods → seamless shadow map)
-  const detailScale = 190 / tile;
+  const detailScale = Math.max(1, Math.round(tile / o.detailPeriod)) / tile;
 
-  // ── March material ───────────────────────────────────────────────────────
+  // ── Materials ────────────────────────────────────────────────────────────
   const common = {
     tWeather: { value: weatherTex },
     tShape: { value: shapeTex },
@@ -456,38 +641,64 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
     uWeather: { value: new THREE.Vector4(1 / tile, o.baseMin, o.baseRange, o.maxThickness) },
     uWind: { value: new THREE.Vector4(0, 0, shapeScale, detailScale) },
     uErosion: { value: new THREE.Vector4(o.shapeErosion, o.detailErosion, o.sigma, o.maxDistance) },
+    uShape: { value: new THREE.Vector4(o.edgeSharpness, o.sideWarp, o.edgeSharpness, 16000) },
   };
-  const march = new THREE.ShaderMaterial({
+  const ray = {
+    tDepth: { value: null as THREE.Texture | null },
+    uDepth: { value: new THREE.Vector4(0.1, 90000, 1, 1) },
+    uDepthSize: { value: new THREE.Vector2(1, 1) },
+    uInvProj: { value: new THREE.Matrix4() },
+    uCamWorld: { value: new THREE.Matrix4() },
+    uCamPos: { value: new THREE.Vector3() },
+  };
+  const full = { value: new THREE.Vector2(1, 1) };
+  const offset = { value: new THREE.Vector2(0, 0) };
+  const lt = o.lighting;
+  const marchMat = new THREE.ShaderMaterial({
     name: 'VolumetricCloudMarch',
     glslVersion: THREE.GLSL3,
     uniforms: {
       ...common,
+      ...ray,
       atmoFog: { value: atmoFogData },
-      tDepth: { value: null },
-      uDepth: { value: new THREE.Vector4(0.1, 90000, 1, 1) },
-      uDepthSize: { value: new THREE.Vector2(1, 1) },
-      uSize: { value: new THREE.Vector2(1, 1) },
-      uInvProj: { value: new THREE.Matrix4() },
-      uCamWorld: { value: new THREE.Matrix4() },
-      uPrevViewProj: { value: new THREE.Matrix4() },
-      uCamPos: { value: new THREE.Vector3() },
-      uCamFwd: { value: new THREE.Vector3() },
-      tHistA: { value: null },
-      tHistB: { value: null },
-      uHist: { value: new THREE.Vector2(0, o.temporalAlpha) },
       tBlue: { value: blueTex },
+      tDist: { value: distTex },
+      uDist: { value: new THREE.Vector2(255 * distField.unit, warpedClearanceMargin(distField, o.sideWarp)) },
+      uFull: full,
+      uOffset: offset,
       uFrameJitter: { value: 0 },
       uLayer: { value: new THREE.Vector4(layerBottom, layerTop, o.sunScale, o.ambientScale) },
-      uMarch: { value: new THREE.Vector4(DEFAULT_MARCH.k, DEFAULT_MARCH.kIn, DEFAULT_MARCH.dtMin, DEFAULT_MARCH.dtMax) },
-      uDtMaxIn: { value: DEFAULT_MARCH.dtMaxIn },
+      uMarch: { value: new THREE.Vector4(march.k, march.kIn, march.dtMin, march.dtMax) },
+      uMarch2: { value: new THREE.Vector4(march.dtMaxIn, march.grow, march.tMin, o.detailDistance) },
+      uPhase: { value: new THREE.Vector4(lt.forwardG, lt.backG, lt.backWeight, lt.powder) },
+      uLight: { value: new THREE.Vector4(lt.ambientOcclusion, lt.diffusion, lt.diffusionBase, 0) },
       uSunDir: { value: new THREE.Vector3(0, 1, 0) },
       uSunCol: { value: new THREE.Vector3(1, 1, 1) },
       uAmbTop: { value: new THREE.Vector3(0.3, 0.35, 0.45) },
       uAmbBottom: { value: new THREE.Vector3(0.15, 0.16, 0.18) },
-      uDebug: { value: typeof location !== 'undefined' ? Number(new URLSearchParams(location.search).get('clouddebug')) || 0 : 0 },
     },
     vertexShader: FS_VERTEX,
     fragmentShader: MARCH_FRAGMENT,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const resolveMat = new THREE.ShaderMaterial({
+    name: 'VolumetricCloudResolve',
+    glslVersion: THREE.GLSL3,
+    uniforms: {
+      ...ray,
+      tMarchA: { value: null },
+      tMarchB: { value: null },
+      tHistA: { value: null },
+      tHistB: { value: null },
+      uFull: full,
+      uMarchSize: { value: new THREE.Vector2(1, 1) },
+      uOffset: offset,
+      uPrevViewProj: { value: new THREE.Matrix4() },
+      uHist: { value: new THREE.Vector4(0, o.temporalAlpha, HISTORY_BOX_PAD, 0) },
+    },
+    vertexShader: FS_VERTEX,
+    fragmentShader: RESOLVE_FRAGMENT,
     depthTest: false,
     depthWrite: false,
   });
@@ -514,13 +725,14 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
 
   const fsGeo = new THREE.BufferGeometry();
   fsGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
-  const fsMesh = new THREE.Mesh(fsGeo, march);
+  const fsMesh = new THREE.Mesh(fsGeo, marchMat);
   fsMesh.frustumCulled = false;
   const fsScene = new THREE.Scene();
   fsScene.add(fsMesh);
   const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-  let targets: [THREE.WebGLRenderTarget, THREE.WebGLRenderTarget] = [makeTarget(1, 1), makeTarget(1, 1)];
+  const marchRT = makeTarget(1, 1, 'cloud march');
+  const targets: [THREE.WebGLRenderTarget, THREE.WebGLRenderTarget] = [makeTarget(1, 1, 'clouds'), makeTarget(1, 1, 'clouds')];
   let cur = 0;
   let histValid = false;
   let frame = 0;
@@ -528,8 +740,8 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
   const prevViewProj = new THREE.Matrix4();
   const viewProj = new THREE.Matrix4();
   const camPos = new THREE.Vector3();
-  const camFwd = new THREE.Vector3();
-  let lastCamPos = new THREE.Vector3(NaN, NaN, NaN);
+  const lastCamPos = new THREE.Vector3(NaN, NaN, NaN);
+  const off: PixelOffset = { x: 0, y: 0 };
 
   let shadowRT: THREE.WebGLRenderTarget | null = null;
   let shadowRT2: THREE.WebGLRenderTarget | null = null;
@@ -539,6 +751,7 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
       return pendingJobs <= 0;
     },
     weather,
+    distanceField: distField,
     layerBottom,
     layerTop,
     get outputA() {
@@ -549,8 +762,9 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
     },
     size,
     resolution: o.resolution,
+    uniforms: { march: marchMat.uniforms, resolve: resolveMat.uniforms },
     setLighting(l) {
-      const u = march.uniforms;
+      const u = marchMat.uniforms;
       u.uSunDir.value.set(l.sunDir.x, l.sunDir.y, l.sunDir.z);
       u.uSunCol.value.set(l.sun.r, l.sun.g, l.sun.b);
       u.uAmbTop.value.set(l.ambientTop.r, l.ambientTop.g, l.ambientTop.b);
@@ -569,41 +783,54 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
       const cssH = targetH / Math.max(pixelRatio, 1e-3);
       const w = Math.max(16, Math.round(cssW * api.resolution));
       const h = Math.max(16, Math.round(cssH * api.resolution));
+      const ms = marchBufferSize(w, h);
       if (w !== size.x || h !== size.y) {
         targets[0].setSize(w, h);
         targets[1].setSize(w, h);
+        marchRT.setSize(ms.width, ms.height);
         size.set(w, h);
         histValid = false;
       }
       const cam = camera as THREE.PerspectiveCamera;
       camera.getWorldPosition(camPos);
-      camera.getWorldDirection(camFwd);
-      // big jumps (teleport, camera cut) invalidate the history
+      // big jumps (teleport, reset) invalidate the history
       if (!(camPos.distanceToSquared(lastCamPos) < 500 * 500)) histValid = false;
       lastCamPos.copy(camPos);
       viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
 
+      checkerOffset(frame, off);
+      offset.value.set(off.x, off.y);
+      full.value.set(w, h);
+      ray.tDepth.value = depth;
+      ray.uDepth.value.set(cam.near ?? 0.1, cam.far ?? 90000, depthMode === 'reversed' ? 1 : depthMode === 'logarithmic' ? 2 : 0, Math.log2((cam.far ?? 90000) + 1));
+      ray.uDepthSize.value.set(targetW, targetH);
+      ray.uInvProj.value.copy(camera.projectionMatrixInverse);
+      ray.uCamWorld.value.copy(camera.matrixWorld);
+      ray.uCamPos.value.copy(camPos);
+      marchMat.uniforms.uFrameJitter.value = frameJitter(frame);
+      frame++;
+
+      const prevTarget = renderer.getRenderTarget();
+      // 1. march one pixel per 2×2 block
+      fsMesh.material = marchMat;
+      renderer.setRenderTarget(marchRT);
+      renderer.render(fsScene, fsCam);
+      // 2. resolve into the full buffer against last frame's
       const prev = targets[cur];
       cur ^= 1;
-      const u = march.uniforms;
-      u.tDepth.value = depth;
-      u.uDepth.value.set(cam.near ?? 0.1, cam.far ?? 90000, depthMode === 'reversed' ? 1 : depthMode === 'logarithmic' ? 2 : 0, Math.log2((cam.far ?? 90000) + 1));
-      u.uDepthSize.value.set(targetW, targetH);
-      u.uSize.value.set(w, h);
-      u.uInvProj.value.copy(camera.projectionMatrixInverse);
-      u.uCamWorld.value.copy(camera.matrixWorld);
-      u.uPrevViewProj.value.copy(prevViewProj);
-      u.uCamPos.value.copy(camPos);
-      u.uCamFwd.value.copy(camFwd);
-      u.tHistA.value = prev.textures[0];
-      u.tHistB.value = prev.textures[1];
-      u.uHist.value.set(histValid ? 1 : 0, o.temporalAlpha);
-      u.uFrameJitter.value = frameJitter(frame++);
-      fsMesh.material = march;
-      const prevTarget = renderer.getRenderTarget();
+      const ru = resolveMat.uniforms;
+      ru.tMarchA.value = marchRT.textures[0];
+      ru.tMarchB.value = marchRT.textures[1];
+      ru.tHistA.value = prev.textures[0];
+      ru.tHistB.value = prev.textures[1];
+      ru.uMarchSize.value.set(ms.width, ms.height);
+      ru.uPrevViewProj.value.copy(prevViewProj);
+      ru.uHist.value.x = histValid ? 1 : 0;
+      fsMesh.material = resolveMat;
       renderer.setRenderTarget(targets[cur]);
       renderer.render(fsScene, fsCam);
       renderer.setRenderTarget(prevTarget);
+      fsMesh.material = marchMat;
       prevViewProj.copy(viewProj);
       histValid = true;
     },
@@ -618,13 +845,15 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
       const prevTarget = renderer.getRenderTarget();
       shadowMat.uniforms.uSunDir.value.set(sunDir.x, sunDir.y, sunDir.z);
       // the shadow map lives in the tile frame: no wind (the fog chunk applies it)
-      const saved = common.uWind.value.clone();
+      const wx = common.uWind.value.x;
+      const wz = common.uWind.value.y;
       common.uWind.value.x = 0;
       common.uWind.value.y = 0;
       fsMesh.material = shadowMat;
       renderer.setRenderTarget(shadowRT);
       renderer.render(fsScene, fsCam);
-      common.uWind.value.copy(saved);
+      common.uWind.value.x = wx;
+      common.uWind.value.y = wz;
       fsMesh.material = blurMat;
       blurMat.uniforms.tSrc.value = shadowRT.texture;
       blurMat.uniforms.uStep.value.set(1 / n, 0);
@@ -636,18 +865,21 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
       renderer.render(fsScene, fsCam);
       renderer.setRenderTarget(prevTarget);
       renderer.copyTextureToTexture(shadowRT.texture, cloudShadowTexture);
-      fsMesh.material = march;
+      fsMesh.material = marchMat;
     },
     dispose() {
+      marchRT.dispose();
       targets[0].dispose();
       targets[1].dispose();
       shadowRT?.dispose();
       shadowRT2?.dispose();
-      march.dispose();
+      marchMat.dispose();
+      resolveMat.dispose();
       shadowMat.dispose();
       blurMat.dispose();
       fsGeo.dispose();
       weatherTex.dispose();
+      distTex.dispose();
       shapeTex.dispose();
       detailTex.dispose();
       blueTex.dispose();

@@ -11,7 +11,9 @@
  *   AoA limiter:       the load command is cut to what aoaLimitDeg (gear down: aoaLimitGearDownDeg)
  *                      can make, so a full pull at low speed parks at the limit instead of stalling.
  *   Roll:              stick → roll rate (maxRollRateDeg), reduced at high α, with the gear down and
- *                      as sideslip builds (departure protection against roll coupling).
+ *                      as sideslip builds (departure protection against roll coupling); the roll
+ *                      acceleration is limited (rollAccelDeg building, rollStopAccelDeg stopping) so a
+ *                      keyboard tap gives a modest bank change and a held stick builds to the full rate.
  *   Stick gradients:   curved (rollShaping / pitchShaping) — fine near centre, full at the stops.
  *   Yaw:               sideslip → 0 with turn coordination and stability-axis roll (r = p·tan α);
  *                      pedals command a small sideslip.
@@ -188,7 +190,11 @@ export function applyFbw(state: AircraftState, pilot: Controls, cfg: Config = CO
 
   // ── Desired angular accelerations (aircraft convention) ──
   const qDot = f.pitchOmega * f.pitchOmega * (pc.alphaCmd - air.alpha) + 2 * f.pitchZeta * f.pitchOmega * (qCmd - q);
-  const pDot = (pCmd - p) / f.rollTau;
+  // Roll shaping: limit the commanded roll acceleration (building the rate / taking it off).
+  const pDotRaw = (pCmd - p) / f.rollTau;
+  const stopping = p !== 0 && Math.sign(pDotRaw) !== Math.sign(p);
+  const pAccMax = (stopping ? f.rollStopAccelDeg : f.rollAccelDeg) ?? Infinity;
+  const pDot = clamp(pDotRaw, -pAccMax * DEG, pAccMax * DEG);
   const rDot = f.yawOmega * f.yawOmega * (air.beta - betaCmd) + 2 * f.yawZeta * f.yawOmega * (rCmd - r);
 
   // ── Required body torques: τ = I·ω̇ + ω × Iω (diagonal inertia; p = −ωz, q = ωx, r = −ωy) ──
