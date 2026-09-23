@@ -48,13 +48,20 @@ export interface Berm {
 }
 
 export interface PlannedTrack {
-  kind: 'loop' | 'outback';
+  /** 'lane': the real farm lane (an open path: the column drives it end to end and turns round); 'loop' / 'outback': a trail found around the site (closed). */
+  kind: 'lane' | 'loop' | 'outback';
   /** Stations every ~2 m (closed loop: the last connects to the first). */
   points: XZ[];
   width: number;
   /** Per station: how far (m) a vehicle may pull off to the left / right of travel. */
   scatterL: number[];
   scatterR: number[];
+  /**
+   * Lane only: where the column's lead stops to turn round — [lo, hi] arc lengths: heading down the
+   * lane it stops at lo (the column then fills lo … lo + (n−1)·spacing), heading up at hi (fills
+   * hi − (n−1)·spacing … hi). Every vehicle's stop there has a clear circle to pivot in.
+   */
+  ends?: [number, number];
 }
 
 export interface RangePlan {
@@ -169,14 +176,21 @@ export function planRange(g: RangeGround, site: { x: number; z: number; headingD
   const trackHalf = cfg.track.width / 2;
   const trackClear = cfg.track.clearance;
 
-  // ── The track loop ─────────────────────────────────────────────────────────
+  // ── The farm lane (preferred): the column drives the real road through the range ──
   let track: PlannedTrack | null = null;
   let trackPath: TrackPath | null = null;
   let trackRadius = 0;
   let attempts = 0;
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const budgetEnd = t0 + 2500;
-  for (const R0 of cfg.track.radii) {
+  const lane = findLane();
+  if (lane) {
+    track = { kind: 'lane', points: lane.points, width: cfg.track.width, scatterL: [], scatterR: [], ends: lane.ends };
+    trackPath = makePath(lane.points, false);
+  }
+
+  // ── Else a track loop around the site ──────────────────────────────────────
+  for (const R0 of track ? [] : cfg.track.radii) {
     if (now() > budgetEnd) break;
     attempts++;
     const pts = findLoop(C, R0, toAirport);
@@ -219,8 +233,22 @@ export function planRange(g: RangeGround, site: { x: number; z: number; headingD
     return true;
   };
 
-  // The column on the track, front first: its lead starts on the airport side of the loop.
-  if (trackPath) {
+  // The column on the lane, front first, heading up the lane with room to drive before the far end.
+  if (trackPath && track?.kind === 'lane' && track.ends) {
+    const n = cfg.convoy.kinds.length;
+    const sp = cfg.convoy.spacing;
+    const [lo, hi] = track.ends;
+    const lead = lo + (n - 1) * sp + 0.35 * Math.max(0, hi - lo - (n - 1) * sp);
+    const smp = newPathSample();
+    cfg.convoy.kinds.forEach((kind, k) => {
+      const s = lead - k * sp;
+      sampleAt(trackPath!, s, smp);
+      const h = headingOf(smp.tx, smp.tz);
+      vehicles.push({ kind, group: 'convoy', x: smp.x, z: smp.z, headingDeg: h, slot: k, s, camo: camoOf(), seed: rnd() });
+      rects.push(rectOf(kind, smp.x, smp.z, h));
+    });
+  } else if (trackPath) {
+    // The column on the loop, front first: its lead starts on the airport side of the loop.
     const near = nearestOnPath(trackPath, C.x + Math.sin(toAirport * DEG) * trackRadius, C.z - Math.cos(toAirport * DEG) * trackRadius);
     const smp = newPathSample();
     cfg.convoy.kinds.forEach((kind, k) => {
@@ -440,6 +468,112 @@ export function planRange(g: RangeGround, site: { x: number; z: number; headingD
   };
 
   // ── helpers (hoisted) ──────────────────────────────────────────────────────
+
+  /**
+   * The longest stretch of a farm lane near the site that a column can drive: dry, clear of tree
+   * crowns over its width, off farm yards, gentle; with a turning place at each end where every
+   * vehicle of the column (at its spacing) has a clear circle to pivot in. Null if there is none.
+   */
+  function findLane(): { points: XZ[]; ends: [number, number] } | null {
+    const rc = cfgAll.combat.range.route;
+    if (!g.roads || g.roads.length === 0) return null;
+    const n = cfg.convoy.kinds.length;
+    const sp = cfg.convoy.spacing;
+    const column = (n - 1) * sp;
+    const laneOk = (x: number, z: number): boolean => {
+      if (g.water(x, z) !== null) return false;
+      if (g.keepOut && g.keepOut(x, z) >= 2) return false;
+      return slopeDeg(g.normal(x, z)) <= cfg.ground.maxSlopeDeg + 3;
+    };
+    /** Tree crowns over the lane (trunks stand off the road edge: vehicles pass under the canopy). */
+    const canopy = (x: number, z: number): boolean => {
+      if (!clearAt(g, x, z)) return true;
+      for (let k = 0; k < 8; k++) {
+        const a = (k * Math.PI) / 4;
+        if (!clearAt(g, x + Math.cos(a) * 1.6, z + Math.sin(a) * 1.6)) return true;
+      }
+      return false;
+    };
+    const turnOk = (x: number, z: number): boolean => {
+      for (let k = 0; k < 18; k++) {
+        const r = k < 12 ? rc.turnClear : rc.turnClear * 0.5;
+        const a = k < 12 ? (k * Math.PI) / 6 : ((k - 12) * Math.PI) / 3 + 0.3;
+        const px = x + Math.cos(a) * r;
+        const pz = z + Math.sin(a) * r;
+        if (!clearAt(g, px, pz) || g.water(px, pz) !== null || (g.keepOut && g.keepOut(px, pz) >= 2)) return false;
+      }
+      return true;
+    };
+    let best: { points: XZ[]; ends: [number, number] } | null = null;
+    let bestScore = -Infinity;
+    for (const road of g.roads) {
+      if (!rc.kinds.includes(road.kind) || road.points.length < 2) continue;
+      const pts = resample(road.points, 2, false);
+      const ok = pts.map((p) => Math.hypot(p.x - C.x, p.z - C.z) <= rc.radius && laneOk(p.x, p.z));
+      // a lane may pass under a hedgerow's canopy (a short run of stations), not through a wood
+      const cov = pts.map((p, i) => ok[i] && canopy(p.x, p.z));
+      for (let a = 0; a < pts.length; ) {
+        if (!cov[a]) {
+          a++;
+          continue;
+        }
+        let b = a;
+        while (b + 1 < pts.length && cov[b + 1]) b++;
+        if ((b - a + 1) * 2 > rc.maxCanopy) for (let q = a; q <= b; q++) ok[q] = false;
+        a = b + 1;
+      }
+      for (let i = 0; i < pts.length; ) {
+        if (!ok[i]) {
+          i++;
+          continue;
+        }
+        let j = i;
+        while (j + 1 < pts.length && ok[j + 1]) j++;
+        const run = pts.slice(i, j + 1);
+        i = j + 1;
+        const p = makePath(run, false);
+        if (p.length < Math.max(rc.minLength, column + 150 + 2 * rc.endMargin)) continue;
+        const mid = run[run.length >> 1];
+        const score = Math.min(p.length, 1500) - 0.5 * Math.hypot(mid.x - C.x, mid.z - C.z);
+        if (score <= bestScore) continue;
+        // turning places: the lead's stop at each end, with every follower's stop clear too
+        const smp = newPathSample();
+        const clearCache = new Map<number, boolean>();
+        const clearAtS = (s: number): boolean => {
+          const key = Math.round(s);
+          let v = clearCache.get(key);
+          if (v === undefined) {
+            sampleAt(p, key, smp);
+            v = turnOk(smp.x, smp.z);
+            clearCache.set(key, v);
+          }
+          return v;
+        };
+        const columnClear = (s: number, dir: number): boolean => {
+          for (let k = 0; k < n; k++) if (!clearAtS(s - dir * k * sp)) return false;
+          return true;
+        };
+        let hi = -1;
+        for (let s = p.length - rc.endMargin; s >= rc.endMargin + column; s -= 2)
+          if (columnClear(s, 1)) {
+            hi = s;
+            break;
+          }
+        let lo = -1;
+        for (let s = rc.endMargin; s <= p.length - rc.endMargin - column; s += 2)
+          if (columnClear(s, -1)) {
+            lo = s;
+            break;
+          }
+        if (hi < 0 || lo < 0) continue;
+        // between the turning places the column has room to drive (the lead's run from one end to the other)
+        if (hi - lo - column < 150) continue;
+        best = { points: run, ends: [lo, hi] };
+        bestScore = score;
+      }
+    }
+    return best;
+  }
 
   /**
    * A loop around the centre: an ellipse (semi-axes R0·k and R0/k, a few orientations tried) whose
