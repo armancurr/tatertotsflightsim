@@ -10,13 +10,30 @@ import { controlGroups, buildControlsSheet, controlNotes } from '../../src/ui/co
 import { keyLabel } from '../../src/ui/messages';
 
 describe('control groups', () => {
-  it('four groups in order: Flight, Engine & systems, Cameras, Sim', () => {
+  it('five groups in order: Flight, Engine & systems, Weapons, Cameras, Sim', () => {
     expect(controlGroups().map((g) => [g.id, g.title])).toEqual([
       ['flight', 'Flight'],
       ['engine', 'Engine & systems'],
+      ['weapons', 'Weapons'],
       ['cameras', 'Cameras'],
       ['sim', 'Sim'],
     ]);
+  });
+
+  it('Weapons: fire the gun (Q / Enter, hold), lock / next target (T), launch a Maverick (Z), with the A-10 note', () => {
+    const w = controlGroups().find((g) => g.id === 'weapons')!;
+    const row = (id: string) => w.rows.find((r) => r.ids.includes(id as never))!;
+    expect(row('fireGun').keys).toEqual(['Q', 'Enter']);
+    expect(row('fireGun').action).toMatch(/gun.*hold/i);
+    expect(row('lockTarget').keys).toEqual(['T']);
+    expect(row('lockTarget').action).toMatch(/lock/i);
+    expect(row('fireMissile').keys).toEqual(['Z']);
+    expect(row('fireMissile').action).toMatch(/maverick/i);
+    expect(JSON.stringify(w)).toMatch(/A-10/);
+    // Nothing weapons-related is left over in Sim.
+    const sim = controlGroups().find((g) => g.id === 'sim')!;
+    expect(sim.rows.some((r) => r.ids.some((id) => ['fireGun', 'fireMissile', 'lockTarget'].includes(id)))).toBe(false);
+    expect(controlNotes().join(' ')).toMatch(/A-10.*T.*Z/);
   });
 
   it('covers EVERY binding in config.controls.keys, with every key cap', () => {
@@ -64,7 +81,7 @@ describe('controls sheet (DOM)', () => {
   it('renders one section per group with kbd key caps and the notes', () => {
     const el = buildControlsSheet(document);
     const heads = [...el.querySelectorAll('h3')].map((h) => h.textContent);
-    expect(heads).toEqual(['Flight', 'Engine & systems', 'Cameras', 'Sim']);
+    expect(heads).toEqual(['Flight', 'Engine & systems', 'Weapons', 'Cameras', 'Sim']);
     expect(el.querySelectorAll('kbd').length).toBeGreaterThan(30);
     expect(el.textContent).toContain('Speed brake');
     expect(el.textContent).toMatch(/afterburner/i);

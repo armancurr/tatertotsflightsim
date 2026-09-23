@@ -1,7 +1,8 @@
 /**
- * A tiny typed event bus between the UI's two systems (hud and menu), which the systems layer
+ * A tiny typed event bus between the UI's systems (hud, menu, weaponsHud), which the systems layer
  * keeps apart: the menu asks the HUD to show/hide and tells it when the menu is up (the HUD then
- * drops its PAUSED pill); the HUD reports whether it is visible. One bus per document.
+ * drops its PAUSED pill); the HUD reports whether it is visible; the weapons HUD asks the HUD for
+ * kill toasts. One bus per document.
  */
 export interface UiEvents {
   /** Menu → HUD: toggle the instruments (same as the I key). */
@@ -12,6 +13,8 @@ export interface UiEvents {
   menuOpen: boolean;
   /** Menu → HUD: show the help overlay's Controls page. */
   showHelp: undefined;
+  /** Any system → HUD: a toast in the HUD's message stack (e.g. the weapons HUD's kill toasts). */
+  toast: { text: string; level?: 'info' | 'warn' | 'good'; seconds?: number };
 }
 
 type Handler<K extends keyof UiEvents> = (v: UiEvents[K]) => void;

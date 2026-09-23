@@ -1475,6 +1475,60 @@ export const CONFIG = {
       /** Boresight (gun cross) height as a fraction of the HUD box. */
       boresightY: 0.34,
     },
+    /**
+     * Weapons HUD (src/ui/weaponsHud.ts + src/game/systems/weaponsHud.ts), for aircraft that carry
+     * weapons (A-10C, F-16C; the Cessna shows nothing): gun cross, gun CCIP pipper with its range
+     * arc, the Maverick seeker circle and lock box, stores/ammo/kills, the range cue, and the
+     * Maverick seeker picture bottom right. Symbols over the world are projected with the camera, so
+     * they sit on the ground/target in every view; drawn in the jet HUD's green (hud.jet.color).
+     */
+    weapons: {
+      /** Gun cross: a point this far out along the gun line is projected (m) — no parallax from the chase camera at firing range. */
+      gunCrossRangeM: 1220,
+      /** Gun line this far below the fuselage datum (deg) gets its own gun cross in the cockpit (the A-10's 2°); the jet HUD then drops its fixed cross. */
+      separateGunCrossAboveDeg: 0.5,
+      /** CCIP pipper: the range arc is full at this slant range (4,000 ft, the GAU-8's max effective range) and "IN RNG" shows inside it, m. */
+      gunInRangeM: 1219,
+      /** Pipper radius at a 900 px tall viewport, px (scales with the height, min 12). */
+      pipperRadiusPx: 17,
+      /** Range cue ("RANGE 7.2 km" + caret on the heading tape + steerpoint) while the target range is farther than this, m. */
+      rangeCueBeyondM: 3000,
+      /** Hollow diamonds over live vehicles within targetMarkerRangeM (a targeting-pod style cue — fun, on by default). */
+      targetMarkers: true,
+      targetMarkerRangeM: 6000,
+      maxTargetMarkers: 24,
+      /** HUD messages ("NO LOCK", "RIFLE", "LOCK LOST") stay up, s; LOCK and "GUN 0" flash at, Hz. */
+      messageS: 1.6,
+      flashHz: 2.5,
+      /** Kill toasts ("T-72B destroyed — GAU-8"), s. */
+      killToastS: 3.5,
+      /** Ammunition label after the round count, by gun-name prefix ("GUN 1150 CM" = combat mix). */
+      ammoLabels: { 'GAU-8': 'CM', M61: 'PGU' } as Record<string, string>,
+      /**
+       * Maverick seeker picture (black-and-white "white-hot" IR) in a bottom-right viewport, while
+       * the seeker tracks/locks, for showAfterLockKeyS after T and showAfterLaunchS after a launch.
+       * Wide FOV while searching, narrow while tracking, narrow ÷ expandFactor ("EXP") once locked.
+       * Rendered at most maxHz (re-blitted every frame); size = widthFrac of the viewport (clamped), 4:3.
+       */
+      seeker: {
+        enabled: true,
+        showAfterLockKeyS: 5,
+        showAfterLaunchS: 6,
+        wideFovDeg: 6,
+        narrowFovDeg: 3,
+        expandFactor: 2,
+        maxHz: 20,
+        widthFrac: 0.22,
+        minW: 240,
+        maxW: 340,
+        maxPixelRatio: 2,
+        /** Also in the cockpit view. */
+        inCockpit: true,
+        /** Near/far planes of the seeker camera, m. */
+        near: 4,
+        far: 40000,
+      },
+    },
     /** Slim branding top bar (logo, name, aircraft picker, menu button): its height in CSS px at 1024 and 1440 px wide. */
     topBar: { height1024: 36, height1440: 40 },
   },

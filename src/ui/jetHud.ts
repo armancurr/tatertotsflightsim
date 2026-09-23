@@ -113,6 +113,33 @@ export function headingTapeMarks(headingDeg: number, width: number): TapeMark[] 
   return out;
 }
 
+export interface JetHeadingTape {
+  /** Tape baseline, px from the HUD box top. */
+  y: number;
+  /** Half the tape width and px per degree (±20° visible). */
+  halfWidth: number;
+  ppd: number;
+  /** Ticks rise from the bottom tape (−1) and hang from the top one (+1, gear down). */
+  dir: 1 | -1;
+}
+
+/** Where the heading tape sits in a w×h HUD box: bottom, or top with the gear down (shared with the weapons HUD's range caret). */
+export function jetHeadingTape(w: number, h: number, gearUp: boolean): JetHeadingTape {
+  const W = sz(w);
+  const H = sz(h);
+  const tw = W * 0.46;
+  return { y: gearUp ? H * 0.88 : H * 0.12, halfWidth: tw / 2, ppd: tw / 40, dir: gearUp ? -1 : 1 };
+}
+
+/**
+ * A-10 variant: with a gun line depressed below the datum (the GAU-8's 2°) the weapons HUD draws the
+ * real, conformal gun cross, so the jet HUD leaves its fixed boresight cross out (no second cross).
+ */
+export function jetHudOmitsGunCross(cfg: Config = CONFIG): boolean {
+  const gun = cfg.weapons?.gun;
+  return !!gun && Math.abs(gun.boresightDownDeg) > cfg.hud.weapons.separateGunCrossAboveDeg;
+}
+
 // ─── State (max g) ───────────────────────────────────────────────────────────
 
 export interface JetHudState {
@@ -225,12 +252,14 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
 
   // ── Gun cross (boresight) and flight-path marker ──
   const c = H * 0.02;
-  strokeBoth(() => {
-    ctx.moveTo(g.bore.x - c, g.bore.y);
-    ctx.lineTo(g.bore.x + c, g.bore.y);
-    ctx.moveTo(g.bore.x, g.bore.y - c);
-    ctx.lineTo(g.bore.x, g.bore.y + c * 0.6);
-  });
+  if (!jetHudOmitsGunCross(cfg)) {
+    strokeBoth(() => {
+      ctx.moveTo(g.bore.x - c, g.bore.y);
+      ctx.lineTo(g.bore.x + c, g.bore.y);
+      ctx.moveTo(g.bore.x, g.bore.y - c);
+      ctx.lineTo(g.bore.x, g.bore.y + c * 0.6);
+    });
+  }
   const fr = H * 0.017;
   strokeBoth(() => {
     ctx.moveTo(g.fpm.x + fr, g.fpm.y);
@@ -295,11 +324,12 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
 
   // ── Heading tape: bottom, or top with the gear down ──
   const gearUp = r.gear === 'up';
-  const tw = W * 0.46;
+  const htape = jetHeadingTape(W, H, gearUp);
+  const tw = htape.halfWidth * 2;
   // Baseline: ticks and labels face the HUD's centre, the caret and the digital heading its edge.
-  const ty = gearUp ? H * 0.88 : H * 0.12;
+  const ty = htape.y;
   const marks = headingTapeMarks(fin(r.headingDeg), tw);
-  const tdir = gearUp ? -1 : 1; // ticks rise from the bottom tape, hang from the top one
+  const tdir = htape.dir; // ticks rise from the bottom tape, hang from the top one
   strokeBoth(() => {
     for (const m of marks) {
       if (Math.abs(m.x) > tw / 2) continue;
