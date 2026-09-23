@@ -7,8 +7,9 @@
  */
 import * as THREE from 'three';
 import { MeshBuilder, type V3 } from './builder';
-import { pavementAt, toWorld, type AirportPlan, type PaveKind, type RC } from './plan';
-import { runwayMarkings, taxiMarkings, type MarkQuad } from './markings';
+import { crossRunwayPieces, pavementAt, toWorld, type AirportPlan, type PaveKind, type RC } from './plan';
+import { crossRunwayMarkings, fieldMarkings, runwayMarkings, taxiMarkings, type MarkQuad } from './markings';
+import { overlaps, polyArea, rectPoly, subtractAll, type P2 } from './geom2d';
 
 /**
  * Lift above the terrain, m: shoulders < pavement < markings. Dyadic fractions, so field
@@ -18,7 +19,7 @@ export const AIRPORT_HEIGHTS = { shoulder: 0.03125, pavement: 0.0625, markings: 
 
 export type HeightFn = (x: number, z: number) => number;
 
-export const PAVE_KIND_ID: Record<PaveKind, number> = { runway: 0, taxiway: 1, apron: 2, carpark: 3 };
+export const PAVE_KIND_ID: Record<PaveKind, number> = { runway: 0, taxiway: 1, apron: 2, carpark: 3, road: 3 };
 
 /** Colours of the paint (linear, before the shader's wear). */
 export const PAINT_RGB = { white: [0.64, 0.64, 0.62] as const, yellow: [0.66, 0.42, 0.045] as const };
@@ -41,12 +42,12 @@ function bilerp(p: readonly RC[], s: number, t: number): RC {
 }
 
 /** Emit a runway-coords quad subdivided so no piece is longer than `maxLen`, draped on the terrain. */
-function drapedQuad(b: MeshBuilder, plan: AirportPlan, p: readonly RC[], lift: number, heightAt: HeightFn, maxLen: number, kindAttr: number) {
-  const l01 = Math.hypot(p[1].a - p[0].a, p[1].c - p[0].c);
-  const l12 = Math.hypot(p[2].a - p[1].a, p[2].c - p[1].c);
+function drapedQuad(b: MeshBuilder, plan: AirportPlan, p: readonly RC[], lift: number, heightAt: HeightFn, maxLen: number, kindAttr: number, frame = 0) {
+  const l01 = Math.max(Math.hypot(p[1].a - p[0].a, p[1].c - p[0].c), Math.hypot(p[2].a - p[3].a, p[2].c - p[3].c));
+  const l12 = Math.max(Math.hypot(p[2].a - p[1].a, p[2].c - p[1].c), Math.hypot(p[3].a - p[0].a, p[3].c - p[0].c));
   const ns = Math.max(1, Math.ceil(l01 / maxLen));
   const nt = Math.max(1, Math.ceil(l12 / maxLen));
-  b.set({ mat: kindAttr });
+  b.set({ mat: kindAttr, part: frame });
   const ids: number[][] = [];
   for (let i = 0; i <= ns; i++) {
     const row: number[] = [];
@@ -60,22 +61,44 @@ function drapedQuad(b: MeshBuilder, plan: AirportPlan, p: readonly RC[], lift: n
   for (let i = 0; i < ns; i++) for (let j = 0; j < nt; j++) b.quad(ids[i][j], ids[i + 1][j], ids[i + 1][j + 1], ids[i][j + 1]);
 }
 
+/** A convex polygon (runway coords) as draped quads (a fan of quads; a last triangle as a degenerate quad). */
+export function polyQuads(p: readonly P2[]): [RC, RC, RC, RC][] {
+  const q = polyArea(p) < 0 ? [...p].reverse() : [...p];
+  const out: [RC, RC, RC, RC][] = [];
+  for (let i = 1; i + 1 < q.length; i += 2) {
+    const d = i + 2 < q.length ? q[i + 2] : q[i + 1];
+    out.push([q[0], q[i], q[i + 1], d]);
+  }
+  return out;
+}
+
+/** Convex pieces of every pavement surface after cutting (the crossing runway owns where it crosses taxiways). */
+export function pavementPieces(plan: AirportPlan): { kind: PaveKind; frame: 0 | 1; p: P2[] }[] {
+  const holes = crossRunwayPieces(plan);
+  const out: { kind: PaveKind; frame: 0 | 1; p: P2[] }[] = [];
+  for (const r of plan.pavement) {
+    const quad = rectPoly(r.a0, r.a1, r.c0, r.c1);
+    const cut = holes.filter((h) => overlaps(quad, h));
+    for (const piece of cut.length ? subtractAll(quad, cut) : [quad]) out.push({ kind: r.kind, frame: 0, p: piece });
+  }
+  for (const f of plan.polys) {
+    const pieces = f.kind === 'runway' ? [f.p] : subtractAll(f.p, holes);
+    for (const piece of pieces) out.push({ kind: f.kind, frame: f.frame, p: piece });
+  }
+  return out;
+}
+
 // ─── pavement ───────────────────────────────────────────────────────────────
 
 export function buildPavement(plan: AirportPlan, heightAt: HeightFn): THREE.BufferGeometry {
   const b = new MeshBuilder();
   const lift = AIRPORT_HEIGHTS.pavement;
-  for (const r of plan.pavement) {
-    const p: RC[] = [
-      { a: r.a0, c: r.c0 },
-      { a: r.a1, c: r.c0 },
-      { a: r.a1, c: r.c1 },
-      { a: r.a0, c: r.c1 },
-    ];
-    drapedQuad(b, plan, p, lift, heightAt, 24, PAVE_KIND_ID[r.kind]);
+  for (const piece of pavementPieces(plan)) {
+    const quads = piece.p.length === 4 && polyArea(piece.p) !== 0 ? [ccwQuad(piece.p)] : polyQuads(piece.p);
+    for (const q of quads) drapedQuad(b, plan, q, lift, heightAt, 24, PAVE_KIND_ID[piece.kind], piece.frame);
   }
   for (const f of plan.fillets) {
-    b.set({ mat: PAVE_KIND_ID[f.kind] });
+    b.set({ mat: PAVE_KIND_ID[f.kind], part: 0 });
     const w = toWorld(plan, f.corner.a, f.corner.c);
     const c = b.v(w.x, heightAt(w.x, w.z) + lift, w.z, 0, 1, 0);
     const ids = f.arc.map((q) => {
@@ -84,9 +107,15 @@ export function buildPavement(plan: AirportPlan, heightAt: HeightFn): THREE.Buff
     });
     for (let i = 0; i < ids.length - 1; i++) b.tri(c, ids[i], ids[i + 1]);
   }
-  const g = b.toGeometry(['mat']);
+  const g = b.toGeometry(['mat', 'part']);
   renameAttr(g, 'aMat', 'aKind');
+  renameAttr(g, 'aPart', 'aFrame');
   return g;
+}
+
+function ccwQuad(p: readonly P2[]): [RC, RC, RC, RC] {
+  const q = polyArea(p) < 0 ? [...p].reverse() : [...p];
+  return [q[0], q[1], q[2], q[3]];
 }
 
 // ─── shoulders ──────────────────────────────────────────────────────────────
@@ -169,6 +198,38 @@ export function buildShoulders(plan: AirportPlan, heightAt: HeightFn): THREE.Buf
       for (let i = 0; i < 6; i++) b.tri(centre, ring[i], ring[i + 1]);
     }
   }
+  // the crossing runway and oblique taxiways: every edge that borders grass
+  for (const f of plan.polys) {
+    const W = widthOf(f.kind);
+    const q = polyArea(f.p) < 0 ? [...f.p].reverse() : [...f.p];
+    for (let i = 0; i < q.length; i++) {
+      const p0 = q[i];
+      const p1 = q[(i + 1) % q.length];
+      const len = Math.hypot(p1.a - p0.a, p1.c - p0.c);
+      if (len < 0.5) continue;
+      const da = (p1.a - p0.a) / len;
+      const dc = (p1.c - p0.c) / len;
+      // CCW in (a, c): outward normal (dc, −da)
+      const na = dc;
+      const nc = -da;
+      let start = -1;
+      const flush = (s0: number, s1: number) => {
+        if (s1 - s0 < 0.4) return;
+        strip({ a: p0.a + da * s0, c: p0.c + dc * s0 }, { a: p0.a + da * s1, c: p0.c + dc * s1 }, na, nc, W);
+      };
+      const step = 0.5;
+      for (let s = 0; s <= len + 1e-6; s += step) {
+        const ss = Math.min(s, len);
+        const out = !isPaved(p0.a + da * ss + na * 0.6, p0.c + dc * ss + nc * 0.6);
+        if (out && start < 0) start = ss;
+        if (!out && start >= 0) {
+          flush(start, Math.max(start, ss - step));
+          start = -1;
+        }
+      }
+      if (start >= 0) flush(start, len);
+    }
+  }
   // fillet arcs: the grass lies toward the arc centre
   for (const f of plan.fillets) {
     const first = f.arc[0];
@@ -197,7 +258,7 @@ export function buildShoulders(plan: AirportPlan, heightAt: HeightFn): THREE.Buf
 // ─── markings ───────────────────────────────────────────────────────────────
 
 export function allMarkings(plan: AirportPlan): MarkQuad[] {
-  return [...runwayMarkings(plan.rw), ...taxiMarkings(plan)];
+  return [...runwayMarkings(plan.rw), ...crossRunwayMarkings(plan), ...taxiMarkings(plan), ...fieldMarkings(plan)];
 }
 
 export function buildMarkings(plan: AirportPlan, heightAt: HeightFn, quads: MarkQuad[] = allMarkings(plan)): THREE.BufferGeometry {
@@ -205,15 +266,16 @@ export function buildMarkings(plan: AirportPlan, heightAt: HeightFn, quads: Mark
   for (const q of quads) {
     const rgb = PAINT_RGB[q.color];
     const base = b.vertexCount;
-    drapedQuad(b, plan, q.p, AIRPORT_HEIGHTS.markings, heightAt, 30, RUNWAY_MARKS.has(q.kind) ? 0 : 1);
+    drapedQuad(b, plan, q.p, AIRPORT_HEIGHTS.markings, heightAt, 30, RUNWAY_MARKS.has(q.kind) ? 0 : 1, q.frame ?? 0);
     for (let i = base; i < b.vertexCount; i++) {
       b.col[i * 3] = rgb[0];
       b.col[i * 3 + 1] = rgb[1];
       b.col[i * 3 + 2] = rgb[2];
     }
   }
-  const g = b.toGeometry(['color', 'mat']);
+  const g = b.toGeometry(['color', 'mat', 'part']);
   renameAttr(g, 'aMat', 'aKind');
+  renameAttr(g, 'aPart', 'aFrame');
   return g;
 }
 

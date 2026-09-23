@@ -759,6 +759,15 @@ export const CONFIG = {
       elevation: 30,
       /** Runway 36/18: centre point, true heading of runway 36, dimensions (m). */
       runway: { center: { x: 0, z: 0 }, headingDeg: 360, length: 1600, width: 30, name: '36/18' },
+      /**
+       * Every runway (the one named like `runway` is `runway` itself — the default for spawn and
+       * reset). 03/21 crosses 36/18 at 30° in its northern half: its centreline meets 36/18's at
+       * z ≈ −400 (800 m from the 03 threshold, 400 m from the 21 threshold); it also crosses taxiway A.
+       */
+      runways: [
+        { center: { x: 0, z: 0 }, headingDeg: 360, length: 1600, width: 30, name: '36/18' },
+        { center: { x: -100, z: -227 }, headingDeg: 30, length: 1200, width: 25, name: '03/21' },
+      ],
       /** Radius of the flattened airport plateau and the blend band around it, m. */
       flatRadius: 1300,
       blendWidth: 900,

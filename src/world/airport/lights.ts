@@ -15,12 +15,12 @@
  * `facingDeg` is the world heading the light's FRONT face points toward
  * (the viewer must be on that side to see `front`), null = omnidirectional.
  */
-import { fromRunwayCoords } from '../runway';
+import { endDesignators, fromRunwayCoords, toRunwayCoords, type RunwayFrame } from '../runway';
 import type { AirportPlan } from './plan';
 import { pavementAt, pointInFillet } from './plan';
 
 export type RGB = readonly [number, number, number];
-export type LightKind = 'edge' | 'threshold' | 'taxi' | 'approach' | 'rabbit' | 'papi' | 'beacon' | 'obstruction';
+export type LightKind = 'edge' | 'threshold' | 'taxi' | 'approach' | 'rabbit' | 'papi' | 'beacon' | 'obstruction' | 'reil';
 
 export const COLORS = {
   white: [1.0, 0.93, 0.8] as RGB,
@@ -51,6 +51,8 @@ export interface LightDef {
   end?: string;
   /** PAPI unit index, 0 = inner (nearest the runway). */
   unit?: number;
+  /** Runway the light belongs to ('36/18', '03/21'). */
+  runway?: string;
 }
 
 export const PAPI_ANGLES = [3.5, 3.17, 2.83, 2.5] as const;
@@ -136,10 +138,9 @@ export function airportLights(plan: AirportPlan, heightAt: (x: number, z: number
   const L = rw.length;
   const hw = rw.halfWidth;
   const out: LightDef[] = [];
-  const toApproach36 = (rw.headingDeg + 180) % 360; // front faces the pilot approaching/rolling on 36
-  const toApproach18 = rw.headingDeg % 360;
-  const add = (kind: LightKind, a: number, c: number, h: number, o: Partial<LightDef> & { front: RGB }) => {
-    const p = fromRunwayCoords(a, c, rw);
+  /** Adder in the frame of runway `fr` (a along, c right of its centreline). */
+  const adder = (fr: RunwayFrame) => (kind: LightKind, a: number, c: number, h: number, o: Partial<LightDef> & { front: RGB }) => {
+    const p = fromRunwayCoords(a, c, fr);
     out.push({
       kind,
       x: p.x,
@@ -151,33 +152,56 @@ export function airportLights(plan: AirportPlan, heightAt: (x: number, z: number
       intensity: o.intensity ?? 1,
       day: o.day ?? 0.3,
       seq: o.seq ?? -1,
+      runway: fr.name,
       ...o,
     });
   };
+  const add = adder(rw);
+  /** True where a fixture would stand on pavement (it is left out: in-pavement lights aren't modelled). */
+  const onPavement = (fr: RunwayFrame, a: number, c: number) => {
+    const w = fromRunwayCoords(a, c, fr);
+    const q = toRunwayCoords(w.x, w.z, rw);
+    return pavementAt(plan, q.along, q.across) !== null;
+  };
 
-  // runway edge lights
-  const caution = Math.min(600, L / 2);
-  const segs = Math.ceil(L / 61);
-  for (const s of [-1, 1])
-    for (let i = 0; i <= segs; i++) {
-      const a = (i / segs) * L;
-      add('edge', a, s * (hw + 1.0), 0.35, {
-        front: a >= L - caution - 1e-6 ? COLORS.yellow : COLORS.white,
-        back: a <= caution + 1e-6 ? COLORS.yellow : COLORS.white,
-        facingDeg: toApproach36,
-        size: 0.7,
-        intensity: 1,
-        day: 0.28,
-      });
+  // runway edge lights (HIRL), threshold/end lights, REILs — for every runway
+  for (const fr of [rw, ...(plan.rw2 !== rw ? [plan.rw2] : [])]) {
+    const addR = adder(fr);
+    const [dA, dB] = endDesignators(fr);
+    const toApproachA = (fr.headingDeg + 180) % 360; // front faces the pilot approaching/rolling toward +a
+    const toApproachB = fr.headingDeg % 360;
+    const Lr = fr.length;
+    const hwr = fr.halfWidth;
+    const caution = Math.min(600, Lr / 2);
+    const segs = Math.ceil(Lr / 61);
+    for (const s of [-1, 1])
+      for (let i = 0; i <= segs; i++) {
+        const a = (i / segs) * Lr;
+        if (onPavement(fr, a, s * (hwr + 1.0))) continue;
+        addR('edge', a, s * (hwr + 1.0), 0.35, {
+          front: a >= Lr - caution - 1e-6 ? COLORS.yellow : COLORS.white,
+          back: a <= caution + 1e-6 ? COLORS.yellow : COLORS.white,
+          facingDeg: toApproachA,
+          size: 0.7,
+          intensity: 1,
+          day: 0.28,
+        });
+      }
+    const nTh = Math.round(fr.width / 3);
+    for (let i = 0; i <= nTh; i++) {
+      const c = -hwr + (i / nTh) * fr.width;
+      addR('threshold', -1.5, c, 0.3, { front: COLORS.green, back: COLORS.red, facingDeg: toApproachA, size: 0.7, intensity: 1.1, day: 0.45, end: dA });
+      addR('threshold', Lr + 1.5, c, 0.3, { front: COLORS.green, back: COLORS.red, facingDeg: toApproachB, size: 0.7, intensity: 1.1, day: 0.45, end: dB });
     }
-
-  // threshold / end lights
-  const nTh = Math.round(rw.width / 3);
-  for (let i = 0; i <= nTh; i++) {
-    const c = -hw + (i / nTh) * rw.width;
-    add('threshold', -1.5, c, 0.3, { front: COLORS.green, back: COLORS.red, facingDeg: toApproach36, size: 0.7, intensity: 1.1, day: 0.45, end: '36' });
-    add('threshold', L + 1.5, c, 0.3, { front: COLORS.green, back: COLORS.red, facingDeg: toApproach18, size: 0.7, intensity: 1.1, day: 0.45, end: '18' });
+    // REILs (a pair of synchronized white strobes 12 m beyond the edges) at every end without a MALSR
+    const reil = (a: number, facing: number, end: string) => {
+      for (const s of [-1, 1]) addR('reil', a, s * (hwr + 12), 0.9, { front: COLORS.strobe, back: COLORS.off, facingDeg: facing, size: 1.3, intensity: 3.2, day: 1, seq: 2, end });
+    };
+    if (fr !== rw) reil(-1.5, toApproachA, dA);
+    reil(Lr + 1.5, toApproachB, dB);
   }
+  const toApproach36 = (rw.headingDeg + 180) % 360;
+  const toApproach18 = rw.headingDeg % 360;
 
   // MALSR for 36
   for (let k = 1; k <= 7; k++) {
@@ -191,7 +215,7 @@ export function airportLights(plan: AirportPlan, heightAt: (x: number, z: number
     add('rabbit', a, 0, 1.0, { front: COLORS.strobe, back: COLORS.off, facingDeg: toApproach36, size: 1.6, intensity: 4, day: 1, seq: k, end: '36' });
   }
 
-  // PAPI (left of the approach: 36 → −c side, 18 → +c side)
+  // PAPI: 36 left of the approach (−c); 18 on its right (west), clear of the crossing runway
   const aP = PAPI.tch / Math.tan(PAPI.glideSlopeDeg * deg);
   for (let u = 0; u < 4; u++) {
     const off = hw + PAPI.edgeOffset + u * PAPI.spacing;
@@ -199,7 +223,17 @@ export function airportLights(plan: AirportPlan, heightAt: (x: number, z: number
   }
   for (let u = 0; u < 4; u++) {
     const off = hw + PAPI.edgeOffset + u * PAPI.spacing;
-    add('papi', L - aP, off, PAPI.lensHeight, { front: COLORS.red, back: COLORS.off, facingDeg: toApproach18, size: 1.0, intensity: 2.2, day: 1, end: '18', unit: u });
+    add('papi', L - aP, -off, PAPI.lensHeight, { front: COLORS.red, back: COLORS.off, facingDeg: toApproach18, size: 1.0, intensity: 2.2, day: 1, end: '18', unit: u });
+  }
+  // the crossing runway's PAPIs (field.ts places them clear of the other runway and taxiway A)
+  if (plan.rw2 !== rw) {
+    const fr = plan.rw2;
+    const addR = adder(fr);
+    const [dA] = endDesignators(fr);
+    for (const p of plan.field.papi) {
+      const facing = p.end === dA ? (fr.headingDeg + 180) % 360 : fr.headingDeg % 360;
+      for (let u = 0; u < 4; u++) addR('papi', p.t, p.s + p.side * u * PAPI.spacing, PAPI.lensHeight, { front: COLORS.red, back: COLORS.off, facingDeg: facing, size: 1.0, intensity: 2.2, day: 1, end: p.end, unit: u });
+    }
   }
 
   // taxiway edge lights
@@ -239,6 +273,26 @@ export function airportLights(plan: AirportPlan, heightAt: (x: number, z: number
   const apFar = side > 0 ? ap.c1 : ap.c0;
   for (const a of [ap.a0 - 1, ap.a1 + 1]) across(apNear + side * (plan.filletRadius + 2), apFar - side * 2, a, 40);
 
+  // the field's taxiways and aprons (B, C, T-hangar lanes, the ARFF apron): every edge, 1 m out
+  const edgeLights = (poly: readonly { a: number; c: number }[], maxSp: number) => {
+    let area = 0;
+    for (let i = 0; i < poly.length; i++) area += poly[i].a * poly[(i + 1) % poly.length].c - poly[(i + 1) % poly.length].a * poly[i].c;
+    const sg = area >= 0 ? 1 : -1;
+    for (let i = 0; i < poly.length; i++) {
+      const p0 = poly[i];
+      const p1 = poly[(i + 1) % poly.length];
+      const len = Math.hypot(p1.a - p0.a, p1.c - p0.c);
+      if (len < 2) continue;
+      const na = (sg * (p1.c - p0.c)) / len;
+      const nc = (-sg * (p1.a - p0.a)) / len;
+      const n = Math.max(1, Math.ceil(len / maxSp));
+      for (let k = 0; k <= n; k++) taxi.push({ a: p0.a + ((p1.a - p0.a) * k) / n + na, c: p0.c + ((p1.c - p0.c) * k) / n + nc });
+    }
+  };
+  for (const r of plan.pavement)
+    if (r.name === 'B' || r.name === 'arff' || /^T\d$/.test(r.name) || r.name === 'T-cross') edgeLights([{ a: r.a0, c: r.c0 }, { a: r.a1, c: r.c0 }, { a: r.a1, c: r.c1 }, { a: r.a0, c: r.c1 }], 30);
+  for (const f of plan.polys) if (f.kind === 'taxiway') edgeLights(f.p, 30);
+
   const kept: { a: number; c: number }[] = [];
   for (const p of taxi) {
     if (pavementAt(plan, p.a, p.c) !== null) continue;
@@ -259,6 +313,15 @@ export function airportLights(plan: AirportPlan, heightAt: (x: number, z: number
     const x = t.center.x + Math.cos(hd) * s * (t.width / 2 + 0.2);
     const z = t.center.z + Math.sin(hd) * s * (t.width / 2 + 0.2);
     out.push({ kind: 'obstruction', x, y: tg + t.height + 0.6, z, front: COLORS.red, back: COLORS.red, facingDeg: null, size: 0.6, intensity: 1.2, day: 0.35, seq: -1 });
+  }
+  // red obstruction lights on the tallest field installations (glideslope mast, ARFF hose tower)
+  for (const b of plan.field.buildings) {
+    if (b.kind !== 'glideslope') continue;
+    // the mast stands 1.8 m left of the shelter (local −X of the building frame)
+    const p = fromRunwayCoords(b.a, b.c, rw);
+    const r = (-b.headingDeg * Math.PI) / 180;
+    const x = p.x - 1.8 * Math.cos(r), z = p.z + 1.8 * Math.sin(r);
+    out.push({ kind: 'obstruction', x, y: heightAt(x, z) + 13.0, z, front: COLORS.red, back: COLORS.red, facingDeg: null, size: 0.6, intensity: 1.2, day: 0.35, seq: -1 });
   }
   return out;
 }
