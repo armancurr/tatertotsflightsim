@@ -159,11 +159,17 @@ const mod: SystemModule = {
         case 'destroyed':
           bus.emit('toast', { text: killToastText(e.kind, e.weapon, cfg.weapons), level: 'good', seconds: hw.killToastS });
           break;
-        case 'missileLaunch':
+        case 'missileLaunch': {
           launchSeen = true;
-          say('RIFLE');
-          pipUntil = Math.max(pipUntil, time + hw.seeker.showAfterLaunchS);
+          // An AIM-9 at an aircraft is "FOX 2" (and has no seeker picture); a Maverick is "RIFLE".
+          const lt = world.status.lock.targetId !== null ? world.find(world.status.lock.targetId) : undefined;
+          if (lt && world.isAir(lt)) say('FOX 2');
+          else {
+            say('RIFLE');
+            pipUntil = Math.max(pipUntil, time + hw.seeker.showAfterLaunchS);
+          }
           break;
+        }
         case 'lockLost':
           if (e.targetId !== null) say('LOCK LOST');
           break;
@@ -217,10 +223,11 @@ const mod: SystemModule = {
       exterior: frame.exterior,
       gunCross: model.gunCross.show,
       pipper: model.pipper.show ? { x: Math.round(model.pipper.x), y: Math.round(model.pipper.y), arc: Math.round(model.pipper.arc * 100) / 100, inRange: model.pipper.inRange, clamped: model.pipper.clamped } : null,
+      lead: model.lead.show ? { x: Math.round(model.lead.x), y: Math.round(model.lead.y), rangeM: Math.round(model.lead.rangeM), inRange: model.lead.inRange, clamped: model.lead.clamped } : null,
       lock: model.lock.show ? { solid: model.lock.solid, fill: model.lock.fill, type: model.lock.type, range: model.lock.range, inRange: model.lock.inRange, x: Math.round(model.lock.x), y: Math.round(model.lock.y) } : null,
       markers: model.markerCount,
       rangeCue: model.rangeCue.show ? model.rangeCue.text : '',
-      stores: [model.stores.gun, model.vis.missiles ? model.stores.msl : '', model.stores.kills].filter(Boolean),
+      stores: [model.stores.gun, model.vis.missiles ? model.stores.msl : '', model.stores.aamShow ? model.stores.aam : '', model.stores.kills].filter(Boolean),
       message: model.msg.show ? model.msg.text : '',
       drawMs: Math.round(drawMs * 1000) / 1000,
       maverickView: { shown: pipShown, rect: pipRect, ...(seeker ? seeker.stats() : { renders: 0, cpuMs: 0, gpuMs: -1, width: 0, height: 0 }) },
@@ -249,9 +256,11 @@ const mod: SystemModule = {
         if (demo !== 'off' && vis.any) {
           applyWeaponsHudDemo(world, demo, { position: root3.position, orientation: root3.quaternion, velocity: f.state.velocity }, cfg.weapons, groundHeight, time);
         }
-        // The Maverick view: tracking/locked, or just after T / a launch.
+        // The Maverick view: tracking/locked, or just after T / a launch (not for an aircraft: the AIM-9 has no picture).
         if (st.lock.targetId !== null && st.lock.state !== 'off') lastTargetId = st.lock.targetId;
-        pipWanted = on && vis.missiles && hw.seeker.enabled && !seekerFailed && (st.lock.state !== 'off' || time < pipUntil) && (f.cameraMode !== 'cockpit' || hw.seeker.inCockpit);
+        const pipT = lastTargetId !== null ? world.find(lastTargetId) : undefined;
+        const airLock = !!pipT && world.isAir(pipT);
+        pipWanted = on && vis.missiles && hw.seeker.enabled && !seekerFailed && !airLock && (st.lock.state !== 'off' || time < pipUntil) && (f.cameraMode !== 'cockpit' || hw.seeker.inCockpit);
         if (!on) {
           setPipShown(false);
           return;
@@ -277,6 +286,9 @@ const mod: SystemModule = {
         frame.qz = root3.quaternion.z;
         frame.qw = root3.quaternion.w;
         frame.headingDeg = f.readings ? f.readings.headingDeg : f.state.derived.headingDeg ?? 0;
+        frame.vx = f.state.velocity.x;
+        frame.vy = f.state.velocity.y;
+        frame.vz = f.state.velocity.z;
         frame.weapons = cfg.weapons;
         frame.status = st;
         frame.kills = world.stats.kills;
@@ -406,13 +418,18 @@ const mod: SystemModule = {
       },
 
       onAction(a) {
-        if (!vis.missiles) return;
+        if (!vis.missiles && !vis.airMissiles) return;
         const st = world.status;
         if (a === 'lockTarget') {
           pipUntil = time + hw.seeker.showAfterLockKeyS;
         } else if (a === 'fireMissile') {
           if (launchSeen) return;
-          const n = st.hasMissiles ? st.missiles : cfg.weapons?.missiles?.stations.length ?? 0;
+          // Which rack Z would fire: the Sidewinders at a locked aircraft, else the Mavericks.
+          const lt = st.lock.targetId !== null ? world.find(st.lock.targetId) : undefined;
+          const air = !!lt && world.isAir(lt);
+          const n = air
+            ? (st.hasAirMissiles ? st.airMissiles : cfg.weapons?.airMissiles?.stations.length ?? 0)
+            : (st.hasMissiles ? st.missiles : cfg.weapons?.missiles?.stations.length ?? 0);
           if (n <= 0) say('NO MSL');
           else if (st.lock.state !== 'locked') say('NO LOCK');
           else if (!st.lock.inRange) say('OUT OF RNG');

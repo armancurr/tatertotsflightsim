@@ -1905,7 +1905,7 @@ export const CONFIG = {
       seed: 0x5a1729,
       /** Flight envelopes per class (kinematic model, src/combat/air/flight.ts). Speeds m/s, rates deg/s. */
       flight: {
-        fighter: { cruise: 190, min: 120, max: 290, accel: 6, decel: 9, maxG: 7, cruiseBankDeg: 45, breakBankDeg: 80, rollRateDeg: 160, maxClimbDeg: 22, maxDiveDeg: 22, aoaPerG: 1.4, minAglM: 180, noseDownDeg: 0, heloPitch: false },
+        fighter: { cruise: 190, min: 120, max: 290, accel: 6, decel: 9, maxG: 7, cruiseBankDeg: 55, breakBankDeg: 80, rollRateDeg: 160, maxClimbDeg: 22, maxDiveDeg: 22, aoaPerG: 1.4, minAglM: 180, noseDownDeg: 0, heloPitch: false },
         attack: { cruise: 165, min: 105, max: 235, accel: 4, decel: 7, maxG: 6, cruiseBankDeg: 55, breakBankDeg: 75, rollRateDeg: 110, maxClimbDeg: 18, maxDiveDeg: 20, aoaPerG: 1.8, minAglM: 110, noseDownDeg: 0, heloPitch: false },
         helo: { cruise: 55, min: 18, max: 80, accel: 2.5, decel: 3.5, maxG: 2.2, cruiseBankDeg: 25, breakBankDeg: 50, rollRateDeg: 40, maxClimbDeg: 12, maxDiveDeg: 12, aoaPerG: 0, minAglM: 35, noseDownDeg: 7, heloPitch: true },
       },
@@ -1918,8 +1918,8 @@ export const CONFIG = {
       hardFloorM: 25,
       /** MiG-29 pairs on racetrack CAPs: centre (bearing deg / distance m from the range), axis (deg), straight leg (m), altitude (ft MSL). */
       caps: [
-        { bearingDeg: 355, distanceM: 4200, axisDeg: 80, legM: 6500, altFt: 6500 },
-        { bearingDeg: 262, distanceM: 5200, axisDeg: 170, legM: 5500, altFt: 3800 },
+        { bearingDeg: 355, distanceM: 4200, axisDeg: 80, legM: 5000, altFt: 6500 },
+        { bearingDeg: 290, distanceM: 4500, axisDeg: 20, legM: 4500, altFt: 3800 },
       ] as { bearingDeg: number; distanceM: number; axisDeg: number; legM: number; altFt: number }[],
       /** Wingman station: this far behind along the path (m) and to the side (m, + right). */
       wingman: { trailM: 900, sideM: 350 },
@@ -1953,10 +1953,12 @@ export const CONFIG = {
         maxWrecks: 10,
         maxFires: 3,
         /** Smoke puffs along the falling trail, every this many metres. */
-        trailStepM: 7,
+        trailStepM: 4.5,
       },
       /** Drawing: LOD distances (m, full < lod[0] ≤ low < lod[1] ≤ dot only), far dots from dotFromM, lights. */
       render: { lod: [650, 5500] as [number, number], dotFromM: 1400, dotMinPx: 2.2, maxDrawM: 16000, lodHysteresis: 0.08 },
+      /** Weapons HUD: the gun lead pipper on a locked aircraft (shown inside leadMaxRangeM, "IN RNG" inside leadInRangeM), px radius at 900 px. */
+      hud: { leadMaxRangeM: 2400, leadInRangeM: 1200, leadRadiusPx: 15 },
     },
     /** Destroyed vehicles come back after a reset (R) or after this long, s (0 = only on reset). */
     respawnS: 0,

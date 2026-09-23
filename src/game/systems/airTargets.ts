@@ -52,8 +52,8 @@ const mod: SystemModule = {
           id: e.target.id, kind: e.kind, name: CONFIG.combat.targets[e.kind].name, group: e.group, phase: e.phase, alive: e.target.alive,
           x: Math.round(e.position.x), y: Math.round(e.position.y), z: Math.round(e.position.z),
           altFt: Math.round(e.position.y * M_TO_FT), aglFt: Math.round((e.position.y - env.groundHeight(e.position.x, e.position.z)) * M_TO_FT),
-          speedKt: Math.round(e.flight.speed * MS_TO_KT), headingDeg: Math.round(e.target.headingDeg), bankDeg: Math.round(e.flight.bank / DEG),
-          mode: e.pilot.mode, bort: e.bort, lod: renderer.lodOf(e),
+          speedKt: Math.round((e.fall ? Math.hypot(e.fall.vx, e.fall.vy, e.fall.vz) : e.flight.speed) * MS_TO_KT), headingDeg: Math.round(e.target.headingDeg), bankDeg: Math.round(e.flight.bank / DEG),
+          mode: e.pilot.mode, bort: e.bort, lod: renderer.lodOf(e), fall: e.fall ? `${e.fall.mode}${e.fall.part ? `+${e.fall.part.which}` : ''}` : null,
           distM: Math.round(Math.hypot(e.position.x - player.x, e.position.y - player.y, e.position.z - player.z)),
         })),
       kill(idOrIndex: number, weapon: 'gun' | 'missile' = 'missile') {
@@ -138,8 +138,10 @@ const mod: SystemModule = {
         renderer.update({ camera: f.camera, time: f.time, night, viewportHeight: ctx.renderer?.domElement?.height || 900 }, squadron.entities, squadron.flares);
         updMs += (performance.now() - t0 - updMs) * 0.05;
       },
-      onReset() {
-        anchored = false;
+      onReset(which) {
+        // R / Shift+R bring everyone back; a teleport leaves them flying (the range's revive of the
+        // world's targets is undone for our wrecks by the squadron itself).
+        if (which !== 'teleport') anchored = false;
       },
       onAircraftChange() {
         anchored = false;

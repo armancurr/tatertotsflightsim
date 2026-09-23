@@ -770,6 +770,7 @@ export class CombatFxSim {
     this.hotFragments(x, base + 1.5, z, Math.round(28 * k), 25, 80);
     this.addBlast(x, base + 1, z, 1.2 * k);
     const plan = secondaryPlan(targetId, kind, time);
-    if (plan.delayS !== null) this.addPending(this.now + plan.delayS, x, base, z, k * (0.5 + 0.6 * plan.size));
+    // (not for a kill in the air: the secondary pops on the ground under it — the wreck falls on its own)
+    if (plan.delayS !== null && y - g < 20) this.addPending(this.now + plan.delayS, x, base, z, k * (0.5 + 0.6 * plan.size));
   }
 }

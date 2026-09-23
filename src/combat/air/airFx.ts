@@ -151,25 +151,26 @@ export function wreckTrail(sim: FxSim, x0: number, y0: number, z0: number, x1: n
     t.y = y + (sim.rnd() - 0.5) * 1.5;
     t.z = z + (sim.rnd() - 0.5) * 1.5;
     t.vy = 0.8;
-    t.life = 11 + 6 * sim.rnd();
-    t.size0 = 3.2;
-    t.size1 = 11 + 5 * sim.rnd();
-    t.growTau = 2.5;
+    t.life = 10 + 5 * sim.rnd();
+    t.size0 = 7;
+    t.size1 = 22 + 9 * sim.rnd();
+    t.growTau = 1.3;
     t.drag = 0.7;
     t.buoyancy = 0.6;
     t.buoyTau = 4;
-    t.alpha = 0.72;
-    t.fadeIn = 0.05;
+    t.alpha = 0.78;
+    t.fadeIn = 0.04;
     t.fadeOut = 0.6;
-    const c = 0.035 + 0.03 * sim.rnd();
+    const c = 0.03 + 0.03 * sim.rnd();
     t.r = c;
     t.g = c;
     t.b = c * 0.95;
-    t.lighten = 1.1;
+    t.lighten = 1.0;
     t.turbulence = 1.1;
     t.groundY = groundY;
-    t.heat = heat * 0.5;
-    t.heatTau = 0.35;
+    // only the head of the trail glows (the fire), the rest is black smoke at once
+    t.heat = u > 0.6 ? heat * 0.3 : 0;
+    t.heatTau = 0.12;
     sim.smoke.emit(t);
     if (heat > 0 && (n & 1) === 0) {
       const f = reset(sim);

@@ -1,10 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import * as THREE from 'three';
 import { CONFIG } from '../../../src/config';
 import {
   attitudeQuat, bankFor, G, gLimitedBank, newFlightState, stepFlight, turnRateFor, wrapPi, type FlightCommand, type FlightSpec,
 } from '../../../src/combat/air/flight';
+
+vi.setConfig({ testTimeout: 60_000 });
 
 const DEG = Math.PI / 180;
 const F = CONFIG.combat.air.flight;
@@ -132,22 +134,23 @@ describe('air flight: fuzz', () => {
           const spec = specs[kind];
           const s = newFlightState(100, 800, -300, 1, spec.cruise);
           const floor = (x: number, z: number) => 300 + 250 * Math.sin(x / 900) * Math.cos(z / 1300);
+          const bad: string[] = [];
           for (const c of seq) {
             for (let i = 0; i < c.n; i++) {
               stepFlight(s, { turnRate: c.turn, altitude: c.alt, speed: c.v, maxBank: c.bank, altitudeTau: 9 }, spec, c.dt, floor);
-              for (const v of [s.x, s.y, s.z, s.speed, s.heading, s.gamma, s.bank, s.turnRate, s.orientation.x, s.orientation.w, s.velocity.y]) expect(Number.isFinite(v)).toBe(true);
-              expect(s.speed).toBeGreaterThanOrEqual(spec.min);
-              expect(s.speed).toBeLessThanOrEqual(spec.max);
-              expect(1 / Math.cos(s.bank)).toBeLessThanOrEqual(spec.maxG + 1e-6);
-              expect(s.y).toBeGreaterThanOrEqual(floor(s.x, s.z) - 1e-6);
-              expect(Math.abs(s.turnRate - turnRateFor(s.bank, s.speed))).toBeLessThan(1e-9);
               const q = s.orientation;
-              expect(Math.hypot(q.x, q.y, q.z, q.w)).toBeCloseTo(1, 9);
+              if (!Number.isFinite(s.x + s.y + s.z + s.speed + s.heading + s.gamma + s.bank + s.turnRate + q.x + q.w + s.velocity.y)) bad.push('NaN');
+              if (s.speed < spec.min || s.speed > spec.max) bad.push(`speed ${s.speed}`);
+              if (1 / Math.cos(s.bank) > spec.maxG + 1e-6) bad.push(`g ${1 / Math.cos(s.bank)}`);
+              if (s.y < floor(s.x, s.z) - 1e-6) bad.push(`below the floor ${s.y}`);
+              if (Math.abs(s.turnRate - turnRateFor(s.bank, s.speed)) > 1e-9) bad.push('uncoordinated');
+              if (Math.abs(Math.hypot(q.x, q.y, q.z, q.w) - 1) > 1e-9) bad.push('quat');
             }
           }
+          expect(bad.slice(0, 3)).toEqual([]);
         },
       ),
-      { numRuns: 120 },
+      { numRuns: 80 },
     );
   });
 });

@@ -24,9 +24,9 @@ const SCHEME: Record<AirKind, number> = { fighter: 0, attack: 1, helo: 2 };
 
 /** Camouflage palettes (sRGB): base, patch 1, patch 2, underside — MiG-29 greys, Su-25 desert/green, Mi-24 tan/green. */
 const PALETTES: number[][] = [
-  [0xa3abae, 0x6d7a82, 0x87949a, 0xbfc8cc],
-  [0xb09a70, 0x6f5436, 0x5b6638, 0xa3b9c9],
-  [0xa08e62, 0x4b5733, 0x5a4730, 0x9db2c0],
+  [0x858e92, 0x55636c, 0x6c787e, 0xa2adb2],
+  [0x9a8660, 0x604832, 0x505b33, 0x90a6b6],
+  [0x8c7c56, 0x424d2c, 0x4f3f2b, 0x8a9fae],
 ];
 
 const VERT_PARS = /* glsl */ `
@@ -117,7 +117,7 @@ if ( aSurf.x > 1.5 && aSurf.x < 3.5 ) {
       .replace('#include <color_fragment>', `#include <color_fragment>\n${FRAG_COLOR}`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(vSurf.y, 0.95, vState.x);')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vSurf.z * (1.0 - vState.x);')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(1.0, 0.32, 0.07) * vSurf.w * uGlow * (1.0 - vState.x) * 1.4;');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(1.0, 0.3, 0.06) * vSurf.w * uGlow * (1.0 - vState.x) * 0.35;');
   };
   mat.customProgramCacheKey = () => 'air-targets-v1';
   return mat;
@@ -308,7 +308,12 @@ export function createAirRenderer(capacity = 24, cfg = CONFIG.combat.air.render)
             tmpM2.compose(r.hub, tmpQ2, tmpV.set(r.radius, r.radius, r.radius));
             discs.setMatrixAt(i, tmpM2.premultiply(E));
             const near = 1 - Math.min(1, Math.max(0, (d - 2800) / 1200));
-            discAttr.setXYZW(i, r.blades, e.rotorPhase + k * 0.9, 0.9 * near * Math.min(1, 0.3 + e.rotor), 0.25);
+            // seen edge-on a blur disc is a thin smear, not a plank: fade it by the view angle
+            tmpV.set(0, 0, 1).transformDirection(tmpM2);
+            const cx = tmpM2.elements[12] - camPos.x, cy = tmpM2.elements[13] - camPos.y, cz = tmpM2.elements[14] - camPos.z;
+            const cosv = Math.abs(tmpV.x * cx + tmpV.y * cy + tmpV.z * cz) / Math.max(1e-3, Math.hypot(cx, cy, cz));
+            const face = Math.min(1, Math.max(0, (cosv - 0.04) / 0.3));
+            discAttr.setXYZW(i, r.blades, e.rotorPhase + k * 0.9, 0.9 * near * face * Math.min(1, 0.3 + e.rotor), 0.25);
             discs.count = i + 1;
           }
         }
@@ -338,7 +343,7 @@ export function createAirRenderer(capacity = 24, cfg = CONFIG.combat.air.render)
           }
         }
         if (fx.nozzles.length && d < 6000) {
-          const hot = 22 * (0.6 + 0.4 * Math.min(1, e.flight.speed / 200));
+          const hot = 3.5 * (0.6 + 0.4 * Math.min(1, e.flight.speed / 200)) * (0.35 + 0.65 * night);
           for (const n of fx.nozzles) {
             at(n);
             dir(0, 0, 1);

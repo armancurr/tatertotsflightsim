@@ -74,7 +74,7 @@ export function planAir(range: { x: number; z: number }, ground: (x: number, z: 
     const dist = c.distanceM * (0.92 + 0.16 * rng.next());
     const d = dirOf(b);
     const axis = c.axisDeg + rng.sym(12);
-    const radius = (fs.cruise * fs.cruise) / (G * Math.tan(fs.cruiseBankDeg * DEG * 0.8));
+    const radius = (fs.cruise * fs.cruise) / (G * Math.tan(fs.cruiseBankDeg * DEG * 0.9));
     let alt = c.altFt * FT_TO_M * (0.94 + 0.12 * rng.next());
     const make = (x: number, z: number) => racetrack(x, z, axis, c.legM, radius, () => ({ alt, speed: fs.cruise }));
     const cx0 = range.x + d.x * dist, cz0 = range.z + d.z * dist;
