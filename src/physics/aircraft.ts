@@ -106,6 +106,7 @@ export function defaultControls(): Controls {
     parkingBrake: false,
     engineOn: true,
     speedBrake: false,
+    trigger: false,
   };
 }
 
