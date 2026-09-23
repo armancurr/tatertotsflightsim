@@ -187,3 +187,37 @@ wheelbase, 2.36 m track) shared by the physics and the model, jet fields (afterb
 on X), page title "Tater's Flight Sim · Tater Tots Flight Simulator", package `taters-flight-sim` (renamed `tatertotsflightsim` with the repository folder).
 Suite 1,438/1,438. Then 10 worktree agents: physics, f16, cessna, crash, traffic, cars, clouds, ui,
 audio, oss.
+
+## Waves 5–6 (2026-09-22 night → 2026-09-23): combat, the A-10, the 747, realism, release prep
+
+**Wave 5 — the A-10 and combat.** JT: "add an A-10 with missiles so I can blow up tanks with the
+gatling gun, as realistic as possible; make sure the F-16 is accurate." Contracts first: the A-10C
+geometry and weapons config (GAU-8/A, AGM-65D; F-16 M61A1), target classes with armour by aspect,
+the combat world (targets, hull raycast, blast, seeker cone, events, weapons status), the
+`adjustControls` and `postRender` system hooks, `?spawn=range`. Agents: A-10 flight model + recoil +
+F-16 accuracy audit, A-10 model, gun, targets, combat fx/audio, weapons HUD, fire/smoke look,
+sortie QA. **A sub-agent writing real proportional-navigation guidance with real seeker
+parameters was stopped by a safety classifier**; the orchestrator replaced the design with an
+arcade scripted missile (`src/combat/missile.ts`, a curve to the selected target) and recorded the
+rule "weapons stay game-level" in RESUME.md. Then: a G meter (all aircraft), the jets' "video
+wobble" (the camera shake used the Cessna's 163 kt Vne for every aircraft), the F-16's twitchy
+keyboard roll, F-16 Mavericks, realistic cockpits for all three, the jet HUD drawn on the combiner
+glass, release screenshots, the repository renamed to `tatertotsflightsim`.
+
+**Wave 6 — realism, enemy aircraft, the 747, release prep.** JT: better cockpits in all three,
+more realistic ground/scenery/towns/rivers, planes to shoot down, a crosswind runway at ~30° and
+more around the airport, MIT everywhere, a simple README with screenshots, contributor guides, "a
+747 for giggles — cockpit, flight physics, everything". Contracts first: aircraft targets (oriented
+boxes, `GroundKind`/`AirKind`), arcade AIM-9M Sidewinders (T locks what you can shoot, Z fires the
+matching missile), an MIT guard test (the bundle closure is all MIT), the 747-400 geometry (its
+engine/wingtip stations later corrected to Boeing's airport-planning drawing by the model agent).
+Agents (≤ 10 at a time, 19 in total): Cessna/F-16/A-10 cockpits, enemy aircraft, ground, towns,
+rivers, airport (runway 03/21), browser robustness, tank range, docs, polish, look development,
+vehicles & ships, trees, 747 model / physics / flight deck, final human QA, terrain performance.
+Notable finds: the flap lever used the Cessna's four notches for every aircraft (the 747 couldn't
+reach flaps 25/30); a GL feedback loop in the Maverick picture-in-picture; a texture leak on aircraft
+switches (three's shadow material held the old texture); Firefox/Safari lacked `EXT_clip_control`
+so custom shaders needed a log-depth patch; stray snow flecks leaked into every field; river banks
+read as pale canal edging (water shader bar colours); dawn window lights turned to glare under the
+new auto exposure. Test hygiene: a 20 s default timeout for heavy tests, median-based timing
+assertions, retries for one wall-clock-dependent e2e. Suite at the stop point: ~3,100 tests.
