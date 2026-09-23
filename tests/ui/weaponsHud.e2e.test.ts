@@ -59,8 +59,8 @@ describe('A-10 weapons HUD in the game', () => {
   it('range cue to the target range; the real missiles system locks with T, the Maverick view shows the target', async () => {
     await sim('sim.weaponsHudDemo("gun")');
     await until(async () => /^RANGE \d+\.\d km$/.test((await hud()).rangeCue), 'range cue');
-    // 4.5 km out, 1,000 ft: the platoon a few degrees under the nose.
-    await sim('sim.teleport({ x: 0, z: -2500, aglFt: 1000, headingDeg: 0, speedKt: 250 })');
+    // 4 km short of the target range, 1,000 ft, pointing at it: the vehicles a few degrees under the nose.
+    await sim('((r, h) => sim.teleport({ x: r.x - Math.sin(h) * 4000, z: r.z + Math.cos(h) * 4000, aglFt: 1000, headingDeg: r.headingDeg, speedKt: 250 }))(sim.combat.range, sim.combat.range.headingDeg * Math.PI / 180)');
     await page.waitForTimeout(600);
     expect((await hud()).markers).toBeGreaterThan(0);
     await page.keyboard.press('t');
@@ -81,7 +81,8 @@ describe('A-10 weapons HUD in the game', () => {
     await until(async () => (await hud()).message === 'RIFLE', 'RIFLE', 5_000);
     await until(async () => (await sim<number>('sim.combat.stats.kills')) >= 1, 'a kill', 40_000);
     await until(async () => (await page.locator('.fsh-toast').allTextContents()).some((t) => / destroyed — AGM-65D$/.test(t)), 'kill toast', 5_000);
-    await until(async () => (await hud()).stores.includes('KILLS 1'), 'KILLS 1', 3_000);
+    // The blast can take out a neighbour in the column too.
+    await until(async () => (await hud()).stores.some((t) => /^KILLS [1-9]\d*$/.test(t)), 'KILLS ≥ 1', 3_000);
   }, 60_000);
 
   it('Z without a lock says NO LOCK', async () => {
