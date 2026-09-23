@@ -160,6 +160,7 @@ export function createTowns(scene: THREE.Scene, opts: TownsOptions): Towns {
     obstacle = createObstacleIndex(bs);
     uniforms = createBuildingUniforms(s.chunkCount);
     uniforms.uBldLod.value.set(cfg.minAngularSize, cfg.midDistance, cfg.farDistance, TALL_SIZE);
+    uniforms.uBldTree.value.set(cfg.treeLodStart, cfg.treeLodEnd);
     nearMat = createBuildingMaterial(uniforms, false);
     midMat = createBuildingMaterial(uniforms, true);
     nearMat.userData.uniforms = uniforms;
@@ -298,6 +299,7 @@ export function createTowns(scene: THREE.Scene, opts: TownsOptions): Towns {
       const cx = e[12];
       const cy = e[13];
       const cz = e[14];
+      uniforms.uBldCam.value.set(cx, cy, cz);
       const fx = focus ? focus.x : cx;
       const fz = focus ? focus.z : cz;
       const h = cfg.hysteresis;

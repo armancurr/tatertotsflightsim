@@ -41,6 +41,27 @@ describe('building materials', () => {
       expect(s.vertexShader).toContain('#include <shadowmap_vertex>');
     }
   });
+  it('trees cross-fade between the near crown and the mid blob with complementary dithers, from the real camera', () => {
+    const u = createBuildingUniforms(4);
+    const near = std();
+    patchStandardShader(near, u, false);
+    const mid = std();
+    patchStandardShader(mid, u, true);
+    // near keeps the pixels with ign >= fade, mid those with ign < fade: together exactly one layer
+    expect(near.fragmentShader).toContain('bIGN(gl_FragCoord.xy) < 1.0 - vBldF.y) discard;');
+    expect(mid.fragmentShader).toContain('bIGN(gl_FragCoord.xy) >= vBldF.y) discard;');
+    for (const s of [near, mid]) {
+      expect(s.vertexShader).toContain('smoothstep(uBldTree.x, uBldTree.y, distance(uBldCam, iA.xyz))');
+      expect(s.uniforms.uBldCam).toBe(u.uBldCam);
+      expect(s.uniforms.uBldTree).toBe(u.uBldTree);
+    }
+    expect(mid.vertexShader).toContain('min(vis, treeFar)');
+    // the shadow pass uses the view camera too (not the light's)
+    const d = { vertexShader: THREE.ShaderLib.depth.vertexShader, uniforms: {} as Record<string, THREE.IUniform> };
+    patchDepthShader(d, u);
+    expect(d.vertexShader).toContain('uBldCam');
+    expect(d.uniforms.uBldCam).toBe(u.uBldCam);
+  });
   it('patches the depth shader with the same transform', () => {
     const u = createBuildingUniforms(3);
     const s = { vertexShader: THREE.ShaderLib.depth.vertexShader, uniforms: {} as Record<string, THREE.IUniform> };

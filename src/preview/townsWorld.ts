@@ -44,6 +44,47 @@ async function main() {
   const rend = createRenderer(container, q.get('dyn') === '0' ? { dynamicResolution: false } : {});
   const renderer = rend.renderer;
   window.__townsGpu = () => rend.gpuTimings();
+  // gpuTowns=1: after each frame the towns alone (lights kept, everything else hidden) are drawn again
+  // into an offscreen target inside a timer query (raw samples; min/median by __townsMs()).
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  const tq = q.get('gpuTowns') === '1' ? (gl.getExtension('EXT_disjoint_timer_query_webgl2') as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null) : null;
+  const rt = new THREE.WebGLRenderTarget(innerWidth * devicePixelRatio, innerHeight * devicePixelRatio, { type: THREE.HalfFloatType, depthBuffer: true, samples: 4 });
+  const queries: WebGLQuery[] = [];
+  const townsMs: number[] = [];
+  const hidden: THREE.Object3D[] = [];
+  const reps = num('reps', 2);
+  const measureTowns = () => {
+    if (!tq) return;
+    while (queries.length && gl.getQueryParameter(queries[0], gl.QUERY_RESULT_AVAILABLE)) {
+      const qq = queries.shift()!;
+      if (!gl.getParameter(tq.GPU_DISJOINT_EXT)) townsMs.push((gl.getQueryParameter(qq, gl.QUERY_RESULT) as number) / 1e6 / reps);
+      if (townsMs.length > 200) townsMs.shift();
+      gl.deleteQuery(qq);
+    }
+    if (queries.length > 6) return;
+    hidden.length = 0;
+    for (const c of scene.children) {
+      if (c.name === 'towns' || (c as THREE.Light).isLight || c === camera || !c.visible) continue;
+      c.visible = false;
+      hidden.push(c);
+    }
+    const bg = scene.background;
+    scene.background = null;
+    renderer.setRenderTarget(rt);
+    renderer.clear();
+    const qq = gl.createQuery()!;
+    gl.beginQuery(tq.TIME_ELAPSED_EXT, qq);
+    for (let k = 0; k < reps; k++) renderer.render(scene, camera);
+    gl.endQuery(tq.TIME_ELAPSED_EXT);
+    queries.push(qq);
+    renderer.setRenderTarget(null);
+    scene.background = bg;
+    for (const c of hidden) c.visible = true;
+  };
+  (window as unknown as { __townsMs: () => unknown }).__townsMs = () => {
+    const s = [...townsMs].sort((a, b) => a - b);
+    return { n: s.length, min: s[0] ?? NaN, p25: s[Math.floor(s.length * 0.25)] ?? NaN, median: s[Math.floor(s.length / 2)] ?? NaN };
+  };
   renderer.info.autoReset = false;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(num('fov', 60), innerWidth / innerHeight, CONFIG.camera.near, CONFIG.camera.far);
@@ -104,6 +145,7 @@ async function main() {
     atmosphere.update(camera, dt, focus);
     systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, paused: false, cameraMode: 'orbit', fps, readings: null, def, aircraft: stubAircraft });
     rend.render(scene, camera);
+    measureTowns();
     if (!window.__ready && time > settle) window.__ready = true;
     if (frames % 30 === 0) label.textContent = `calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1e6).toFixed(2)}M  cam ${camera.position.x.toFixed(0)},${camera.position.y.toFixed(0)},${camera.position.z.toFixed(0)}  gpu ${JSON.stringify(rend.gpuTimings())}`;
   });

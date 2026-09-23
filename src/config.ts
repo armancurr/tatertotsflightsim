@@ -874,6 +874,9 @@ export const CONFIG = {
       minAngularSize: 0.0016,
       /** LOD switch hysteresis, as a fraction of the switch distance. */
       hysteresis: 0.06,
+      /** Trees: detailed crowns nearer than treeLodStart (m), the mid-LOD blob beyond treeLodEnd (dithered cross-fade between). */
+      treeLodStart: 600,
+      treeLodEnd: 800,
       /** Farmsteads: one candidate per jittered grid cell of this size (m), kept with this probability. */
       farmsteadSpacing: 900,
       farmsteadChance: 0.62,

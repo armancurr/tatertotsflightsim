@@ -121,6 +121,8 @@ flat varying float vBldH;
 uniform sampler2D uBldChunkNear;
 uniform vec4 uBldLod;
 #endif
+uniform vec3 uBldCam;
+uniform vec2 uBldTree;
 bool bldHas(int flags, int b) { return ((flags >> b) & 1) == 1; }
 void bldTransform(out vec3 wpos, out vec3 wn) {
   float W = iB.x;
@@ -175,6 +177,14 @@ void bldTransform(out vec3 wpos, out vec3 wn) {
   wpos = on ? vec3(iA.x - c * l.x + s * l.z, iA.y + l.y, iA.z - s * l.x - c * l.z) : iA.xyz;
   wn = vec3(-c * n.x + s * n.z, n.y, -s * n.x - c * n.z);
   float vis = 1.0;
+  // trees: the detailed crown fades out between uBldTree.x and .y from the (real) camera; the mid blob takes over
+  float treeFar = smoothstep(uBldTree.x, uBldTree.y, distance(uBldCam, iA.xyz));
+#ifndef BLD_MID
+  if (bldHas(flags, BG_TREE)) {
+    if (treeFar >= 1.0) wpos = iA.xyz;
+    vis = 1.0 - treeFar;
+  }
+#endif
 #ifdef BLD_MID
   int ci = int(iE.x + 0.5);
   float nearFlag = texelFetch(uBldChunkNear, ivec2(ci % 256, ci / 256), 0).r;
@@ -184,7 +194,7 @@ void bldTransform(out vec3 wpos, out vec3 wn) {
   float thr = dist * uBldLod.x;
   if (dist > uBldLod.y) thr = max(thr, uBldLod.w);
   vis = smoothstep(thr * 0.8, thr, size) * (1.0 - smoothstep(uBldLod.z * 0.9, uBldLod.z, dist));
-  if (nearFlag > 0.5) vis = 0.0;
+  if (nearFlag > 0.5) vis = int(iC.w + 0.5) == BS_TREE ? min(vis, treeFar) : 0.0;
   if (vis <= 0.0) wpos = vec3(0.0);
 #endif
 #ifdef BLD_COLOR
@@ -1103,4 +1113,9 @@ export const BLD_FRAG_COLOR = `
 export const BLD_FRAG_DITHER = `
 #include <clipping_planes_fragment>
   if (vBldF.y < 0.999 && bIGN(gl_FragCoord.xy) >= vBldF.y) discard;
+`;
+/** Near LOD: trees fading out keep exactly the pixels the mid blob leaves (complementary dither). */
+export const BLD_FRAG_DITHER_NEAR = `
+#include <clipping_planes_fragment>
+  if (vBldF.y < 0.999 && bIGN(gl_FragCoord.xy) < 1.0 - vBldF.y) discard;
 `;
