@@ -97,7 +97,8 @@ Vite port 81xx) and commit there; the orchestrator merges each branch into `main
 | — | **STOP POINT 2026-09-22 — see RESUME.md for the handoff prompt and prioritized remaining work** | |
 | 3 (worktrees, 10 agents) | aircraft (gear ✅, prop ✅, wreck ✅, cockpit ⏳) · airport renderer ✅ · buildings ✅ · roads ✅ (cars ❌) · traffic (simulated ✅, rendering ❌) · terrain realism ✅ (mountains ⏳) · water ✅ · sky (cloud shadows ✅, volumetric opt-in ⏳) · trees+grass ✅ · ux (gear warning ✅, loading ✅, audio ⏳) — all merged | ✅ merged |
 | — | **STOP POINT #2 (2026-09-22 evening) — `RESUME.md` §5 lists the remaining work in priority order** | |
-| 4 | Traffic renderers, cars, volumetric perf, GPU budget pass, realism polish, re-fly + photograph the full flight, visual QA at 1440 & 1024, final regression (RESUME.md §5) | next |
+| 4 (worktrees, 10 agents) | **Tater's Flight Sim**: physics (spins, stalls, F-16 flight model) · F-16 3D model · Cessna (cockpit view, potato livery, breakup parts) · crash (break-apart, fireball, crash cam, reset) · traffic rendering · cars · volumetric clouds default · UI (branding, top-right aircraft picker, menu with all controls + restart, jet HUD, attitude-indicator fix, every gauge tested) · audio (jet, crash) · open-source readiness (license, README, CI, cross-platform) | ⏳ |
+| 5 | Merge, fly both aircraft end to end, visual QA at 1440 & 1024, final docs, publish checklist | next |
 
 Testing layers (user requirement): unit · fuzz/property (fast-check) · functional (scripted
 flights in pure physics) · e2e (Vite + headless Chrome driving `window.sim` and the keyboard) —

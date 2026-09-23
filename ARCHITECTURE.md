@@ -255,6 +255,22 @@ profiling), and each system's CPU time appears in `window.sim.perf.systems`.
 This design means ten engineers (or agents) can add features in parallel without ever editing
 the same wiring file.
 
+## 9b. The fleet (src/fleet) — more than one aircraft
+
+Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`), names,
+a **full config** (the same shape as `CONFIG`, with its own `aircraft` section and optional camera
+overrides — the physics, cameras and instruments just receive it), which HUD it uses (`steam` gauges
+or a `jet` head-up display), which engine sound (`piston` or `jet`), and a `createModel()` factory
+returning an `AircraftModelHandle` (`root`, `setVisualState`, optional panel drawer, landing light,
+and `getBreakupParts()` / `restoreBreakupParts()` for the crash). The player picks one from the
+dropdown at the top right (or `?aircraft=f16`); `app.ts` swaps the model and the config and
+restarts on the runway, and every system hears `onAircraftChange(def, model)`.
+
+**To add an aircraft:** (1) add its section to `src/config.ts` with the same shape as
+`CONFIG.aircraft` — geometry first, because the physics contact points and the 3D model share it;
+(2) build its model under `src/aircraft/<name>/` implementing `AircraftModelHandle`; (3) add one
+entry to `FLEET`. Tests in `tests/fleet/` check every entry spawns resting on its gear.
+
 ## 10. The aircraft on screen (src/aircraft)
 
 A procedural Cessna 172RG built entirely in code: a lofted fuselage (cross-sections joined into a

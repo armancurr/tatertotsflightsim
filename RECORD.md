@@ -170,3 +170,21 @@ Headless check of the merged build (Chrome for Testing): clean console, 227 draw
 triangles, every system < 0.03 ms CPU. The main dev server had to be restarted after the merge
 (Vite cached the deleted `src/world/water.ts`). New docs: `README.md`, `ELEVATOR_PITCH.md`,
 `ARCHITECTURE.md`, generated `REPO_MAP.md` (`npm run repo-map`), rewritten `RESUME.md`.
+
+## 2026-09-22 — Wave 4: Tater's Flight Sim (open-source prep, F-16, crash, spins)
+
+JT: rename to **Tater's Flight Sim** ("Tater Tots Flight Simulator"), open-source it, make the
+crash spectacular (fluid, break-apart, fireball), real spins and correct stalls, an F-16 selectable
+from a top-right dropdown (keep the Cessna; built for more aircraft later), a potato-with-goggles-
+and-cape livery, a controls menu, working restart, finish other aircraft, clouds, cars, fix the
+cockpit view — and later: the attitude indicator turns the wrong way; every gauge must work with
+unit, functional and fuzz tests.
+
+Orchestrator contracts first (commits 4a71946…): `src/fleet` (AircraftDef, AircraftModelHandle,
+BreakupPart, FLEET with the Cessna and an F-16 placeholder), live aircraft switching in `app.ts`
+(`?aircraft=`, `sim.selectAircraft`, `SystemContext.actions` for the menu, `onAircraftChange`),
+`F16_AIRCRAFT` with the final real-world geometry (15.06 m, 9.96 m span, 4.88 m tall, 4.00 m
+wheelbase, 2.36 m track) shared by the physics and the model, jet fields (afterburner, speed brake
+on X), page title "Tater's Flight Sim · Tater Tots Flight Simulator", package `taters-flight-sim`.
+Suite 1,438/1,438. Then 10 worktree agents: physics, f16, cessna, crash, traffic, cars, clouds, ui,
+audio, oss.
