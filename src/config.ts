@@ -718,7 +718,7 @@ export const CONFIG = {
      * dragSensitivity = degrees per pixel of mouse drag. headLookReturnRate = 1/s (1/time constant).
      * Wheel zooms the cockpit FOV between minFov and maxFov (zoomPerNotch = fraction per wheel notch).
      */
-    cockpit: { fov: 68, lookDownDeg: 7, headLookMaxYawDeg: 150, headLookMaxPitchDeg: 70, headLookReturnRate: 2.5, dragSensitivity: 0.25, minFov: 30, maxFov: 90, zoomPerNotch: 0.08 },
+    cockpit: { fov: 68, lookDownDeg: 10, headLookMaxYawDeg: 150, headLookMaxPitchDeg: 70, headLookReturnRate: 2.5, dragSensitivity: 0.25, minFov: 30, maxFov: 90, zoomPerNotch: 0.08 },
     /** Drag orbits the chase camera temporarily (springs back with dragReturnTau s); wheel zooms the distance by minZoom..maxZoom. */
     chase: { fov: 60, distance: 15, height: 3.6, lookAhead: 6, positionStiffness: 5, rotationStiffness: 6, bankFollow: 0.35, dragSensitivity: 0.3, dragReturnTau: 0.5, maxDragPitchDeg: 60, minZoom: 0.5, maxZoom: 4, zoomPerNotch: 0.1 },
     /**

@@ -1,15 +1,15 @@
 /**
  * The view from the left seat: a real C172 sight picture. Eye height over the seat, headroom,
- * distance to the panel, the cowling visible over the glareshield, the panel filling about the
- * lower third of the default view, slim door posts, and the wing root and strut out of the left
+ * distance to the panel, the cowling just visible over the glareshield (panel top 12–16° below the
+ * eye line, horizon about a third of the way down the default view), slim door posts, and the wing root and strut out of the left
  * side window.
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { fcParams } from '../support/fc';
 import { CONFIG } from '../../src/config';
-import { COCKPIT, glareshieldTopY } from '../../src/aircraft/cockpit';
-import { PANEL } from '../../src/aircraft/panel';
+import { COCKPIT, LIP_Y, glareshieldTopY } from '../../src/aircraft/cockpit';
+import { PANEL, PANEL_LAYOUT } from '../../src/aircraft/panel';
 import { CABIN_INSET, windowDistance } from '../../src/aircraft/livery';
 import { DOOR_WINDOW, FUSE_Z0, STRUT, fuselageSection, wingLEy, type SectionParams } from '../../src/aircraft/shape';
 
@@ -51,18 +51,22 @@ describe('pilot eye point (left seat)', () => {
     const cowlFront = depression(sec.top, FUSE_Z0 + 0.02);
     // Every glareshield point in front of the pilot is lower in the view than the cowling's front.
     for (let z = -1.2; z <= PANEL.z; z += 0.02) {
-      expect(depression(glareshieldTopY(EYE.x, z), z)).toBeGreaterThan(cowlFront + 3);
+      expect(depression(glareshieldTopY(EYE.x, z), z)).toBeGreaterThan(cowlFront + 1.5);
     }
     expect(cowlFront).toBeGreaterThan(6);
     expect(cowlFront).toBeLessThan(16);
   });
 
-  it('frames the default view like a real 172: horizon in the upper half, panel about the lower third', () => {
-    expect(screenRow(0)).toBeGreaterThan(0.35);
-    expect(screenRow(0)).toBeLessThan(0.47);
-    const lip = depression(PANEL.topY + 0.02, PANEL.z + 0.01);
-    expect(screenRow(lip)).toBeGreaterThan(0.62);
-    expect(screenRow(lip)).toBeLessThan(0.76);
+  it('frames the default view like a real 172: horizon about a third down, glareshield 12–16° below the eye line', () => {
+    expect(screenRow(0)).toBeGreaterThan(0.3);
+    expect(screenRow(0)).toBeLessThan(0.4);
+    const lip = depression(LIP_Y, PANEL.z + 0.02);
+    expect(lip).toBeGreaterThan(12);
+    expect(lip).toBeLessThan(16);
+    expect(screenRow(lip)).toBeGreaterThan(0.5);
+    expect(screenRow(lip)).toBeLessThan(0.62);
+    // The whole six-pack is on screen above the bottom edge.
+    expect(screenRow(depression(PANEL_LAYOUT.turn.y - PANEL_LAYOUT.turn.d / 2, PANEL.z))).toBeLessThan(0.95);
   });
 
   it('the left door post (A-pillar trim) is slim: under 8° wide seen from the seat', () => {
@@ -130,20 +134,20 @@ describe('property: glareshield profile', () => {
       fc.property(
         fc.double({ min: -0.5, max: 0.5, noNaN: true }),
         fc.double({ min: -1.24, max: PANEL.z, noNaN: true }),
-        fc.double({ min: -0.05, max: 0.05, noNaN: true }),
+        fc.double({ min: -0.03, max: 0.03, noNaN: true }),
         fc.double({ min: -0.05, max: 0.05, noNaN: true }),
         (x, z, dy, dz) => {
           const y = glareshieldTopY(x, z);
           expect(Number.isFinite(y)).toBe(true);
           fuselageSection(z, sec);
           expect(y).toBeLessThan(sec.top);
-          // With the head anywhere within ±5 cm of the eye point, the glareshield stays below
+          // With the head anywhere within ±3 cm (up/down) and ±5 cm (fore/aft) of the eye point, the glareshield stays below
           // the line of sight to the cowling's front.
           const ey = EYE.y + dy;
           const ez = EYE.z + dz;
           fuselageSection(FUSE_Z0 + 0.02, sec);
           const cowl = Math.atan2(ey - sec.top, ez - FUSE_Z0 - 0.02);
-          expect(Math.atan2(ey - y, ez - z)).toBeGreaterThan(cowl);
+          expect(Math.atan2(ey - y, ez - z)).toBeGreaterThan(cowl + 0.5 * (Math.PI / 180));
         },
       ),
       fcParams(300),

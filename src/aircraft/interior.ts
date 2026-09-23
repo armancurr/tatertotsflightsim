@@ -249,3 +249,16 @@ export function visorHinges(): THREE.BufferGeometry[] {
   }
   return out;
 }
+
+/** Door trim panels: a vinyl insert on each cabin side with an armrest and a chrome handle. */
+export function doorPanels(): THREE.BufferGeometry[] {
+  const out: THREE.BufferGeometry[] = [];
+  for (const s of [-1, 1]) {
+    fuselageSection(-0.1, _sec);
+    const x = s * (_sec.halfWidth - 0.05);
+    out.push(tint(rbox(0.012, 0.5, 0.95, 0.006, at(x, -0.02, -0.12)), 0x6a6258, 0.85, 0));
+    out.push(tint(rbox(0.065, 0.05, 0.6, 0.018, at(x - s * 0.03, 0.12, -0.05)), 0x4f4942, 0.8, 0));
+    out.push(tint(box(0.02, 0.02, 0.1, at(x - s * 0.015, 0.2, 0.18)), 0xa8aaac, 0.35, 0.8));
+  }
+  return out;
+}
