@@ -222,6 +222,13 @@ flying fast never hitches.
   between the 8 cm cockpit panel and a mountain 60 km away), rendering in linear HDR with 4× MSAA,
   then one output pass with a filmic tone map; resolution scales down automatically if the frame
   rate drops.
+- **Camera look (`atmosphereState.ts`, `post.ts`, `bloom.ts`, `metering.ts`, `toneMapping.ts`)** — the
+  camera meters the light like a real one: a time-of-day exposure from the ground illuminance (partial
+  adaptation: golden hour +1.2 EV, dawn +1.9 EV over morning's 2.2), a partial auto white balance with a
+  golden-hour warm / blue-hour cool tint, and a GPU eye adaptation (centre-weighted log-average of the
+  frame, ±0.5 EV, eased, no readback). HDR highlights bloom through a ½-res dual-filter chain (off on
+  `?quality=low`), and the filmic curve keeps gradation in clouds and white paint. `?ae=0` / `?meter=0`
+  switch the camera automation off for A/B comparisons.
 - **Atmosphere (`atmosphere.ts`)** — a physically based sky (single scattering: deep blue overhead,
   pale haze at the horizon, a real sun disc), a sun light whose colour follows its height, soft
   shadows that follow the aircraft, and a sky environment map for reflections. Four time-of-day
