@@ -5,6 +5,7 @@
  */
 import { CONFIG, F16_AIRCRAFT, type Config } from '../config';
 import { createAircraft } from '../aircraft';
+import { createF16Model } from '../aircraft/f16';
 import type { AircraftDef } from './types';
 
 export type { AircraftDef, AircraftModelHandle, BreakupPart, HudStyle, EngineSound } from './types';
@@ -38,8 +39,7 @@ const F16: AircraftDef = {
   config: f16Config,
   hud: 'jet',
   sound: 'jet',
-  // Placeholder until the F-16 model lands in src/aircraft/f16 (the F-16 model owner swaps this line).
-  createModel: () => createAircraft({ quality: 'high' }),
+  createModel: () => createF16Model(),
 };
 
 /** In menu order. */
