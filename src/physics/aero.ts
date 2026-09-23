@@ -16,6 +16,34 @@ function flapFraction(flapsDeg: number, cfg: Config): number {
   return clamp(flapsDeg / cfg.aircraft.surfaces.flapMaxDeg, 0, 1);
 }
 
+/**
+ * Roll-control effectiveness for a flap angle: 1 with the flaps out, aero.aileronFlapsUpFraction
+ * with them up (747: the outboard ailerons unlock as soon as the flaps leave the up position),
+ * blended over the first degree of flap travel.
+ */
+export function aileronEffectiveness(flapsDeg: number, cfg: Config = CONFIG): number {
+  const up = cfg.aircraft.aero.aileronFlapsUpFraction;
+  if (up === undefined || !Number.isFinite(up)) return 1;
+  const f = clamp(Number.isFinite(flapsDeg) ? flapsDeg : 0, 0, 1);
+  return up + (1 - up) * f;
+}
+
+/**
+ * Flap placard speed (kt) for a flap angle: Infinity with the flaps up; with flaps.placardKt the
+ * placard of the lowest notch at or beyond the angle (a flap in transit counts as the next notch
+ * down), otherwise flaps.vfeKt.
+ */
+export function flapPlacardKt(flapsDeg: number, cfg: Config = CONFIG): number {
+  const fl = cfg.aircraft.flaps;
+  if (!(flapsDeg > 0.5)) return Infinity;
+  const table = fl.placardKt;
+  if (!table || table.length !== fl.notchesDeg.length) return fl.vfeKt;
+  for (let i = 1; i < fl.notchesDeg.length; i++) {
+    if (fl.notchesDeg[i] >= flapsDeg - 0.5) return table[i];
+  }
+  return table[table.length - 1];
+}
+
 /** Positive stall angle of attack (rad) for a flap deflection. */
 export function stallAlphaRad(flapsDeg: number, cfg: Config = CONFIG): number {
   const a = cfg.aircraft.aero;
@@ -242,6 +270,8 @@ export interface AeroExtras {
   mach?: number;
   /** Speed brake extension 0..1. */
   speedBrake?: number;
+  /** Ground spoilers (lift dumpers) extension 0..1 — aircraft with aero.spoilers only. */
+  groundSpoilers?: number;
 }
 
 export interface AeroResult {
@@ -315,15 +345,20 @@ export function computeAero(
   // force ΔCN = k·sin α·|sin α| (resolved into lift and drag) — it keeps a spin's descent slow.
   const sinA = Math.sin(alpha);
   const dCN = a.bodyCrossflowCn * sinA * Math.abs(sinA) * sf;
-  const CL = CL0 * (1 + a.groundEffectLift * ge) + dCN * Math.cos(alpha);
-  const aspect = (b * b) / S;
   const mach = extras.mach ?? 0;
-  const sb = extras.speedBrake ?? 0;
+  const sb = clamp(extras.speedBrake ?? 0, 0, 1);
+  // Spoilers (airliners): the flight spoilers spoil part of the lift, the ground spoilers dump most of it.
+  const sp = a.spoilers;
+  const gsp = sp ? clamp(extras.groundSpoilers ?? 0, 0, 1) : 0;
+  const spoilLift = sp ? (sp.flightLiftLoss * sb * (1 - gsp) + sp.groundLiftLoss * gsp) * (1 - sf) : 0;
+  const CL = CL0 * (1 + a.groundEffectLift * ge) + dCN * Math.cos(alpha) - spoilLift;
+  const aspect = (b * b) / S;
   const CD =
     dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg, a.stallBreakWidthDeg, mach) -
     ge * ((CL0 * CL0) / (Math.PI * ac.oswald * aspect)) +
     dCN * Math.abs(sinA) +
-    a.cdSpeedBrake * clamp(sb, 0, 1);
+    a.cdSpeedBrake * Math.max(sb, gsp) +
+    (sp ? sp.groundCd * gsp : 0);
   const f = flapFraction(flapsDeg, cfg);
 
   // Propeller slipstream adds dynamic pressure over the tail (momentum theory Δp = T/A).
@@ -368,14 +403,16 @@ export function computeAero(
   // yawing, sideslipping or with aileron — strip theory: the down-going (or down-aileron) wing stalls deeper,
   // loses lift and suction (wing drop, autorotation → spin). Blend weight = stall × asymmetry.
   const Vref = V > 5 ? V : 5;
-  const asym = (Math.abs(p) + Math.abs(r)) * (b / (2 * Vref)) + a.stripAsymBeta * Math.abs(beta) + a.stripAsymAileron * Math.abs(ctl.aileron);
+  // Roll control available (747: outboard ailerons locked out with the flaps up).
+  const ail = a.aileronFlapsUpFraction === undefined ? ctl.aileron : ctl.aileron * aileronEffectiveness(flapsDeg, cfg);
+  const asym = (Math.abs(p) + Math.abs(r)) * (b / (2 * Vref)) + a.stripAsymBeta * Math.abs(beta) + a.stripAsymAileron * Math.abs(ail);
   const aStall = stallAlphaRad(flapsDeg, cfg);
   const nearStall = smoothstep(aStall - a.stripStallBlendDeg * DEG, aStall + a.stripStallBlendDeg * DEG, alpha);
   const wStrip = nearStall * smoothstep(a.stripAsymOnset, a.stripAsymFull, asym);
-  let Lwing = qbar * S * b * a.clAileron * ctl.aileron + dampB * (a.clP * p + a.clR * r);
-  let Nwing = qbar * S * b * a.cnAileron * ctl.aileron + dampB * a.cnP * p;
+  let Lwing = qbar * S * b * a.clAileron * ail + dampB * (a.clP * p + a.clR * r);
+  let Nwing = qbar * S * b * a.cnAileron * ail + dampB * a.cnP * p;
   if (wStrip > 0) {
-    const st = wingStripMoments(ad.u * fade, ad.w * fade, p * fade, r * fade, density, flapsDeg, ctl.aileron, sf, cfg);
+    const st = wingStripMoments(ad.u * fade, ad.w * fade, p * fade, r * fade, density, flapsDeg, ail, sf, cfg);
     Lwing += (st.L - Lwing) * wStrip;
     Nwing += (st.N - Nwing) * wStrip;
   }

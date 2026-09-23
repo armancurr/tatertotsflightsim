@@ -7,6 +7,7 @@ import type { TargetKind, WeaponKind } from '../combat/types';
 import { gunShortName, missileLongName } from './weaponsHudMath';
 import type { CrashRecord, InstrumentReadings, TouchdownRecord } from '../types';
 import { gearFlags } from './gearWarning';
+import { flapPlacardKt } from '../physics/aero';
 
 export type MessageLevel = 'info' | 'warn' | 'good';
 
@@ -68,7 +69,7 @@ export function annunciationActive(id: AnnunciationId, r: InstrumentReadings, cf
     case 'stall': return r.stallWarning;
     case 'overspeed': return r.overspeed;
     case 'engineFailed': return r.engineStatus === 'FAILED';
-    case 'flapOverspeed': return r.flapsDeg > 0.5 && ias > cfg.aircraft.flaps.vfeKt;
+    case 'flapOverspeed': return ias > flapPlacardKt(r.flapsDeg, cfg);
     case 'gearUnsafe': return gearFlags(r, cfg).gearUnsafe;
     case 'gearOverspeed': return gearFlags(r, cfg).overspeed;
     case 'gearSquat': return gearFlags(r, cfg).squatSwitch;

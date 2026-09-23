@@ -76,7 +76,7 @@ export interface Wind {
 }
 
 export interface HeadlessOpts {
-  aircraft: 'c172rg' | 'f16' | 'a10';
+  aircraft: 'c172rg' | 'f16' | 'a10' | 'b747';
   start: 'runway' | 'approach' | { x: number; z: number; aglFt: number; headingDeg: number; speedKt: number; gearDown?: boolean; flapsNotch?: number };
   wind?: Wind;
   /** Multiply the aircraft mass (weights). */
