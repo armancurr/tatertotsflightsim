@@ -2697,3 +2697,152 @@ export const F16_WEAPONS: WeaponsConfig = {
     ],
   },
 };
+
+/**
+ * Boeing 747-400 "Queen of the Skies" — for giggles, flown light (≈ 220 t: no payload, little fuel)
+ * so it fits Tater Field's 1,600 m runway. Four ~252 kN turbofans, 541 m² swept wing (37.5°).
+ *
+ * GEOMETRY IS FIXED (orchestrator contract, real dimensions: 70.66 m long, 64.44 m span, 19.41 m
+ * tall, 25.6 m wheelbase, wing-gear track 11 m): the 3D model and the physics contact points both
+ * read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch the ground at y = −5.0.
+ * Nose tip z = −32.0 (CG ≈ 32 m aft of the nose), tail end z = +38.66. The physics has three
+ * contacts (nose, left main, right main = the wing-gear bogies); the model draws all 18 wheels
+ * (nose pair, two wing-gear and two body-gear bogies). Captain's eye on the upper-deck flight deck.
+ * Engine pods: inboard x = ±11.9 (intake z ≈ −12), outboard x = ±21.2 (intake z ≈ −3).
+ *
+ * FLIGHT MODEL: placeholder (A-10 derivatives with 747 mass, geometry and engines) until src/physics
+ * calibrates it.
+ */
+function makeB747(): AircraftConfig {
+  const a10 = structuredClone(A10_AIRCRAFT);
+  return {
+    ...a10,
+    name: 'Boeing 747-400',
+    registration: 'N747TT',
+    /** Light: OEW 178.8 t + ~41 t of fuel, no payload. */
+    mass: 220000,
+    /** NASA CR-2144 values at 289 t, scaled by mass. */
+    inertia: { pitch: 34.2e6, yaw: 51.3e6, roll: 18.8e6 },
+    wingArea: 541,
+    wingSpan: 64.44,
+    meanChord: 8.32,
+    oswald: 0.8,
+    aero: {
+      ...a10.aero,
+      cl0: 0.25,
+      clAlpha: 5.0,
+      stallAlphaDeg: 16,
+      cd0: 0.018,
+      cdGear: 0.02,
+      /** Triple-slotted Fowler flaps at 30°. */
+      cdFlapsFull: 0.1,
+      clFlapsFull: 1.3,
+      stallAlphaFlapsShiftDeg: -2,
+      /** Spoilers as speed brakes. */
+      cdSpeedBrake: 0.04,
+    },
+    engine: {
+      ...a10.engine,
+      jet: {
+        ...a10.engine.jet!,
+        /** 4 × ~252 kN (PW4056 / CF6-80C2B1F / RB211-524H class). */
+        milThrustN: 1008000,
+        maxThrustN: 1008000,
+        idleThrustN: 36000,
+        spoolUpTauIdle: 4.5,
+        spoolUpTauMil: 1.2,
+        spoolDownTau: 2.5,
+        lowSpeedLapse: 1.0,
+        ramDry: 0.6,
+        /** All four combined: the pods hang ~2 m below the CG, so power pitches the nose up. */
+        thrustPoint: { x: 0, y: -2.1, z: -1 },
+      },
+      staticThrustN: 1008000,
+      startTime: 10,
+    },
+    flaps: { notchesDeg: [0, 5, 10, 20, 25, 30], rateDegPerSec: 2, vfeKt: 250, autoWithGearDeg: 0, autoRetractKt: 0 },
+    gear: { retractable: true, transitTime: 10, vleKt: 270, vloKt: 270, retractDelay: 1.5, squatSwitch: true },
+    surfaces: { elevatorMaxDeg: 20, aileronMaxDeg: 20, rudderMaxDeg: 30, flapMaxDeg: 30, trimTabMaxDeg: 10, nosewheelSteerMaxDeg: 70 },
+    geometry: {
+      ...a10.geometry,
+      length: 70.66,
+      height: 19.41,
+      noseWheel: { x: 0, y: -5.0, z: -23.6 },
+      leftMainWheel: { x: -5.5, y: -5.0, z: 2.0 },
+      rightMainWheel: { x: 5.5, y: -5.0, z: 2.0 },
+      mainWheelRadius: 0.62,
+      noseWheelRadius: 0.62,
+      strutTravel: 0.45,
+      propHub: { x: 0, y: -2.4, z: -12 },
+      propRadius: 1.35,
+      spinnerTip: { x: 0, y: 0, z: -32.0 },
+      pilotEye: { x: -0.55, y: 3.9, z: -28.6 },
+      wingRootLeadingEdge: { x: 0, y: -2.2, z: -9 },
+      wingRootChord: 14.5,
+      wingTipChord: 4.1,
+      wingTaperStart: 0.3,
+      dihedralDeg: 7,
+      horizontalTail: { x: 0, y: 1.5, z: 34, span: 22.17, chord: 5.5 },
+      verticalTailTop: { x: 0, y: 14.41, z: 37.5 },
+      structuralPoints: [
+        { name: 'noseTip', x: 0, y: 0, z: -32.0 },
+        { name: 'chin', x: 0, y: -2.6, z: -28 },
+        { name: 'bellyForward', x: 0, y: -3.2, z: -15 },
+        { name: 'bellyMid', x: 0, y: -3.3, z: 0 },
+        { name: 'bellyAft', x: 0, y: -2.9, z: 16 },
+        /** Tail strike at ≈ 10° of pitch on the ground. */
+        { name: 'tailBumper', x: 0, y: -0.6, z: 26.5 },
+        { name: 'tailcone', x: 0, y: 1.2, z: 38.6 },
+        { name: 'finTop', x: 0, y: 14.41, z: 37.5 },
+        { name: 'leftWingtip', x: -32.22, y: 1.4, z: 21 },
+        { name: 'rightWingtip', x: 32.22, y: 1.4, z: 21 },
+        { name: 'leftStab', x: -11.08, y: 2.2, z: 36 },
+        { name: 'rightStab', x: 11.08, y: 2.2, z: 36 },
+        { name: 'leftInboardEngine', x: -11.9, y: -3.75, z: -9.5 },
+        { name: 'rightInboardEngine', x: 11.9, y: -3.75, z: -9.5 },
+        { name: 'leftOutboardEngine', x: -21.2, y: -2.9, z: -1.5 },
+        { name: 'rightOutboardEngine', x: 21.2, y: -2.9, z: -1.5 },
+        { name: 'upperDeckRoof', x: 0, y: 5.2, z: -26 },
+      ],
+    },
+    ground: {
+      ...a10.ground,
+      /** ~1 MN per main (wing + body gear lumped), ~170 kN on the nose; ~0.15 m / 0.12 m static compression. */
+      springMain: 6.7e6,
+      damperMain: 9.0e5,
+      springNose: 1.4e6,
+      damperNose: 1.7e5,
+      brakeFriction: 0.45,
+      steeringFadeSpeed: 15,
+      steeringMinFraction: 0.05,
+    },
+    fbw: null,
+    limits: {
+      ...a10.limits,
+      vsoKt: 115,
+      vs1Kt: 140,
+      vrKt: 150,
+      vxKt: 180,
+      vyKt: 250,
+      vaKt: 250,
+      vnoKt: 340,
+      /** VMO 365 KIAS. */
+      vneKt: 365,
+      gLimitPos: 2.5,
+      gLimitNeg: -1,
+      structuralFailureG: 3.75,
+      structuralFailureNegG: -1.5,
+      overspeedFailureFactor: 1.15,
+      maxAngularRate: 3,
+    },
+    landing: { ...a10.landing, butterFpm: 100, smoothFpm: 250, firmFpm: 450, hardFpm: 700, maxBankDeg: 8, minPitchDeg: -1 },
+    spawn: {
+      /** The tail is 38.7 m behind the CG: start with the CG 45 m past the threshold. */
+      runwayStartOffset: 45,
+      /** 3° final from 9 km at 150 kt, gear down, flaps 30 (notch 5). */
+      approach: { distance: 9000, height: 470, speedKt: 150, flapsNotch: 5, throttle: 0.5, aimPointM: 350 },
+    },
+  };
+}
+
+export const B747_AIRCRAFT: AircraftConfig = makeB747();
