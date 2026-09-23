@@ -144,7 +144,7 @@
       // A conventional (non fly-by-wire) jet — the calibrated A-10 — wants firmer hands in pitch.
       if (p.jet && 'fbw' in ac) {
         p.fbw = !!ac.fbw;
-        if (!p.fbw) { p.pitchKp = 0.2; p.pitchKd = 0.06; p.pitchSpeedScale = true; p.autoTrim = true; }
+        if (!p.fbw) { p.pitchKp = 0.2; p.pitchKd = 0.06; p.pitchSpeedScale = true; p.autoTrim = true; p.gKp = 0.3; p.gKd = 0.05; }
       }
       const stall = fin(lim.vsoKt);
       if (key === 'a10' && stall > 0) p.approachKt = Math.max(p.approachKt, Math.round(stall * 1.3));
@@ -326,6 +326,34 @@
 
     const throttleRatePct = 45; // config.controls.throttleRate × 100 (%/s)
     let trimI = 0;
+    /**
+     * Where this pilot's keys have put the elevator (−1…1): a held arrow moves it 2.2/s toward the
+     * stop (3.5/s when reversing), released it eases back to neutral at 0.8/s (config.controls
+     * pitchRate / returnRate / pitchReturnRate) — the pilot knows how long it held the keys.
+     */
+    let elevEst = 0;
+    const ELEV = { rate: 2.2, reverse: 3.5, back: 0.8 };
+    const moveTo = (v, target, d) => (v < target ? Math.min(target, v + d) : Math.max(target, v - d));
+    function elevAfter(e, dir, holdS, restS) {
+      let v = e;
+      if (dir !== 0 && holdS > 0) v = moveTo(v, dir, (dir * v < 0 ? ELEV.reverse : ELEV.rate) * holdS);
+      return moveTo(v, 0, ELEV.back * Math.max(0, restS));
+    }
+    /** Key and hold time (s) that leave the elevator at `want` after a window of T s (best effort). */
+    function elevPulse(e, want, T) {
+      const w = clamp(want, -1, 1);
+      const free = elevAfter(e, 0, 0, T);
+      if (Math.abs(free - w) < 0.004) return { dir: 0, hold: 0 };
+      const dir = w > free ? 1 : -1;
+      let lo = 0;
+      let hi = T;
+      for (let i = 0; i < 14; i++) {
+        const mid = (lo + hi) / 2;
+        const v = elevAfter(e, dir, mid, T - mid);
+        if ((dir > 0 && v < w) || (dir < 0 && v > w)) lo = mid; else hi = mid;
+      }
+      return { dir, hold: (lo + hi) / 2 };
+    }
     /** The speed-brake switch as this pilot last set it (X toggles it; it starts retracted). */
     let speedBrakeOn = false;
     /**
@@ -337,10 +365,11 @@
       updateRates(s);
       // A conventional jet's elevator gets stronger with dynamic pressure: scale the hands with (V_ref / IAS)².
       const ps = P.pitchSpeedScale ? clamp(Math.pow((P.approachKt * 1.1) / Math.max(80, fin(s.airspeed, 150)), 2), 0.35, 1.3) : 1;
-      const kp = (t.fine ? P.flareKp : P.pitchKp) * (t.fine && s.altitudeAGL < 100 ? 1 : ps);
-      const kd = (t.fine ? P.flareKd : P.pitchKd) * (t.fine && s.altitudeAGL < 100 ? 1 : ps);
+      // (t.kp / t.kd: this manoeuvre's own hands, e.g. the gun run's dive)
+      const kp = t.kp ?? (t.fine ? P.flareKp : P.pitchKp) * (t.fine && s.altitudeAGL < 100 ? 1 : ps);
+      const kd = t.kd ?? (t.fine ? P.flareKd : P.pitchKd) * (t.fine && s.altitudeAGL < 100 ? 1 : ps);
       // Jets: ask for at most ±5° of attitude change at a time (no violent bunts or yanks).
-      if (P.jet && t.pitch !== null && t.pitch !== undefined && !t.fine) t = { ...t, pitch: clamp(t.pitch, s.pitch - 5, s.pitch + 5) };
+      if (P.jet && t.pitch !== null && t.pitch !== undefined && !t.fine && t.kp === undefined) t = { ...t, pitch: clamp(t.pitch, s.pitch - 5, s.pitch + 5) };
       const up = t.g !== undefined && t.g !== null
         ? (P.gKp ?? 0.06) * (t.g - fin(s.gLoad, 1)) - (P.gKd ?? 0.02) * rates.g
         : t.pitch === null || t.pitch === undefined ? 0 : kp * (t.pitch - s.pitch) - kd * rates.q;
@@ -348,19 +377,29 @@
       const rs = t.rollScale ?? (P.rollSpeedScale ? clamp(250 / Math.max(80, fin(s.airspeed, 250)), 0.3, 1.5) : 1);
       const ur = t.roll === null || t.roll === undefined ? 0 : rs * (P.rollKp * (t.roll - s.roll) - P.rollKd * rates.p);
       const uy = t.yaw === null || t.yaw === undefined ? 0 : P.yawKp * wrap180(t.yaw - s.heading) - P.yawKd * rates.r;
-      // Trim like a pilot: a pitch error that persists one way gets a blip of nose-up / nose-down trim.
+      // Trim like a pilot, in steady flight only (≈ 1 g, the nose not moving; never in a dive, a pull
+      // or a flare): stick held one way — or a pitch error that persists — gets a blip of trim that way.
       let trimKey = null;
-      if (P.autoTrim && !s.onGround && t.pitch !== null && t.pitch !== undefined && !t.fine) {
-        trimI = clamp(trimI + (t.pitch - s.pitch) * (ms / 1000), -20, 20);
-        if (Math.abs(trimI) > 2.5) { trimKey = trimI > 0 ? 'BracketRight' : 'BracketLeft'; trimI *= 0.5; }
+      const steady = Math.abs(fin(s.gLoad, 1) - 1) < 0.3 && Math.abs(rates.q) < 3 && Math.abs(fin(s.roll)) < 35;
+      if (P.autoTrim && !s.onGround && t.pitch !== null && t.pitch !== undefined && !t.fine && t.trim !== false && steady) {
+        trimI = clamp(trimI + (0.6 * up + 0.05 * (t.pitch - s.pitch)) * (ms / 1000), -2, 2);
+        if (Math.abs(trimI) > 0.35) { trimKey = trimI > 0 ? 'BracketRight' : 'BracketLeft'; trimI *= 0.4; }
+      } else if (!steady) trimI *= 0.9;
+      // t.elev: put the elevator there (fine hands — the keyboard's return spring accounted for).
+      let upDir = up > 0 ? 1 : up < 0 ? -1 : 0;
+      let tp = Math.min(ms, Math.abs(up) * ms);
+      if (t.elev !== undefined && t.elev !== null && Number.isFinite(t.elev)) {
+        const pl = elevPulse(elevEst, t.elev, ms / 1000);
+        upDir = pl.dir;
+        tp = pl.hold * 1000;
       }
-      const tp = Math.min(ms, Math.abs(up) * ms);
       const tr = Math.min(ms, Math.abs(ur) * ms);
       const ty = Math.min(ms, Math.abs(uy) * ms);
       const dthr = t.thr === null || t.thr === undefined ? 0 : clamp(t.thr, 0, 100) - s.throttle;
       const tt = Math.abs(dthr) < 1.5 ? 0 : Math.min(ms, (Math.abs(dthr) / throttleRatePct) * 1000);
       const minPulse = 12;
-      if (tp > minPulse) key(up > 0 ? 'ArrowDown' : 'ArrowUp', true);
+      const pitchHeld = tp > (t.elev !== undefined ? 2 : minPulse) && upDir !== 0;
+      if (pitchHeld) key(upDir > 0 ? 'ArrowDown' : 'ArrowUp', true);
       if (tr > minPulse) key(ur > 0 ? 'ArrowRight' : 'ArrowLeft', true);
       if (ty > minPulse) key(uy > 0 ? 'KeyD' : 'KeyA', true);
       if (tt > 0) key(dthr > 0 ? 'KeyW' : 'KeyS', true);
@@ -372,9 +411,13 @@
       if (t.trigger) key('KeyQ', true);
       else if (t.trigger === false) key('KeyQ', false);
       const t0 = drv.now();
+      let pitchHeldMs = pitchHeld ? -1 : 0;
       for (;;) {
         const el = drv.now() - t0;
-        if (el >= tp) { key('ArrowDown', false); key('ArrowUp', false); }
+        if (el >= tp) {
+          if (pitchHeldMs < 0) pitchHeldMs = el;
+          key('ArrowDown', false); key('ArrowUp', false);
+        }
         if (el >= tr) { key('ArrowRight', false); key('ArrowLeft', false); }
         if (el >= ty) { key('KeyD', false); key('KeyA', false); }
         if (el >= tt) { key('KeyW', false); key('KeyS', false); }
@@ -382,6 +425,9 @@
         if (el >= ms) break;
         await sleep(16);
       }
+      const winMs = Math.max(ms, drv.now() - t0);
+      if (pitchHeldMs < 0) pitchHeldMs = winMs;
+      elevEst = elevAfter(elevEst, pitchHeld ? upDir : 0, pitchHeldMs / 1000, (winMs - pitchHeldMs) / 1000);
       key('ArrowDown', false); key('ArrowUp', false); key('ArrowRight', false); key('ArrowLeft', false);
       key('KeyD', false); key('KeyA', false); key('KeyW', false); key('KeyS', false);
     }
@@ -968,73 +1014,173 @@
       },
 
       /**
-       * A strafing pass with the gun: set up behind the target (its rear arc) at the roll-in height,
-       * roll in to a o.diveDeg dive, walk the CCIP pipper onto the target, open fire at ~o.openFireFt
-       * slant range for o.burstS, then pull off wings level and climb out above o.minPullOutFt AGL.
+       * A strafing pass with the gun, flown like a low-angle strafe:
+       *  1. set-up: an IP well behind the target on the attack axis (its rear arc, toward the low
+       *     ground), at the roll-in height;
+       *  2. a long straight run-in ON the axis line (cross-track steered out), level, at run-in speed;
+       *  3. push-over: the flight path is walked down toward the target at ≤ o.pushRateDeg °/s (a
+       *     gentle push, the load factor stays positive) until the velocity vector sits on it —
+       *     a steady o.diveDeg dive with the pipper already close;
+       *  4. tracking: a damped loop on the CCIP pipper error (proportional + rate, small steps), the
+       *     rudder and a little bank for azimuth; open fire inside o.openFireFt slant when the pipper
+       *     is on (or inside 80 % of it), a o.burstS burst, cease at the burst end / o.ceaseFt slant /
+       *     the pull-out height;
+       *  5. safe pull-off: wings level, full power, a o.pullG pull until climbing, then climb out.
+       * Returns { result, fired, rounds, kills, pipperErrM (at open fire), minAglFt, minG, ... }.
        */
       async gunRun(targetId, o = {}) {
-        const diveDeg = o.diveDeg ?? 20;
-        const runKt = Math.min(P.cruiseKt, 280);
+        // o.attacks > 1: pass after pass (each set up again from the climb-out) until it is destroyed.
+        const attacks = Math.max(1, Math.round(o.attacks ?? 1));
+        let total = null;
+        for (let k = 0; k < attacks; k++) {
+          const r = await api.gunPass(targetId, o);
+          total = total ? { ...r, rounds: total.rounds + r.rounds, kills: total.kills + (r.kills || 0), passes: k + 1, minAglFt: Math.min(total.minAglFt, r.minAglFt), minG: Math.min(total.minG, r.minG), minGAttack: Math.min(total.minGAttack, r.minGAttack) } : { ...r, passes: 1 };
+          const t = api.combat() ? api.combat().list().find((x) => x.id === targetId) : null;
+          if (r.result !== 'done' || !t || !t.alive) break;
+        }
+        return total;
+      },
+      /** One strafing pass (see gunRun). */
+      async gunPass(targetId, o = {}) {
+        const diveDeg = o.diveDeg ?? 15;
+        const runKt = o.speedKt ?? Math.min(P.cruiseKt, 280);
         const openFireM = (o.openFireFt ?? 4000) / M_FT;
-        const burstMs = (o.burstS ?? 1.8) * 1000;
-        const pullOutFt = o.minPullOutFt ?? 500;
+        const ceaseM = (o.ceaseFt ?? 2000) / M_FT;
+        const burstMs = (o.burstS ?? 3) * 1000;
+        const pullOutFt = o.minPullOutFt ?? 400;
+        const pushRate = o.pushRateDeg ?? 1.8;
         const find = () => (api.combat() ? api.combat().list().find((t) => t.id === targetId) : null);
-        let t = find();
+        const t = find();
         if (!t) return { result: 'no target' };
         const s0 = sim();
         const gun = P.gun || { boresightDownDeg: 0, muzzleVelocity: 1000 };
-        // Attack axis: from our side of the target, biased toward its rear (attack from behind/above).
-        // Attack axis: from behind the target (its rear arc), swung at most 60° toward the side we are on.
+        const V = runKt * KT_MS;
+        // Attack axis: from behind the target (its rear arc), swung at most 60° toward our side,
+        // then kept within o.ipSectorHalfDeg of the airfield side (the terrain rises beyond the range).
         const rearIp = wrap360(t.headingDeg + 180);
         const ourSide = bearingTo(t.x, t.z, s0.position.x, s0.position.z);
         let ipBrg = wrap360(rearIp + clamp(wrap180(ourSide - rearIp), -60, 60));
-        // Keep the IP on the low ground toward the airfield (the terrain rises beyond the range).
         const home = o.ipSectorCenterDeg ?? bearingTo(t.x, t.z, RW.thrX, RW.thrZ);
         ipBrg = wrap360(home + clamp(wrap180(ipBrg - home), -(o.ipSectorHalfDeg ?? 70), o.ipSectorHalfDeg ?? 70));
         const axis = o.attackHeadingDeg ?? wrap360(ipBrg + 180);
-        const fireSlantM = openFireM;
-        const fireH = fireSlantM * Math.sin(diveDeg * D2R);
-        const rollInH = fireH + (o.trackTimeS ?? 5) * (runKt * KT_MS) * Math.sin(diveDeg * D2R);
-        const rollInAgl = clamp(rollInH * M_FT, 2000, 6000);
-        const rollInD = (rollInAgl / M_FT) / Math.tan(diveDeg * D2R);
+        // Geometry: open fire at openFireM slant on the dive line; the push-over (γ 0 → −dive at
+        // pushRate) takes tPush seconds, loses hPush and covers dPush; tracking starts trackS earlier.
+        const tan = Math.tan(diveDeg * D2R);
+        // The push-over is an arc of radius V/ω: it covers R·sin(dive) and drops R·(1 − cos(dive)).
+        const Rpush = V / (pushRate * D2R);
+        const dPush = Rpush * Math.sin(diveDeg * D2R);
+        const hPush = Rpush * (1 - Math.cos(diveDeg * D2R));
+        const trackS = o.trackTimeS ?? 5;
+        const fireH = openFireM * Math.sin(diveDeg * D2R);
+        const trackH = fireH + trackS * V * Math.sin(diveDeg * D2R);
+        const rollInAgl = clamp((trackH + hPush) * M_FT, 1500, 6000);
+        const rollInH = rollInAgl / M_FT;
+        // Push when the target is this far (horizontal): the arc ends on the dive line through the
+        // target, (rollInH − hPush) / tan out, after covering dPush.
+        const pushD = (rollInH - hPush) / tan + dPush;
+        const straightM = o.straightM ?? Math.max(5000, V * 30);
+        // Turn radius at 35° of bank (the racetrack's turns): the IP sits that much further out, so the
+        // turn onto the axis ends before the straight run-in begins.
+        const Rturn = (V * V) / (9.81 * Math.tan(35 * D2R));
+        const ipD = pushD + straightM + 1.5 * Rturn;
         const tgtAltFt = t.y * M_FT;
-        const ax = t.x - Math.sin(axis * D2R) * (rollInD + 2500);
-        const az = t.z + Math.cos(axis * D2R) * (rollInD + 2500);
-        const res = { result: 'aborted', rounds: 0, fired: false, pipperErrM: null, minAglFt: Infinity, slantAtFireM: null, killsBefore: api.combat().stats.kills };
-        api.phase = 'gun run: to the IP';
-        note('gun run setup', { target: targetId, axis: Math.round(axis), rollInAgl: Math.round(rollInAgl), rollInD: Math.round(rollInD) });
+        const res = { result: 'aborted', rounds: 0, fired: false, pipperErrM: null, pipperErrDeg: null, minAglFt: Infinity, minG: Infinity, minGAttack: Infinity, slantAtFireM: null, killsBefore: api.combat().stats.kills, axis: Math.round(axis) };
+        const watch = (s) => {
+          res.minAglFt = Math.min(res.minAglFt, s.altitudeAGL);
+          if (!s.onGround && fin(s.gLoad, 1) < res.minG) { res.minG = fin(s.gLoad, 1); res.minGPhase = api.phase; }
+          // the attack itself: push-over, tracking, pull-off
+          if (/push over|tracking|pull off/.test(api.phase)) res.minGAttack = Math.min(res.minGAttack, fin(s.gLoad, 1));
+        };
+        note('gun run setup', { target: targetId, axis: Math.round(axis), rollInAgl: Math.round(rollInAgl), pushD: Math.round(pushD), ipD: Math.round(ipD) });
         const roundsBefore = api.combat().rounds;
-        // IP: behind the target on the attack axis, at roll-in height. Skip if already on the axis.
-        const lc0 = lineCoords(s0.position.x, s0.position.z, t.x, t.z, axis);
-        if (!(lc0.along < -rollInD - 1500 && Math.abs(lc0.cross) < 800 && Math.abs(wrap180(s0.heading - axis)) < 45)) {
-          await api.gotoPoint(ax, az, { altFt: tgtAltFt + rollInAgl, speedKt: o.speedKt ?? runKt, arriveM: 1200, phase: 'gun run: to the IP', maxVs: 4000, bank: 45, throttle: P.maxThrottle });
+
+        // 1 + 2. The IP (unless already on the axis far enough out and heading down it), then the
+        // run-in ON the axis line: level at the roll-in height, run-in speed, cross-track steered out.
+        // Not lined up (target > 4° off the nose) when it is time to push: go out and set up again.
+        const runHold = speedHold(runKt, sim().throttle, 20, P.maxThrottle);
+        const passes = o.passes ?? 3;
+        let lined = false;
+        for (let pass = 0; pass < passes && !lined; pass++) {
+          const s1 = sim();
+          const lc0 = lineCoords(s1.position.x, s1.position.z, t.x, t.z, axis);
+          if (!(lc0.along < -(pushD + 1500) && Math.abs(lc0.cross) < 300 && Math.abs(wrap180(s1.heading - axis)) < 20)) {
+            // A racetrack: outbound on a line parallel to the axis, two turn radii to our side, until
+            // abeam the IP; then the 180° turn brings us back onto the axis, heading in.
+            const side = lc0.cross >= 0 ? 1 : -1;
+            // (the turn's diameter, like the landing pattern's downwind)
+            const off = side * 2 * Rturn;
+            const obX = t.x + Math.cos(axis * D2R) * off;
+            const obZ = t.z + Math.sin(axis * D2R) * off;
+            const recip = wrap360(axis + 180);
+            const r0 = await api.trackLine(obX, obZ, recip, (x, lc) => {
+              watch(x);
+              return lineCoords(x.position.x, x.position.z, t.x, t.z, axis).along <= -ipD && Math.abs(wrap180(track(x) - recip)) < 30;
+            }, { altFt: tgtAltFt + rollInAgl, speedKt: runKt, phase: 'gun run: outbound', kDegPerM: 0.03, maxInterceptDeg: 90, bank: 35, timeoutMs: 400000, vs: (x) => clamp(altHoldVs(x, tgtAltFt + rollInAgl), -1200, 1500) });
+            if (r0 === 'crashed') return { ...res, result: 'crashed' };
+            note('abeam the IP', { side });
+          }
+          // Inbound: the 180° turn onto the axis and the straight run-in (the landing pattern's
+          // base-to-final guidance: it turns onto a line and holds it).
+          const offNow = Math.abs(lineCoords(sim().position.x, sim().position.z, t.x, t.z, axis).cross);
+          let r = await api.trackLine(t.x, t.z, axis, (x) => {
+            watch(x);
+            const T = find() || t;
+            return Math.hypot(T.x - x.position.x, T.z - x.position.z) <= pushD + (o.alignM ?? 3000);
+          }, { altFt: tgtAltFt + rollInAgl, speedKt: runKt, phase: 'gun run: run-in', kDegPerM: 90 / (0.6 * Math.max(600, offNow)), maxInterceptDeg: 90, bank: 35, timeoutMs: 400000 });
+          if (r === 'crashed') return { ...res, result: 'crashed' };
+          // The last stretch: nose on the target itself (wings nearly level), so the push starts lined up.
+          api.phase = 'gun run: lined up';
+          r = await fly((x) => {
+            watch(x);
+            const T = find() || t;
+            const brg = bearingTo(x.position.x, x.position.z, T.x, T.z);
+            return { pitch: clamp(pitchForVs(x, altHoldVs(x, tgtAltFt + rollInAgl, 2500)), -8, 12), roll: clamp(wrap180(brg - track(x)) * 3, -20, 20), yaw: wrap360(x.heading + clamp(wrap180(brg - x.heading), -3, 3)), thr: runHold.throttle(x) };
+          }, (x) => {
+            const T = find() || t;
+            return Math.hypot(T.x - x.position.x, T.z - x.position.z) <= pushD;
+          }, 120000, 150);
+          if (r === 'crashed') return { ...res, result: 'crashed' };
+          const s2 = sim();
+          const los2 = api.lineOfSight(s2, t.x, t.y, t.z);
+          lined = Math.abs(los2.az) < (o.maxOffDeg ?? 8) && Math.abs(s2.roll) < 15;
+          if (!lined) note('not lined up: set up again', { azDeg: +los2.az.toFixed(1) });
         }
-        // Run-in: straight at the target at roll-in height until it sits diveDeg below the horizon.
-        api.phase = 'gun run: run-in';
-        const runHold = speedHold(o.speedKt ?? runKt, sim().throttle, 30, P.maxThrottle);
-        await fly((s) => {
-          const T = find() || t;
-          const brg = bearingTo(s.position.x, s.position.z, T.x, T.z);
-          return { pitch: clamp(pitchForVs(s, altHoldVs(s, tgtAltFt + rollInAgl, 2500)), -10, 12), roll: rollFor(s, brg, 45), thr: runHold.throttle(s) };
-        }, (s) => {
-          const T = find() || t;
-          const los = api.lineOfSight(s, T.x, T.y + 1, T.z);
-          return (los.el <= -(diveDeg - gun.boresightDownDeg * 0.5) && Math.abs(los.az) < 6) || los.ground < 900;
-        }, 90000);
-        note('run-in end');
-        if (sim().state === 'crashed') return { ...res, result: 'crashed' };
-        // Roll in: push to put the gun line on the target; track with the pipper.
-        api.phase = 'gun run: tracking';
-        note('roll in');
+        if (!lined) return { ...res, result: 'not lined up' };
+        note('push over', { distM: Math.round(Math.hypot(t.x - sim().position.x, t.z - sim().position.z)) });
+
+        // 3 + 4. Push over onto the target, then track the pipper; fire; cease.
+        api.phase = 'gun run: push over';
+        let gCmd = pathDeg(sim().verticalSpeed, sim().groundSpeed);
+        let lastT = drv.now();
+        let tracking = false;
         let firing = false;
         let fireStart = 0;
         let done = false;
+        let prevEl = null;
+        let prevAz = null;
+        let azI = 0;
+        let elI = 0;
+        // Fine hands for the dive: the elevator is placed directly (bias learnt as it goes).
+        let eBias = elevEst;
+        const kTh = o.elevPerDeg ?? P.diveElevPerDeg ?? 0.045;
+        const kQ = o.elevPerDegS ?? P.diveElevPerDegS ?? 0.014;
         const dive = await fly(
           (s) => {
+            watch(s);
             const T = find() || t;
-            const los = api.lineOfSight(s, T.x, T.y + 1.2, T.z);
-            res.minAglFt = Math.min(res.minAglFt, s.altitudeAGL);
-            // Where the gun points now: the CCIP when the weapons system gives one, else the gun line.
+            const now = drv.now();
+            const dt = clamp((now - lastT) / 1000, 0.01, 0.5);
+            lastT = now;
+            // Aim at the lower hull, a few metres short: the burst's scatter is long along the line of
+            // sight, and the recoil lifts it (the rounds walk long) — so the pilot holds the pipper short.
+            const shortM = o.aimShortM ?? 10;
+            const rightM = o.aimRightM ?? 0;
+            const ca = Math.cos(axis * D2R);
+            const sa = Math.sin(axis * D2R);
+            const los = api.lineOfSight(s, T.x - sa * shortM + ca * rightM, T.y + 0.9, T.z + ca * shortM + sa * rightM);
+            const gam = pathDeg(s.verticalSpeed, Math.max(s.groundSpeed, 60));
+            const alpha = clamp(fin(s.aoa, 0), -5, 20);
+            // Where the rounds go: the CCIP pipper (the gun line + drop when there is none).
             let elErr;
             let azErr;
             const cc = api.combat() && api.combat().ccip;
@@ -1042,47 +1188,92 @@
               const pip = api.lineOfSight(s, cc.x, cc.y, cc.z);
               elErr = los.el - pip.el;
               azErr = wrap180(los.az - pip.az);
-              res.pipperErrM = Math.round(Math.hypot(cc.x - T.x, cc.z - T.z));
+              if (tracking && !firing) res.pipperErrM = Math.round(Math.hypot(cc.x - T.x, cc.z - T.z));
             } else {
-              elErr = los.el - (s.pitch - gun.boresightDownDeg + 0.4);
+              elErr = los.el - (s.pitch - gun.boresightDownDeg);
               azErr = los.az;
             }
-            const inRange = los.range <= openFireM * 1.05;
-            const aimed = Math.abs(elErr) < 0.8 && Math.abs(azErr) < 0.8;
-            if (!firing && inRange && (aimed || los.range < openFireM * 0.8)) {
+            const dEl = prevEl === null ? 0 : (elErr - prevEl) / dt;
+            const dAz = prevAz === null ? 0 : wrap180(azErr - prevAz) / dt;
+            if (tracking) azI = clamp(azI + azErr * dt, -3, 3);
+            prevEl = elErr;
+            prevAz = azErr;
+            if (!tracking) {
+              // Walk the flight path down toward the target's line of sight (never steeper than dive + 4°).
+              const want = clamp(los.el, -(diveDeg + 4), 0);
+              gCmd += clamp(want - gCmd, -pushRate * dt, pushRate * dt * 2);
+              if ((Math.abs(gam - los.el) < 2.5 && gCmd <= want + 0.5) || gam <= -diveDeg + 1) {
+                tracking = true;
+                api.phase = 'gun run: tracking';
+                note('tracking', { gammaDeg: +gam.toFixed(1), losDeg: +los.el.toFixed(1), elErr: +elErr.toFixed(2) });
+              }
+            } else {
+              // The pipper: a damped step on the flight path (proportional + integral + rate), small at a time.
+              elI = clamp(elI + elErr * dt, -2, 2);
+              gCmd = gam + clamp(0.9 * elErr + 0.35 * elI + 0.3 * dEl, -2, 2);
+            }
+            if (o.debug) note('trk', { tracking, gam: +gam.toFixed(1), gCmd: +gCmd.toFixed(1), los: +los.el.toFixed(1), losAz: +los.az.toFixed(1), elErr: +elErr.toFixed(2), azErr: +azErr.toFixed(2), rng: Math.round(los.range), cc: cc ? [Math.round(cc.x), Math.round(cc.y), Math.round(cc.z)] : null, T: [Math.round(T.x), Math.round(T.y), Math.round(T.z)] });
+            const inRange = los.range <= openFireM * 1.03;
+            // on target: the rounds pass within ~2.5 m of its centre vertically (it is low) and ~4 m sideways
+            const aimed = los.range * Math.abs(elErr) * D2R < (o.aimM ?? 2.5) && los.range * Math.abs(azErr) * D2R < (o.aimM ?? 2.5) * 1.6;
+            if (!firing && tracking && inRange && (aimed || los.range < openFireM * 0.8)) {
               firing = true;
               fireStart = drv.now();
               res.slantAtFireM = Math.round(los.range);
+              res.pipperErrDeg = +Math.hypot(elErr, azErr).toFixed(2);
               res.fired = true;
               note('open fire', { slantM: Math.round(los.range), elErr: +elErr.toFixed(2), azErr: +azErr.toFixed(2), pipperErrM: res.pipperErrM });
             }
-            const stop = firing && (drv.now() - fireStart >= burstMs || los.range < 450 || s.altitudeAGL < pullOutFt + 250);
-            if (stop) done = true;
+            // (the height over the target too: the ground may rise toward it)
+            const low = s.altitudeAGL < pullOutFt + 250 || s.altitude - T.y * M_FT < pullOutFt + 250;
+            const stop = firing && (drv.now() - fireStart >= burstMs || los.range < ceaseM || low);
+            if (stop || low || (!firing && los.range < ceaseM)) done = true;
+            const pitch = alpha * Math.cos(clamp(fin(s.roll), -60, 60) * D2R) + gCmd + 0.6 * (gCmd - gam);
+            const pErr = clamp(pitch - s.pitch, -4, 4);
+            eBias = clamp(eBias + 0.02 * pErr * dt, -0.6, 0.6);
             return {
-              pitch: s.pitch + clamp(elErr, -6, 6),
-              roll: clamp(azErr * 4, -25, 25),
-              yaw: wrap360(s.heading + clamp(azErr, -3, 3)),
-              thr: clamp(P.cruiseThrottle - (s.airspeed - (o.speedKt ?? P.cruiseKt)) * 1.5, 30, P.maxThrottle),
+              pitch,
+              elev: clamp(eBias + kTh * pErr - kQ * rates.q, -0.7, 0.7),
+              // (firm lateral hands: a fraction of a degree is metres on the target)
+              roll: clamp(azErr * 10 + dAz * 3 + azI * 3, -25, 25),
+              rollScale: tracking ? 2 : undefined,
+              yaw: wrap360(s.heading + clamp(azErr * 8 + dAz * 2, -6, 6)),
+              thr: runHold.throttle(s),
+              speedBrake: P.jet ? s.airspeed > runKt + 20 : undefined,
               trigger: firing && !stop,
-              fine: true,
+              trim: false,
             };
           },
-          (s) => done || s.altitudeAGL < pullOutFt + 250 || (!firing && api.lineOfSight(s, t.x, t.y, t.z).range < 700),
+          (s) => done || s.altitudeAGL < pullOutFt + 150,
           60000,
           100,
         );
         key('KeyQ', false);
         res.rounds = roundsBefore - (api.combat() ? api.combat().rounds : roundsBefore);
         note('cease fire', { rounds: res.rounds });
-        // Pull off: wings level, full power, climb.
+        if (dive === 'crashed') return { ...res, result: 'crashed' };
+
+        // 5. Safe pull-off: wings level, full power, a firm pull until the nose is well up; then a
+        // climbing turn back toward the IP (the low ground we came over — never on over the target
+        // toward the hills behind it), climbing out to o.climbToAglFt.
         api.phase = 'gun run: pull off';
-        await fly((s) => { res.minAglFt = Math.min(res.minAglFt, s.altitudeAGL); return { pitch: Math.min(s.pitch + 8, 15), roll: 0, thr: P.maxThrottle }; }, (s) => s.verticalSpeed > 1500 && s.pitch > 5, 20000, 100);
-        await fly((s) => { res.minAglFt = Math.min(res.minAglFt, s.altitudeAGL); return { pitch: clamp(s.pitch + (s.airspeed - P.climbKt) * 0.1, 5, 15), roll: 0, thr: P.maxThrottle }; }, (s) => s.altitudeAGL > (o.climbToAglFt ?? 2500), 40000);
+        const pullG = o.pullG ?? 4;
+        await fly((s) => { watch(s); return { g: s.altitudeAGL < pullOutFt ? pullG + 1 : pullG, roll: 0, thr: P.maxThrottle, speedBrake: false, trim: false }; }, (s) => s.verticalSpeed > 1500 && s.pitch > 10, 20000, 100);
+        api.phase = 'gun run: climb-out';
+        const back = wrap360(axis + 180);
+        await fly((s) => {
+          watch(s);
+          const turnDone = Math.abs(wrap180(s.heading - back)) < 20;
+          return { pitch: clamp(s.pitch + (s.airspeed - P.climbKt) * 0.1, 6, 16), roll: turnDone ? rollFor(s, back, 30) : clamp(rollFor(s, back, 40), -40, 40), thr: P.maxThrottle, trim: turnDone };
+        }, (s) => s.altitudeAGL > (o.climbToAglFt ?? 2500) && Math.abs(wrap180(s.heading - back)) < 30, 90000);
+        // Level off gently (the nose comes down a little at a time: no bunt into the next set-up).
+        api.phase = 'gun run: level off';
+        await fly((s) => { watch(s); return { pitch: clamp(pitchForVs(s, 0), s.pitch - 1.5, s.pitch + 1.5), roll: rollFor(s, back, 20), thr: P.cruiseThrottle }; }, (s) => Math.abs(s.verticalSpeed) < 600 && Math.abs(s.roll) < 10, 30000);
         const tt = find();
         res.targetAfter = tt ? { alive: tt.alive, health: tt.health } : null;
         res.kills = api.combat() ? api.combat().stats.kills - res.killsBefore : 0;
-        res.result = dive === 'crashed' || sim().state === 'crashed' ? 'crashed' : 'done';
-        note('gun run done', { rounds: res.rounds, kills: res.kills, minAglFt: Math.round(res.minAglFt), target: res.targetAfter });
+        res.result = sim().state === 'crashed' ? 'crashed' : 'done';
+        note('gun run done', { rounds: res.rounds, kills: res.kills, minAglFt: Math.round(res.minAglFt), minG: +res.minG.toFixed(2), target: res.targetAfter });
         return res;
       },
 
