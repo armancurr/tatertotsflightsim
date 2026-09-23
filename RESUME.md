@@ -102,10 +102,15 @@ npm run repo-map            # regenerate REPO_MAP.md after adding/moving files
 ## 5. What's left — prioritized
 
 **P1**
-1. **Performance over towns** (measured on an M2 Max, Chrome for Testing, load ~5): runway 66 fps,
-   Taterville at 900 ft 41 fps — the terrain shader costs ~14 ms there (`&no=terrain` → 98 fps). A
-   terrain performance pass was in progress at this stop point (see RECORD.md / git log for its
-   result). Port Chateau with 5 M triangles ~46 fps; worst frames 70–90 ms when streaming.
+1. **Performance at full quality** (M2 Max, Chrome for Testing, 1440×900, load ~5). The terrain pass
+   (class ranking from plain vectors instead of a dynamically indexed array; auto quality steps MSAA
+   4 → 2 → 0 below 85 % of the resolution cap) brought default `auto` quality to runway ~65 fps,
+   Taterville 900 ft ~59 fps (was 41), farmland 1,500 ft ~60–68, mountains 75–93, Port Chateau
+   60–69 — same picture (mean pixel difference 0.02–0.04/255). Still open: at `quality=high`
+   (4× MSAA fixed) the terrain costs ~9–10 ms over towns (Taterville ~42 fps); p95 frame 20–25 ms with
+   occasional 60–65 ms streaming spikes. Next levers: shade terrain colour once per pixel (deferred
+   albedo pass, removes the MSAA multiplier), coarser distant lowland meshes (+3–7 fps, softer
+   distant forest edges), less branching in the field shader. `?dyn=0&msaa=N` pins both for A/B runs.
 2. **QA pilot script** (`scripts/qa-pilot.js`, tooling only — the sim is fine): `stallAndRecover()`
    pushes to −2 g and over-stresses the A-10/747; `mavShot()` can fail to lock from `?spawn=range`;
    `gunRun()` in the F-16 can descend too low on the outbound leg; `turn()`/`climbTo()` don't avoid

@@ -247,8 +247,10 @@ flying fast never hitches.
   rendering in linear HDR with up to 4× MSAA, then one output pass with a filmic tone map.
   **Quality presets** (`quality.ts`, `?quality=auto|low|medium|high`): `auto` starts at a
   conservative resolution and dynamic resolution (`dynamicResolution.ts`) climbs when the frame
-  rate has headroom and drops when it hasn't; software renderers and older integrated GPUs start
-  lower. A lost WebGL context shows a banner and a Reload button.
+  rate has headroom and drops when it hasn't. Below 85 % of the resolution cap, `auto` and `medium`
+  step MSAA down (4 → 2 → 0) before lowering the resolution further, and restore it when the frame
+  rate recovers; `high` keeps 4×. `?dyn=0&msaa=N` pins both for A/B measurements. Software renderers
+  and older integrated GPUs start lower. A lost WebGL context shows a banner and a Reload button.
 - **Camera look (`atmosphereState.ts`, `post.ts`, `bloom.ts`, `metering.ts`, `toneMapping.ts`)** — the
   camera meters the light like a real one: a time-of-day exposure from the ground illuminance (partial
   adaptation: golden hour +1.2 EV, dawn +1.9 EV over morning's 2.2), a partial auto white balance with a

@@ -221,3 +221,13 @@ so custom shaders needed a log-depth patch; stray snow flecks leaked into every 
 read as pale canal edging (water shader bar colours); dawn window lights turned to glare under the
 new auto exposure. Test hygiene: a 20 s default timeout for heavy tests, median-based timing
 assertions, retries for one wall-clock-dependent e2e. Suite at the stop point: ~3,100 tests.
+
+**Terrain performance (last agent of wave 6).** Taterville at 900 ft ran 41 fps. Lowering the
+resolution didn't help: auto quality hit its 0.5 floor and stayed at 41. Swapping the terrain
+colour for a flat one gave 90 fps, so the per-pixel colour shader was the cost. MSAA multiplies it
+because the mesh has about one triangle per pixel at shallow angles. The main fix: the 8 class
+weights were a local array indexed with variables, which Apple's Metal driver keeps in memory
+(about 5 ms a frame). Ranking them in plain vectors and adding only the third-strongest class as a
+plain colour fixed it, with the picture unchanged (mean difference 0.02–0.04/255). Auto quality now
+steps MSAA 4 → 2 → 0 before the image gets blurrier. Default quality at Taterville is now about
+59 fps. Full quality (4× MSAA) is still about 42 there, logged as P1 in RESUME.md.
