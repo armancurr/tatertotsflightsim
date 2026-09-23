@@ -21,7 +21,8 @@
  * Both drift with the wind, and the cloud-shadow map (fog.ts chunk) is
  * rendered from the same density whenever the sun moves.
  * QA/profiling URL switches: ?clouds=…, ?cloudshadows=0, ?cloudres=0.35,
- * ?cloudbudget=0 (never fall back).
+ * ?cloudbudget=0 (never fall back). Live: window.__render.clouds() (mode,
+ * budget level, timer trust), window.__render.benchClouds() (renderer.ts).
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config';
@@ -172,9 +173,15 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
           maxDistance: vc.maxDistance,
           shapeErosion: vc.shapeErosion,
           detailErosion: vc.detailErosion,
+          edgeSharpness: vc.edgeSharpness,
+          detailPeriod: vc.detailPeriod,
+          sideWarp: vc.sideWarp,
           sunScale: vc.sunScale,
           ambientScale: vc.ambientScale,
           temporalAlpha: vc.temporalAlpha,
+          distanceSize: vc.distanceSize,
+          detailDistance: vc.detailDistance,
+          lighting: vc.lighting,
           shadowSize: ac.cloudShadows.size,
         })
       : null;
@@ -205,6 +212,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
         layerBottom: volumetric.layerBottom,
         layerTop: volumetric.layerTop,
         gpuMs: NaN,
+        frameGpuMs: NaN,
         atMinQuality: false,
       }
     : null;
@@ -291,6 +299,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     tod = ((Math.round(index) % n) + n) % n;
     const p = presets[tod];
     sunDirectionFromAngles(p.elevationDeg, p.azimuthDeg, sunDirection);
+    volumetric?.resetHistory(); // the lighting jumps: don't blend the old one in
     recompute(stateY);
     bakeEnv();
   }
@@ -311,7 +320,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     let next: CloudQuality | 'off' = cloudMode === 'off' ? 'off' : 'billboard';
     if (volumetric && volumetric.ready && cloudMode === 'volumetric') {
       if (cloudHook) cloudHook.gpuMs = volumetricOn ? cloudHook.gpuMs : NaN;
-      budget.update(dt, volumetricOn && cloudHook ? cloudHook.gpuMs : null, cloudHook?.atMinQuality ?? false);
+      budget.update(dt, volumetricOn && cloudHook ? cloudHook.gpuMs : null, cloudHook?.atMinQuality ?? false, volumetricOn && cloudHook ? cloudHook.frameGpuMs : null);
       next = budget.quality;
       volumetric.resolution = next === 'volumetric-low' ? baseResolution * 0.7 : baseResolution;
     }
@@ -396,7 +405,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
 
   setTimeOfDay(opts.timeOfDay ?? 0);
 
-  return {
+  const api: Atmosphere = {
     sunDirection,
     sunLight,
     update,
@@ -426,6 +435,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
         cloudMode,
         cloudQuality: quality,
         cloudGpuMs: cloudHook ? Math.round(cloudHook.gpuMs * 100) / 100 : null,
+        cloudTimerTrusted: budget.timerTrusted,
         cloudResolution: volumetric?.resolution ?? null,
         cloudBuffer: volumetric ? `${volumetric.size.x}x${volumetric.size.y}` : null,
         jobs: jobs.pending,
@@ -454,6 +464,12 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
       delete scene.userData.__atmosphereFrame;
     },
   };
+  // Live profiling hook: window.__render.clouds() (cloud mode, budget level, GPU ms, buffer size…)
+  if (typeof window !== 'undefined') {
+    const w = window as unknown as { __render?: Record<string, unknown> };
+    w.__render = { ...(w.__render ?? {}), clouds: () => api.stats(), volumetric, cloudField: field, cloudWind: () => ({ x: windX, z: windZ }) };
+  }
+  return api;
 }
 
 /** Luminance helper re-exported for HUD/debug use. */

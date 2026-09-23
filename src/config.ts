@@ -802,21 +802,34 @@ export const CONFIG = {
        * Raymarched clouds (render.cloudMode 'volumetric'): extinction at full density (1/m), erosion of the
        * base shape by the shape (150–600 m lobes) and detail (25–200 m billows) noise, light calibration of
        * the multiple-scattering approximation, max march distance (m), weather-map resolution (texels per
-       * tile side) and the temporal accumulation weight of each new frame.
+       * tile side), distance-field resolution (empty-space skipping), the distance by which the detail
+       * noise has faded out (m), and the weight of each freshly marched sample (every pixel is re-marched
+       * every 4th frame, checkerboard) against its reprojected history.
+       * Lighting: dual-lobe phase (forward g = silver lining when backlit, back lobe), "powder" darkening
+       * of thin sun-facing edges seen down-sun, and how much sky light the column above takes away.
        */
       volumetric: {
-        sigma: 0.05,
+        sigma: 0.08,
         shapeErosion: 0.85,
-        detailErosion: 0.35,
-        sunScale: 8,
+        detailErosion: 1.0,
+        /** Eroded density × this, saturated: crisp cauliflower surfaces instead of cotton-wool gradients. */
+        edgeSharpness: 5,
+        /** Detail-noise period (m): its Worley billows are ½, ¼, ⅛ of it. */
+        detailPeriod: 180,
+        /** The shape noise displaces the weather lookup by up to this (m): cloud sides wander instead of rising as vertical walls. */
+        sideWarp: 150,
+        sunScale: 3,
         ambientScale: 1,
         maxDistance: 50000,
         weatherSize: 2048,
-        temporalAlpha: 0.12,
+        distanceSize: 1024,
+        detailDistance: 6000,
+        temporalAlpha: 0.3,
+        lighting: { forwardG: 0.8, backG: -0.3, backWeight: 0.3, powder: 0.6, ambientOcclusion: 2.5, diffusion: 0.2, diffusionBase: 0.12 },
       },
     },
     /** Cloud shadows on every material (fog-chunk override): strength = 1 − brightness in full shadow; map texels per tile side. */
-    cloudShadows: { enabled: true, strength: 0.42, size: 1024 },
+    cloudShadows: { enabled: true, strength: 0.55, size: 1024 },
     /** High thin cirrus wisps drawn in the sky shader. */
     cirrus: { altitude: 9000, coverage: 0.45, opacity: 0.55, scale: 1 / 45000 },
     /** Apparent sun radius (the real sun is 0.2666°). */
@@ -862,10 +875,13 @@ export const CONFIG = {
      * Clouds: 'volumetric' (raymarched, falls back to billboards automatically when over budget),
      * 'billboard' (instanced puff sprites) or 'off'. URL override: ?clouds=volumetric|billboard|off.
      */
-    // Volumetric is opt-in until its pass fits the budget (measured 3–5 ms at 0.5 res on the M2 Max; see RESUME/report).
-    cloudMode: 'billboard' as 'volumetric' | 'billboard' | 'off',
-    /** Volumetric cloud buffer size per axis relative to the CSS resolution (0.5 = quarter the pixels). */
-    cloudResolution: 0.5,
+    cloudMode: 'volumetric' as 'volumetric' | 'billboard' | 'off',
+    /**
+     * Volumetric cloud buffer size per axis relative to the CSS resolution (0.75 → 1080×675 at 1440×900; one pixel
+     * of every 2×2 block is re-marched per frame). GPU-synchronised cost on the M2 Max: ~0.3 ms at 0.5, ~0.5 ms at 0.75,
+     * ~0.7 ms at 1.0 (window.__render.benchClouds()).
+     */
+    cloudResolution: 0.75,
     /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
     cloudBudgetMs: 2.5,
   },
