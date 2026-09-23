@@ -1,5 +1,7 @@
 # Adding an aircraft
 
+<!-- examples: src/aircraft/pa28/ src/aircraft/pa28/index.ts tests/aircraft/pa28 tests/aircraft/pa28/ tests/aircraft/pa28/anchors.test.ts tests/aircraft/pa28/functional.test.ts tests/physics/pa28-accuracy.test.ts createPA28Model PA28_AIRCRAFT PA28_WEAPONS PA28_PART -->
+
 This guide walks through adding a new flyable aircraft. The worked example is a **Piper PA-28-181
 Archer** (id `pa28`): a four-seat, low-wing trainer with fixed gear. Every snippet below compiles
 against the current code. Use the real aircraft as references while you work: the Cessna
@@ -161,13 +163,13 @@ describe('PA-28 accuracy', () => {
   const cfg = getAircraftDef('pa28').config;
   it('lifts off within 250–450 m at full power, rotating at Vr', () => {
     let s = createInitialState(FLAT_ENV, cfg);
-    const x0 = s.position.z;
+    const z0 = s.position.z;
     while (s.onGround && s.time < 60) {
       const kt = s.derived.ias * 1.943844;
       s = step(s, { ...defaultControls(), throttle: 1, elevator: kt > cfg.aircraft.limits.vrKt ? 0.4 : 0 }, 1 / 120, FLAT_ENV, cfg);
     }
-    expect(Math.abs(s.position.z - x0)).toBeGreaterThan(250);
-    expect(Math.abs(s.position.z - x0)).toBeLessThan(450);
+    expect(Math.abs(s.position.z - z0)).toBeGreaterThan(250);   // the example PA-28 lifts off in ~350 m
+    expect(Math.abs(s.position.z - z0)).toBeLessThan(450);
   });
 });
 ```

@@ -10,7 +10,7 @@ assignees: ''
 A clear description of the problem. Screenshots or a short video help a lot.
 
 **How to reproduce**
-1. Aircraft (Cessna / F-16), camera, time of day, URL options
+1. Aircraft (Cessna / F-16 / A-10 / 747), camera, time of day, URL options
 2. What you did (keys pressed, where you flew)
 3. What went wrong
 

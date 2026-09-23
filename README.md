@@ -204,6 +204,7 @@ Add these to the address, for example `http://127.0.0.1:8092/?aircraft=f16&cam=c
 | `tod=0` to `3` | Time of day: morning, midday, golden hour, dawn |
 | `pause=1` | Start paused |
 | `veil=0` | Skip the loading screen |
+| `quality=auto`, `low`, `medium` or `high` | Graphics quality. `auto` (the default) starts at a safe resolution and sharpens while the frame rate allows; `low` suits weak laptops and big screens |
 | `no=grass,vegetation,…` | Switch systems off, for speed or debugging (`window.sim.systems()` lists their names) |
 | `clouds=volumetric`, `billboard` or `off` | Cloud renderer |
 | `cloudshadows=0` | No cloud shadows on the ground |
@@ -229,20 +230,21 @@ sim.fleet(); sim.systems(); sim.debug()
 - A browser with **WebGL2** and hardware acceleration on (check `chrome://gpu`, or
   `about:support` in Firefox).
 - A decent GPU. The game is tuned for **60 fps at 1440×900 on an Apple M-series Mac** (M2 Max);
-  any recent discrete GPU, or an integrated one from the last few years, can fly it. It lowers its
-  render resolution automatically when the frame rate drops.
+  any recent discrete GPU, or an integrated one from the last few years, can fly it. It picks a
+  quality level for your GPU and adjusts its render resolution to hold the frame rate.
 
 **Laptop tips:** plug in the charger, use a smaller window, make sure the browser uses the
-discrete GPU on a two-GPU laptop, and add `?no=grass,vegetation` or `?clouds=billboard` to the
+discrete GPU on a two-GPU laptop, and add `?quality=low` (or `?no=grass,vegetation`) to the
 address if it's still slow.
 
 ## Troubleshooting
 
 | Problem | Try this |
 | --- | --- |
-| Blank or black page | Your browser needs WebGL2 with hardware acceleration. Check `chrome://gpu` (or `about:support`), update the browser and graphics driver, and look for red errors in the console (F12). |
+| An error card instead of the game, or a blank page | The game needs WebGL2 with hardware acceleration, and says so if it's missing. Check `chrome://gpu` (or `about:support`), turn hardware acceleration on, update the browser and graphics driver, and look for red errors in the console (F12). |
+| "The graphics could not be restored" | The browser reset the GPU (a driver update, sleep, too many 3D tabs) and couldn't bring it back. Press Reload. |
 | The loading screen takes a long time | The first load builds the world and compiles shaders; on a slow GPU that takes a while. Press a key or click to skip the wait once the bar is full. |
-| Low frame rate | Shrink the window, close other GPU-heavy tabs, add `?no=grass,vegetation` or `?clouds=billboard`. Without a GPU the browser draws WebGL on the CPU at under 1 fps, which isn't playable. |
+| Low frame rate | Shrink the window, close other GPU-heavy tabs, add `?quality=low`, `?no=grass,vegetation` or `?clouds=billboard`. Without a GPU the browser draws WebGL on the CPU at under 1 fps, which isn't playable. |
 | No sound | Browsers only allow sound after you interact: click the page or press a key. Check that <kbd>M</kbd> (mute) is off and the tab isn't muted. |
 | Keys don't respond | Click the page so the browser tab has keyboard focus. |
 | `npm start` says the port is in use | Another program has port 8092: run `npx vite --port 5173` instead. |
@@ -263,7 +265,8 @@ keyboard (or a gamepad) and a laptop or desktop GPU.
 **Can I add my own aircraft, vehicles or scenery?** Yes: see the guides under
 [Contributing](#contributing).
 
-**Why "Tater"?** The airport is Tater Field, the town is Taterville, and the mascot is Tater.
+**Why "Tater"?** The airport is Tater Field, the town is Taterville, and the mascot is Tater, the
+flying potato.
 
 ## Tests
 

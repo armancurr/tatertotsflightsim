@@ -1,5 +1,7 @@
 # Adding land features
 
+<!-- examples: src/game/systems/lighthouse.ts tests/game/lighthouse.test.ts -->
+
 This guide explains how the world is built and how to add to it: a landmark, a new world system,
 a town, a road, water, or a runway. The worked example, a lighthouse on Seal Rock, was compiled,
 tested and photographed in the game. Everything else is described with the files and tests you'll

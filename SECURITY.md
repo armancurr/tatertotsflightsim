@@ -13,3 +13,11 @@ reproduce it and what it affects. You'll get a reply as soon as the maintainer c
 a hobby project, so please allow a few days.
 
 Only the latest version on the default branch is supported.
+
+## Scope
+
+In scope: the game code in `src/`, the production build it ships as, the scripts in `scripts/`,
+and the GitHub Actions workflows in `.github/workflows/`. Vulnerabilities in a dependency are
+best reported upstream too; tell us as well if the way this project uses it makes things worse.
+The game has one runtime dependency (three.js) and loads nothing from the network, so anything
+that makes it fetch or run outside content is worth reporting.

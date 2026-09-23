@@ -1,15 +1,18 @@
 # What is Tater's Flight Sim?
 
 > **The one-liner:** a **real flight simulator that runs in a web browser**. You open a page and
-> you're on a runway in a Cessna 172, an F-16 or an A-10 Warthog, with mountains ahead, clouds
-> overhead and a living world below. No download, no install, no plug-in. Just a URL.
+> you're on a runway in a Cessna 172, an F-16, an A-10 Warthog or a Boeing 747, with mountains
+> ahead, clouds overhead and a living world below. No download, no install, no plug-in. Just a
+> URL. Open source under the MIT licence.
 
 Tater's Flight Sim (full name: *Tater Tots Flight Simulator*) is a complete, playable 3D flight
 simulator built from scratch with **Three.js (WebGL2) and TypeScript**. Pick an aircraft from the
-dropdown at the top right. Take off from runway 36, fly over farmland, forests, towns, a river,
-a coast with a marina and snow-capped mountains, then come back and land. Or crash: the aircraft
-breaks apart in a fireball, and **R** puts you back on the runway. In the A-10, fly to the target
-range north of the airport and bust tanks with the 30 mm GAU-8 and Maverick missiles.
+dropdown at the top right. Take off from runway 36 (or the crosswind runway 03/21), fly over
+farmland, forests, towns, a river, a coast with a marina and snow-capped mountains, then come back
+and land. Or crash: the aircraft breaks apart in a fireball, and **R** puts you back on the
+runway. In the A-10 or the F-16, fly to the target range north of the airport and bust tanks with
+the gun and Maverick missiles, or shoot down the MiG-29s, Su-25s and Mi-24 helicopters that patrol
+it with the gun and Sidewinders.
 Everything you see and hear is made by code in the browser: terrain, trees, towns, sky, clouds,
 aircraft, tanks, fire, even the engines and the gun's "BRRRT". There isn't a single downloaded
 image, model or sound file. It's built on **three pillars:**
@@ -19,20 +22,25 @@ Each aircraft has its own **six-degrees-of-freedom flight model**, tuned against
 - **Cessna 172RG** — stalls near 48 knots, lifts off around 55, climbs ~700 ft/min, glides 9 to 1;
   P-factor, ground effect, retractable gear with the real squat-switch interlock.
 - **F-16C** — afterburner, fly-by-wire (9 g and 25° angle-of-attack limits, 300°/s roll), Mach 2
-  at altitude, the M61A1 cannon and two Mavericks.
+  at altitude, the M61A1 cannon, two Mavericks and two Sidewinders.
 - **A-10C** — two slow-spooling TF34 turbofans, a big straight wing, 90–110°/s roll, split
   "deceleron" speed brakes, and the GAU-8/A: 65 rounds a second, real ballistics and recoil
-  that slows the jet down.
+  that slows the jet down. Four Mavericks and two Sidewinders.
+- **Boeing 747-400** — the Queen of the Skies, flown light so it fits the 1,600 m runway: four
+  turbofans, 64 m of wing, heavy and stately.
 Stalls, spins and landings are real ("butter" … "hard"), and crashes have a reason.
 
 ## 2. A world that looks real
 A large procedural world with farmland, forests of individual trees, a river, lakes, a coastal
 city and villages with ~10,600 buildings, roads with moving and parked cars, a marina with boats
 and ships leaving wakes, other aircraft with contrails, volumetric clouds that cast shadows, and
-four times of day. A target range with T-72 tanks, BMP-2s, BTR-80s, trucks and Shilkas, whose
-armour is thick at the front and thin on top, and whose wrecks burn with black smoke columns.
-Cockpit, chase, fly-by and orbit cameras; steam gauges or a jet HUD with a gun pipper and a
-missile lock box; a G meter for every aircraft.
+four times of day. Tater Field has two crossing runways with real lights, PAPIs and a busy ramp.
+A target range with T-72 tanks, BMP-2s, BTR-80s, trucks and Shilkas (a convoy that drives the
+farm lanes and scatters when attacked), whose armour is thick at the front and thin on top, and
+whose wrecks burn with black smoke columns; enemy aircraft that break, pop flares and fall in
+flames. The weapons are deliberately arcade: lock and fire, no real guidance model. Cockpit,
+chase, fly-by and orbit cameras; steam gauges or a jet HUD with a gun pipper and a missile lock
+box; a G meter for every aircraft.
 
 ## 3. Built like a professional product
 - **Tested:** thousands of automated tests — unit tests, fuzz tests that throw random inputs at
@@ -40,10 +48,11 @@ missile lock box; a G meter for every aircraft.
   tests that start the real game in a test browser.
 - **Pure physics:** `step(state, controls, dt)` is deterministic, so every rule is provable.
 - **Tunable:** every number lives in one config file; adding an aircraft is a config section, a
-  model folder and one registry entry.
+  model folder and one registry entry, and new world features are self-contained plug-ins. Step
+  by step guides for aircraft, vehicles, boats and scenery are in `docs/`.
 - **Fast:** designed for 60 fps with instancing, level of detail, background workers and pooling.
 
 ---
 
-**In short:** open a web page and fly a Cessna, an F-16 or an A-10 over a living world — real
-physics, real light, real-looking land — all generated by code in the browser.
+**In short:** open a web page and fly a Cessna, an F-16, an A-10 or a 747 over a living world —
+real physics, real light, real-looking land — all generated by code in the browser.
