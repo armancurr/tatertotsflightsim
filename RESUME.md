@@ -115,7 +115,9 @@ npm run repo-map            # regenerate REPO_MAP.md after adding/moving files
    M2 Max), the Maverick picture-in-picture GPU cost, and the full suite.
 7. **F-16 cockpit interior:** only the HUD combiner is new — the glareshield, MFD bezels,
    up-front controls, side-stick/throttle and canopy sills still need the realism pass the Cessna
-   and A-10 cockpits got. The Cessna's windshield posts are still wide flat beige bands; the A-10's
+   and A-10 cockpits got. The Cessna's windshield posts are still wide flat beige bands, and its
+   rebuilt glareshield touches the sightline to the cowling for a head 3 cm below the eye point
+   (the property test in `tests/aircraft/cockpitView.test.ts` covers ±2 cm); the A-10's
    HUD glass sits a little low (the horizon rides its top edge in level cruise).
 8. **Vehicle visibility from altitude:** at 700 m+ the tanks are tiny and low-contrast (the HUD
    diamonds find them). Add soft contact shadows — a transparent ground blob was painted over by
