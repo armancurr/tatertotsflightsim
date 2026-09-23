@@ -14,12 +14,19 @@ function state(patch: Partial<AircraftVisualState> = {}): AircraftVisualState {
   return { ...createDefaultVisualState(), engineRunning: true, cameraMode: 'chase', instruments: { ...createRestReadings(), state: 'ground' }, ...patch };
 }
 
-/** Draw calls and triangles of the visible model (one call per visible mesh / points object). */
-function budget(root: THREE.Object3D) {
+/** Draw calls and triangles of the visible model (one call per visible mesh / points object), optionally skipping a subtree. */
+function budget(root: THREE.Object3D, skip?: THREE.Object3D) {
   let calls = 0;
   let tris = 0;
   let casters = 0;
   root.traverseVisible((o) => {
+    if (skip) {
+      let inside = o === skip;
+      o.traverseAncestors((a) => {
+        if (a === skip) inside = true;
+      });
+      if (inside) return;
+    }
     const m = o as THREE.Mesh;
     if (!(m.isMesh || (o as THREE.Points).isPoints)) return;
     calls++;
@@ -44,8 +51,9 @@ describe('747 model: budget', () => {
     expect(Math.min(...times)).toBeLessThan(700);
   }, 20000);
 
-  it('stays within 80 draw calls, ≤ 30 shadow casters and 60–150 k triangles in every configuration', () => {
+  it('the exterior stays within 80 draw calls, ≤ 30 shadow casters and 60–150 k triangles in every configuration (≤ 100 calls with the flight deck in the cockpit view)', () => {
     const m = createB747Model();
+    const deck = m.root.getObjectByName(B747_PART.flightDeck)!;
     const air = { ...createRestReadings(), throttlePct: 100, state: 'airborne' as const, airspeedKt: 160 };
     const lights = { nav: true, strobe: true, beacon: true, landing: true, taxi: true };
     for (const v of [
@@ -55,8 +63,9 @@ describe('747 model: budget', () => {
       state({ cameraMode: 'cockpit', gearPos: 1, lights }),
     ]) {
       for (let i = 0; i < 60; i++) m.setVisualState(v, 1 / 30);
-      const b = budget(m.root);
+      const b = budget(m.root, deck);
       expect(b.calls).toBeLessThanOrEqual(80);
+      expect(budget(m.root).calls).toBeLessThanOrEqual(100);
       expect(b.casters).toBeLessThanOrEqual(30);
       expect(b.tris).toBeGreaterThan(60_000);
       expect(b.tris).toBeLessThan(150_000);

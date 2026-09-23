@@ -1,7 +1,7 @@
 /**
  * Procedural Boeing 747-400 "Tater Airways" (N747TT): exterior, animation, lights and crash
- * break-up — built in code. The flight-deck interior is left to its own module: an empty
- * `b747.flightDeck` group sits at the upper-deck cockpit for it.
+ * break-up — built in code. The flight-deck interior is its own module (flightDeck.ts), hosted in
+ * the `b747.flightDeck` group on the nose section (so it breaks away with the nose in a crash).
  *
  *   const jumbo = createB747Model();
  *   scene.add(jumbo.root);            // the loop copies the physics pose onto jumbo.root
@@ -27,6 +27,7 @@ import { buildEngines } from './engines';
 import { buildGear } from './gear';
 import { paintLivery } from './livery';
 import { createB747Materials, type B747Textures } from './materials';
+import { attachFlightDeck } from './flightDeck'; // b747deck: the flight deck interior
 import { GEO, FUSE_END_Z as TAIL_Z, halfOutline } from './shape';
 
 export { createB747Anim, stepB747Anim, B747_LIMITS } from './animate';
@@ -410,7 +411,7 @@ export function createB747Model(): AircraftModelHandle {
   );
   void fxMeshes;
 
-  return {
+  return attachFlightDeck({
     root,
     setVisualState,
     landingLight,
@@ -445,5 +446,5 @@ export function createB747Model(): AircraftModelHandle {
       for (const h of home) h.part.object.removeFromParent();
       root.removeFromParent();
     },
-  };
+  });
 }

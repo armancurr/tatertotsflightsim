@@ -260,9 +260,15 @@ describe('747 model anchors match B747_AIRCRAFT.geometry', () => {
     expect(glass.min.z).toBeLessThan(eye.z - 0.5);
     expect(glass.min.y).toBeLessThan(eye.y);
     expect(glass.max.y).toBeGreaterThan(eye.y);
+    // The flight-deck module (src/aircraft/b747/flightDeck.ts) is hosted in this group, on the nose section.
     const deck = part(m, B747_PART.flightDeck);
-    expect(deck.children.length).toBe(0);
+    expect(deck.children.length).toBeGreaterThan(0);
     expect(bodyPos(m, B747_PART.flightDeck).distanceTo(eye)).toBeLessThan(2);
+    let onNose = false;
+    deck.traverseAncestors((a) => {
+      if (a.name === B747_PART.forward) onNose = true;
+    });
+    expect(onNose).toBe(true);
   });
 
   it('gear up: every wheel is tucked inside the fuselage outline, the doors closed (hidden)', () => {

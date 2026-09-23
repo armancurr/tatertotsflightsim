@@ -127,6 +127,48 @@ export interface FbwConfig {
   liftoffBlendS: number;
 }
 
+/**
+ * Airliner spoilers (747): the speed brake lever raises the flight spoilers in the air (extra drag
+ * `aero.cdSpeedBrake` and lift loss `flightLiftLoss`); on the ground every panel comes up (ground
+ * spoilers: lift dump + drag) — with the lever, or automatically once the mains are down with the
+ * thrust levers at idle (armed auto spoilers / rejected take-off).
+ */
+export interface SpoilerConfig {
+  /** Lift coefficient lost with the flight spoilers fully up. */
+  flightLiftLoss: number;
+  /** Ground spoilers (all panels): lift coefficient lost and extra drag coefficient. */
+  groundLiftLoss: number;
+  groundCd: number;
+  /** Auto ground spoilers deploy with the throttle at or below this lever position… */
+  autoIdleThrottle: number;
+  /** …and the ground speed above this (wheel spin-up), kt. */
+  autoMinGroundKt: number;
+}
+
+/** Optional aerodynamic features some aircraft have (absent = off). See src/physics/aero.ts. */
+export interface AeroOptions {
+  spoilers?: SpoilerConfig;
+  /**
+   * Roll control with the flaps up as a fraction of flaps-down roll control (747: the outboard
+   * ailerons are locked out whenever the trailing-edge flaps are up; inboard ailerons + flight
+   * spoilers remain). 1 / absent = no lockout.
+   */
+  aileronFlapsUpFraction?: number;
+}
+
+/** Optional flap features (absent = off). */
+export interface FlapOptions {
+  /**
+   * Placard (max extended) speed per notch, kt, in the order of notchesDeg (the first entry, flaps
+   * up, is ignored). A flap angle between notches (in transit) uses the next notch down the
+   * travel's placard. Absent: `vfeKt` for any extension. See src/physics/aero.ts flapPlacardKt().
+   */
+  placardKt?: number[];
+}
+
+/** Widen a config literal's inferred type with optional keys (so other aircraft may set them). */
+const withOptions = <O>() => <T>(t: T): T & O => t as T & O;
+
 // ─── Weapons (owned by src/combat; the physics reads gun.recoilN / gun.muzzle) ─────────────────
 // Positions are in the BODY frame (origin = CG, +X right, +Y up, −Z nose), metres, and the 3D
 // model must put the matching parts exactly there (the gun muzzle, one missile per station).
@@ -247,7 +289,7 @@ export const CONFIG = {
     /** Oswald efficiency factor for induced drag. */
     oswald: 0.75,
 
-    aero: {
+    aero: withOptions<AeroOptions>()({
       /** Lift coefficient at zero body angle of attack (wing incidence + camber). */
       cl0: 0.4,
       /** Lift curve slope, per radian. */
@@ -396,7 +438,7 @@ export const CONFIG = {
       cdSpeedBrake: 0,
       /** Mach drag rise (jets); null = incompressible (the Cessna never gets near it). */
       transonic: null as TransonicConfig | null,
-    },
+    }),
 
     engine: {
       /** Piston + constant-speed prop. */
@@ -433,7 +475,7 @@ export const CONFIG = {
       windmillDragCoeff: 0.18,
     },
 
-    flaps: {
+    flaps: withOptions<FlapOptions>()({
       /** Flap notch positions, degrees. */
       notchesDeg: [0, 10, 20, 30],
       /** Electric flap motor rate, degrees per second. */
@@ -444,7 +486,7 @@ export const CONFIG = {
       autoWithGearDeg: 0,
       /** …only below this IAS, kt. */
       autoRetractKt: 0,
-    },
+    }),
 
     gear: {
       retractable: true,
@@ -1518,6 +1560,48 @@ export const CONFIG = {
       degPerHeight: 38,
       /** Boresight (gun cross) height as a fraction of the HUD box. */
       boresightY: 0.34,
+    },
+    /**
+     * Airliner "glass" HUD (src/ui/glassHud.ts) for aircraft whose `hud` is 'glass' (the 747 has no
+     * head-up display): outside, a mini Boeing PFD bottom-left and a mini EICAS bottom-right, both in
+     * the bottom third; in the cockpit view (the flight deck has its own displays) a compact
+     * engines/flaps/gear strip bottom-left ('strip') or nothing ('hidden'). PFD height = pfdHeightFrac
+     * of the viewport (clamped in px, never above the bottom third), width = pfdAspect × height; the
+     * EICAS is eicasHeightFrac of the PFD's height. V-speeds: Vr = aircraft.limits.vrKt, Vref =
+     * vrefFactor × Vso, V1 = Vr − v1BelowVrKt (vrKt / vrefKt override them). N1 (%) at idle and full
+     * core speed; degPerAdiHeight = pitch degrees across the attitude display. Boeing colours.
+     */
+    glass: {
+      pfdHeightFrac: 0.28,
+      pfdMinH: 150,
+      pfdMaxH: 320,
+      pfdAspect: 1.16,
+      eicasHeightFrac: 0.62,
+      eicasAspect: 2.3,
+      cockpit: 'strip' as 'strip' | 'hidden',
+      compactHeightFrac: 0.058,
+      compactMinH: 38,
+      compactMaxH: 58,
+      compactAspect: 6,
+      vrefFactor: 1.3,
+      v1BelowVrKt: 6,
+      vrKt: null as number | null,
+      vrefKt: null as number | null,
+      n1IdlePct: 22,
+      n1MaxPct: 99,
+      degPerAdiHeight: 36,
+      colors: {
+        sky: '#2d78c8',
+        ground: '#80501f',
+        white: '#ffffff',
+        magenta: '#ff5cf2',
+        green: '#3de46c',
+        cyan: '#4fe3ff',
+        amber: '#ffb21e',
+        red: '#ff3b30',
+        tape: 'rgba(58,64,74,0.82)',
+        panel: 'rgba(6,9,14,0.55)',
+      },
     },
     /**
      * Weapons HUD (src/ui/weaponsHud.ts + src/game/systems/weaponsHud.ts), for aircraft that carry
@@ -2849,59 +2933,209 @@ export const F16_WEAPONS: WeaponsConfig = {
  * Boeing's 747-400 airport-planning general dimensions (RB211-524H: inlets 24.05 / 32.77 m from
  * the nose, wingtip 46.5 … 50.8 m, tail cone 68.63 m, body gear 3.07 m behind the wing gear).
  *
- * FLIGHT MODEL: placeholder (A-10 derivatives with 747 mass, geometry and engines) until src/physics
- * calibrates it.
+ * FLIGHT MODEL (src/physics; calibration table in src/physics/aircraft.ts, tests/physics/b747*.test.ts).
+ * Real data: 747-400 OEW 178.8 t, MTOW 396.9 t; wing 541 m², span 64.44 m, MAC 8.32 m, AR 7.7,
+ * 37.5° sweep; 4 × PW4056 (252 kN, BPR 4.9); VMO 365 KIAS / MMO 0.92. At 220 t the wing loading is
+ * 399 kg/m² (MTOW: 734), so every speed is √(220/396.9) = 0.74 × the heavy numbers and the thrust
+ * to weight is 0.47 (MTOW: 0.26) — a light 747 leaps off the runway. Stability derivatives after
+ * Heffley & Jewell, NASA CR-2144 (747 approach / cruise cases), rounded; the yaw damper is folded
+ * into cnR, the outboard-aileron lockout (flaps up) into aero.aileronFlapsUpFraction.
  */
 function makeB747(): AircraftConfig {
   const a10 = structuredClone(A10_AIRCRAFT);
   return {
-    ...a10,
     name: 'Boeing 747-400',
     registration: 'N747TT',
-    /** Light: OEW 178.8 t + ~41 t of fuel, no payload. */
+    /** Light: OEW 178.8 t + ~41 t of fuel, no payload (MTOW 396.9 t). */
     mass: 220000,
-    /** NASA CR-2144 values at 289 t, scaled by mass. */
+    /**
+     * NASA CR-2144 at 288.8 t (Ixx 24.7, Iyy 44.9, Izz 67.4 × 10⁶ kg·m²), scaled by mass (the
+     * missing payload and fuel sit near the CG, so the real light values are a little higher).
+     */
     inertia: { pitch: 34.2e6, yaw: 51.3e6, roll: 18.8e6 },
     wingArea: 541,
     wingSpan: 64.44,
     meanChord: 8.32,
-    oswald: 0.8,
+    /** Swept AR 7.7 wing with winglets (-400): e ≈ 0.85 → L/D max ≈ 17 clean. */
+    oswald: 0.85,
+
     aero: {
-      ...a10.aero,
+      /**
+       * Wing incidence + camber: CL 0.25 at zero body α (zero-lift body α ≈ −2.9°); the aircraft sits
+       * level on its gear, so the ground roll is at CL ≈ 0.25 (+ flaps).
+       */
       cl0: 0.25,
+      /** Flaps-up lift slope of the swept wing + body (CR-2144: 4.9 cruise … 5.7 flaps 30). */
       clAlpha: 5.0,
-      stallAlphaDeg: 16,
-      cd0: 0.018,
-      cdGear: 0.02,
-      /** Triple-slotted Fowler flaps at 30°. */
-      cdFlapsFull: 0.1,
-      clFlapsFull: 1.3,
-      stallAlphaFlapsShiftDeg: -2,
-      /** Spoilers as speed brakes. */
-      cdSpeedBrake: 0.04,
+      /**
+       * Clean CLmax ≈ 1.30 at 14° (1-g stall ≈ 138 KIAS at 220 t). The brief's pair "CLmax 1.45–1.55"
+       * and "clean stall 140–150 KIAS" cannot both hold at 220 t (1.5 → 128 KIAS; 145 KIAS → 1.17):
+       * this sits between them, nearer the stall speed a pilot sees.
+       */
+      stallAlphaDeg: 14,
+      stallAlphaNegDeg: -12,
+      /** The lift curve rounds over the last 4° (buffet builds before the break). */
+      stallRoundingDeg: 4,
+      /** Lift falls away over 6° past the peak (a clean break, not a mush). */
+      stallBreakWidthDeg: 6,
+      flatPlateLift: 1.1,
+      flatPlateDrag: 1.4,
+      /** Clean (-400 with winglets), M < 0.86. */
+      cd0: 0.0175,
+      /** 18 wheels on five legs: ΔCD ≈ 0.018. */
+      cdGear: 0.018,
+      /**
+       * Flaps 30 (triple-slotted Fowler + Kruegers): ΔCD0 0.065, ΔCL 0.77 at the same α and the stall
+       * 3.2° later (the Kruegers) → CLmax 2.35 (1-g stall ≈ 103 KIAS; Vref30 = 1.23 Vs ≈ 127 KIAS at
+       * α ≈ 5°). Linear in flap angle: flaps 10 → CLmax 1.65 (Vs 122, Vr 145), flaps 20 → 2.0 (Vs 111).
+       */
+      cdFlapsFull: 0.065,
+      clFlapsFull: 0.77,
+      stallAlphaFlapsShiftDeg: 3.2,
+      /** The flaps' aft centre of pressure pitches the nose down (trimmed out with the stabiliser). */
+      cmFlapsFull: -0.05,
+      cdBeta: 0.5,
+      cyBeta: -0.9,
+      cyRudder: -0.1,
+      /** Trimmed near zero at α ≈ 2.5° (cruise): cm0 = −cmAlpha·sin 2.5°. */
+      cm0: 0.057,
+      cm0Tail: 0,
+      /** Static margin ≈ 26 % MAC (CR-2144: Cmα −1.26 … −1.6). */
+      cmAlpha: -1.3,
+      cmQ: -20,
+      cmAlphaDot: -4,
+      /** Elevators ±20° (CR-2144 Cmδe ≈ −1.3/rad): full column ≈ 0.45. */
+      cmElevator: 0.45,
+      /** Stabiliser trim (the 747 trims with the whole stabiliser): ±1 ≈ ±0.4. */
+      cmTrim: 0.4,
+      /** Swept wing: strong dihedral effect. */
+      clBeta: -0.17,
+      clP: -0.45,
+      clR: 0.15,
+      /**
+       * All four ailerons + flight spoilers, flaps down: ~15 °/s at 135 KIAS (Clδa ≈ 0.055). Flaps up
+       * the outboard ailerons lock out (aileronFlapsUpFraction) → ~20–25 °/s at M 0.85, FL350.
+       */
+      clAileron: 0.055,
+      clRudder: 0.005,
+      cnBeta: 0.16,
+      cnP: -0.02,
+      /** Big fin + the yaw damper (the damper is modelled as extra yaw damping). */
+      cnR: -0.4,
+      cnAileron: 0,
+      /** Two-piece rudder ±25° (CR-2144 Cnδr ≈ −0.1/rad). */
+      cnRudder: 0.045,
+      stripStallBlendDeg: 2,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      wingStrips: 4,
+      /** Washout ≈ 3.5° root → tip. */
+      washoutDeg: 3.5,
+      stripStallBreakWidthDeg: 14,
+      /** Docile stall: weak autorotation (it drops a wing only if badly uncoordinated). */
+      stripRollGainStalled: 0.5,
+      stripYawGain: 1,
+      aileronSpanStart: 0.55,
+      /** The tall fin stays mostly clear of the wing wake. */
+      stallYawDampingLoss: 0.15,
+      stallRudderLoss: 0.1,
+      bodyCrossflowCn: 0.3,
+      postStallFlapLiftFraction: 0.5,
+      /** Clear nose-down break at the stall (it overpowers a column still coming back). */
+      stallPitchBreak: -0.3,
+      stallTailBlanking: 0.25,
+      /** Turbofans: nothing blows over the tail, no P-factor. */
+      propwashTail: 0,
+      propwashTailMaxRatio: 1,
+      /** In ground effect the nose wants to drop: the flare needs a firm pull. */
+      cmGroundEffect: 0.06,
+      groundEffectLift: 0.12,
+      groundEffectScale: 0.25,
+      pFactor: 0,
+      /** Flight spoilers (speed brake lever, flight detent): ≈ 1.5 kt/s at 300 KIAS, idle. */
+      cdSpeedBrake: 0.02,
+      /**
+       * Drag divergence from M 0.86 (cruise M 0.85 costs nothing, +0.007 at M 0.90, +0.015 at MMO 0.92):
+       * max level speed ≈ M 0.9 at FL350.
+       */
+      transonic: { machCrit: 0.86, machPeak: 1.05, peakFactor: 4.5, factorAtMach2: 4, inducedGain: 0 },
+      spoilers: { flightLiftLoss: 0.12, groundLiftLoss: 0.85, groundCd: 0.08, autoIdleThrottle: 0.05, autoMinGroundKt: 30 },
+      /** Outboard ailerons locked out flaps up. */
+      aileronFlapsUpFraction: 0.45,
     },
+
     engine: {
-      ...a10.engine,
+      type: 'jet',
       jet: {
-        ...a10.engine.jet!,
-        /** 4 × ~252 kN (PW4056 / CF6-80C2B1F / RB211-524H class). */
+        /** 4 × PW4056, 56,750 lbf (252 kN) each, SL static. */
         milThrustN: 1008000,
+        /** No afterburner. */
         maxThrustN: 1008000,
+        /** 4 × ~9 kN at ground idle. */
         idleThrustN: 36000,
-        spoolUpTauIdle: 4.5,
+        /** The detent is at the stop: the whole lever is idle → take-off thrust, no afterburner. */
+        abDetent: 1,
+        abMin: 0,
+        abLightCore: 1,
+        abRampUpPerSec: 0,
+        abRampDownPerSec: 10,
+        /** Big fans spool slowly: idle → 95 % ≈ 7 s. */
+        spoolUpTauIdle: 5.2,
         spoolUpTauMil: 1.2,
         spoolDownTau: 2.5,
-        lowSpeedLapse: 1.0,
+        /** High-bypass altitude lapse: ≈ 20 % of SL static at FL350, M 0.85 (≈ 49 kN per engine). */
+        densityExponent: 0.8,
+        /** High-bypass lapse with speed: 80 % at M 0.2, 76 % at M 0.25 (lift-off), 50 % at M 0.85 (sea level). */
+        lowSpeedLapse: 1.1,
         ramDry: 0.6,
-        /** All four combined: the pods hang ~2 m below the CG, so power pitches the nose up. */
-        thrustPoint: { x: 0, y: -2.1, z: -1 },
+        ramAb: 0,
+        /** All four combined: the pods hang ~2.1 m below the CG, so power pitches the nose up (trim it out). */
+        thrustPoint: { x: 0, y: -2.1, z: -6 },
       },
+      maxPowerW: 0,
       staticThrustN: 1008000,
+      propEfficiency: 1,
+      spoolUpTau: 1,
+      spoolDownTau: 1,
+      idlePower: 0,
+      /** Core speed (N2), %. */
+      idleRpm: 62,
+      maxRpm: 100,
+      /** APU-bleed start, shortened for play, s. */
       startTime: 10,
+      windmillRpmPerKt: 0.05,
+      crankRpm: 22,
+      rpmTau: 0.8,
+      spinDownTau: 5,
+      windmillDragCoeff: 0,
     },
-    flaps: { notchesDeg: [0, 5, 10, 20, 25, 30], rateDegPerSec: 2, vfeKt: 250, autoWithGearDeg: 0, autoRetractKt: 0 },
-    gear: { retractable: true, transitTime: 10, vleKt: 270, vloKt: 270, retractDelay: 1.5, squatSwitch: true },
-    surfaces: { elevatorMaxDeg: 20, aileronMaxDeg: 20, rudderMaxDeg: 30, flapMaxDeg: 30, trimTabMaxDeg: 10, nosewheelSteerMaxDeg: 70 },
+
+    flaps: {
+      /** The -400's detents 0 / 5 / 10 / 20 / 25 / 30 (flaps 1 omitted); take-off 10 or 20, landing 25 or 30. */
+      notchesDeg: [0, 5, 10, 20, 25, 30],
+      /** Hydraulic, shortened for play (the real flaps take ~1 min to 30). */
+      rateDegPerSec: 2,
+      /** Most restrictive placard (flaps 30); per notch below. */
+      vfeKt: 180,
+      placardKt: [365, 260, 240, 230, 205, 180],
+      autoWithGearDeg: 0,
+      autoRetractKt: 0,
+    },
+
+    gear: {
+      retractable: true,
+      transitTime: 10,
+      /** VLE 320 KIAS, VLO 270 KIAS. */
+      vleKt: 320,
+      vloKt: 270,
+      retractDelay: 1.5,
+      squatSwitch: true,
+    },
+
+    surfaces: { elevatorMaxDeg: 20, aileronMaxDeg: 20, rudderMaxDeg: 25, flapMaxDeg: 30, trimTabMaxDeg: 10, nosewheelSteerMaxDeg: 70 },
+
     geometry: {
       ...a10.geometry,
       length: 70.66,
@@ -2944,23 +3178,42 @@ function makeB747(): AircraftConfig {
         { name: 'upperDeckRoof', x: 0, y: 5.2, z: -26 },
       ],
     },
+    /** Visual-only (src/aircraft; the 747 model owner may override). */
+    model: structuredClone(a10.model),
+
     ground: {
-      ...a10.ground,
-      /** ~1 MN per main (wing + body gear lumped), ~170 kN on the nose; ~0.15 m / 0.12 m static compression. */
+      /**
+       * The wing and body gear lumped into two mains: ~1 MN each at rest (2 m behind the CG), ~170 kN
+       * on the nose (25.6 m ahead of the mains) → 0.15 m / 0.12 m static compression out of 0.45 m;
+       * ≈ 0.55 × critical damping (× 3 in rebound): a 600 fpm arrival doesn't bounce.
+       */
       springMain: 6.7e6,
       damperMain: 9.0e5,
       springNose: 1.4e6,
       damperNose: 1.7e5,
-      brakeFriction: 0.45,
+      rollingFriction: { ...a10.ground.rollingFriction },
+      /** Carbon brakes on 16 main wheels with anti-skid (no lock-up); max manual ≈ 0.3 g on dry pavement. */
+      brakeFriction: 0.34,
+      lateralFriction: 0.7,
+      frictionSmoothing: 0.25,
+      /** Tiller ±70° for taxiing: it fades out by ~30 kt (then the rudder steers). */
       steeringFadeSpeed: 15,
       steeringMinFraction: 0.05,
+      longitudinalSmoothing: 0.05,
+      bottomOutStiffness: 10,
+      reboundDampingFactor: 3,
+      tailSkidFriction: 0.4,
     },
+
+    /** Conventional hydraulic controls (the yaw damper is modelled as damping in cnR). */
     fbw: null,
+
     limits: {
-      ...a10.limits,
-      vsoKt: 115,
-      vs1Kt: 140,
-      vrKt: 150,
+      /** 1-g stalls at 220 t: flaps 30 / clean. */
+      vsoKt: 103,
+      vs1Kt: 138,
+      /** Flaps 10 (MTOW: ~175 KIAS). */
+      vrKt: 145,
       vxKt: 180,
       vyKt: 250,
       vaKt: 250,
@@ -2969,17 +3222,49 @@ function makeB747(): AircraftConfig {
       vneKt: 365,
       gLimitPos: 2.5,
       gLimitNeg: -1,
+      /** Ultimate = 1.5 × limit. */
       structuralFailureG: 3.75,
       structuralFailureNegG: -1.5,
+      /** VD ≈ 420 KIAS. */
       overspeedFailureFactor: 1.15,
       maxAngularRate: 3,
     },
-    landing: { ...a10.landing, butterFpm: 100, smoothFpm: 250, firmFpm: 450, hardFpm: 700, maxBankDeg: 8, minPitchDeg: -1 },
+
+    stall: {
+      /** Stick shaker ≈ 3° of α before the break (~7 % above the stall speed). */
+      warningMarginDeg: 3,
+      recoveryHysteresisDeg: 2,
+    },
+
+    landing: {
+      butterFpm: 120,
+      smoothFpm: 300,
+      firmFpm: 480,
+      /** Gear designed for 10 ft/s at landing weight; collapses past ~12 ft/s. */
+      hardFpm: 720,
+      /** The outboard engine pods touch at ~8° of bank. */
+      maxBankDeg: 8,
+      /** Nose gear first. */
+      minPitchDeg: -1,
+      minAirborneTime: 1.5,
+      ditchSpeedKt: 0,
+      /**
+       * An over-rotation (a yanked column at Vr rotates at 8–10 °/s — like the real aircraft) drags the
+       * tail: below this impact speed it scrapes and the take-off continues, as real 747 tail strikes do.
+       */
+      scrapeSpeedMs: 6,
+      terrainImpactMs: 8,
+      terrainPenetrationM: 0.3,
+      /** 64 m of wing: check the ground from higher up. */
+      nearGroundAglM: 45,
+      obstacleCheckAglM: 400,
+    },
+
     spawn: {
-      /** The tail is 38.7 m behind the CG: start with the CG 45 m past the threshold. */
+      /** The tail is 38.7 m behind the CG: start with the CG 47 m past the threshold (tail on the runway). */
       runwayStartOffset: 45,
-      /** 3° final from 9 km at 150 kt, gear down, flaps 30 (notch 5). */
-      approach: { distance: 9000, height: 470, speedKt: 150, flapsNotch: 5, throttle: 0.5, aimPointM: 350 },
+      /** 3° final from 9 km at 150 kt, gear down, flaps 30 (notch 5), trimmed (Vref30 ≈ 127 KIAS). */
+      approach: { distance: 9000, height: 490, speedKt: 150, flapsNotch: 5, throttle: 0.3, aimPointM: 350 },
     },
   };
 }

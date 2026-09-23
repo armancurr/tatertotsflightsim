@@ -170,8 +170,8 @@ export const PROFILE = {
   thalweg: 0.45,
   /** Point bar: height of the inner-bank rise (fraction of the depth at |bend| = 1). */
   bar: 0.08,
-  /** Irregular edges: extra rise near the banks where the edge noise is high. */
-  edge: 0.2,
+  /** Irregular edges: extra rise near the banks where the edge noise is high (kept small: wide dry edges read as canal edging). */
+  edge: 0.1,
 };
 
 export interface RiverSection {
@@ -215,8 +215,9 @@ export const RIVER_OPTICS = {
   turbidDeep: [0.058, 0.06, 0.034] as RGB,
   gravelBed: [0.2, 0.19, 0.16] as RGB,
   mudBed: [0.16, 0.14, 0.1] as RGB,
-  gravelBar: [0.25, 0.24, 0.21] as RGB,
-  sandBar: [0.3, 0.26, 0.19] as RGB,
+  /** Exposed bars are damp: darker than dry gravel/sand, so the banks read as natural, not as pale edging. */
+  gravelBar: [0.17, 0.16, 0.135] as RGB,
+  sandBar: [0.15, 0.13, 0.09] as RGB,
 };
 
 /** Optics from turbidity 0 (clear mountain stream) … 1 (sediment-laden lowland river). */

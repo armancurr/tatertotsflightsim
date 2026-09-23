@@ -83,7 +83,7 @@ const B747: AircraftDef = {
   shortName: '747',
   description: 'The Queen of the Skies, flown light for fun — four engines, 64 m of wing, heavy and stately. Just fits the runway.',
   config: b747Config,
-  hud: 'steam',
+  hud: 'glass',
   sound: 'turbofan',
   createModel: () => createB747Model(),
 };
