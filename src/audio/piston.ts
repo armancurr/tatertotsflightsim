@@ -171,6 +171,7 @@ export function createPistonVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd:
 
       // The jet's channels are silent while the piston engine plays.
       L.jet = 0;
+      L.turbofan = 0;
       L.corePct = 0;
       L.whineHz = 0;
       L.fanHz = 0;

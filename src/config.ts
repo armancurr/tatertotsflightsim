@@ -1312,6 +1312,87 @@ export const CONFIG = {
       /** Exterior views: full level within this distance (a 15 m airframe, a much louder source than the Cessna). */
       refDistanceM: 25,
     },
+    /**
+     * A-10C / 2 × GE TF34-GE-100A high-bypass turbofans (aircraft sound 'turbofan'): the famous
+     * "Hog whistle" is the fan's blade-pass tone (28 blades × N1), over a soft low roar; no afterburner.
+     * `state.engine.rpm` is the core speed N2 in % (as for the F-16).
+     */
+    turbofan: {
+      /** Fan (N1) and core (N2) at 100 %, rpm; fan blades; core compressor stage whose blade-pass is the faint high whine. */
+      fanMaxRpm: 7365,
+      fanBlades: 28,
+      coreMaxRpm: 17800,
+      coreBlades: 27,
+      /** N1 % = 100 × ((N2 % − fanStartCorePct) / (100 − fanStartCorePct))^fanExponent (≈ 35 % N1 at 70 % N2 ground idle). */
+      fanStartCorePct: 50,
+      fanExponent: 1.15,
+      idleCorePct: 70,
+      /** Overall level (a high-bypass fan is much quieter than the F-16's jet) and in the cockpit (canopy + helmet). */
+      volume: 1.5,
+      cockpitGain: 0.5,
+      /** Channel levels before engineVolume × volume. */
+      whistle: 0.2,
+      whistle2: 0.04,
+      core: 0.035,
+      roar: 0.3,
+      rumble: 0.28,
+      intake: 0.08,
+      ecs: 0.035,
+      starter: 0.08,
+      refDistanceM: 25,
+    },
+    /**
+     * Combat sound (src/audio/combat.ts): the gun (GAU-8/A "BRRRT", M61A1 "brrrp"), 30 mm impact
+     * crackle, missile launch + motor, explosions and cook-offs. Everything heard from a distance
+     * arrives with the speed-of-sound delay (distance / speedOfSoundMs), air absorption (a low-pass
+     * falling with distance) and distance attenuation.
+     */
+    combat: {
+      /** Level of the combat bus (into the master: mute, pause, compressor, limiter). */
+      volume: 1,
+      speedOfSoundMs: 343,
+      /** Longest propagation delay modelled (farther sources play at this delay, attenuated), s. */
+      maxDelayS: 10,
+      /** Full level within refDistanceM, then (ref/d)^distanceExponent. */
+      refDistanceM: 30,
+      distanceExponent: 1,
+      /** Air absorption: the low-pass cutoff halves every absorptionHalfM, between minCutoffHz and maxCutoffHz. */
+      absorptionHalfM: 450,
+      maxCutoffHz: 16000,
+      minCutoffHz: 220,
+      /** The canopy: exterior combat sounds heard in the cockpit go through this low-pass at this level. */
+      canopyCutoffHz: 1400,
+      canopyGain: 0.5,
+      gun: {
+        /** Level of the burst outside (at refDistanceM) and in the cockpit. */
+        exterior: 1.25,
+        cockpit: 1.1,
+        /** Blast pulse train (the "buzz-saw"), its low-passed chest thump, the torn noise of each shot. */
+        pulse: 0.28,
+        thump: 0.85,
+        thumpHz: 150,
+        tear: 0.55,
+        tearHz: 1300,
+        /** Cockpit only: low growl (pulse → low-pass), feed/link clatter. */
+        growl: 0.7,
+        growlHz: 420,
+        clatter: 0.1,
+        /** Barrel drive whine (hydraulic motors + gears) from 0 to full spin, Hz, and its level (cockpit; ×0.3 outside). */
+        whineHz: [220, 1150] as [number, number],
+        whine: 0.08,
+        /** Lowest firing rate as a fraction of the full rate while the barrels spin up (rounds fire from the first turn). */
+        minRateFraction: 0.2,
+        /** Timbre per calibre: the 20 mm M61A1 is lighter and higher than the 30 mm GAU-8/A. */
+        smallCaliberMm: 25,
+        smallThump: 0.5,
+        smallTearHz: 2100,
+      },
+      /** 30 mm impacts: pops per second at most (the rest thicken the crackle), and their level. */
+      impacts: { maxPerS: 45, level: 0.55 },
+      missile: { launch: 0.9, motor: 0.55, motorHz: 900 },
+      /** Explosions: Maverick detonation size 1; a tank cook-off ~1.2. Rumble tail length grows with distance. */
+      boom: { level: 1.1, rumbleS: 1.6, farRumbleS: 3.2, maxPerS: 8 },
+    },
   },
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────
@@ -1530,6 +1611,78 @@ export const CONFIG = {
     },
     /** Subtle FOV widening with airspeed (degrees added to the camera FOV). */
     fov: { startKt: 55, fullKt: 170, maxDeg: 3.5 },
+    /**
+     * Combat effects (src/combat/fx + the combatfx system), driven by the combat events: 30 mm impacts
+     * (dust carpet, HEI sparkle, sparks, splashes, armour sparks + ricochets), Maverick detonations,
+     * vehicle catastrophic explosions + secondaries, and camera shake. Particles go into the fx pools
+     * (FxSim); sparks and ricochets are drawn as glowing streaks (own pool, one draw call).
+     */
+    combat: {
+      seed: 3571,
+      /** Soil (dirt/field/grass/sand/forest): dark ejecta thrown up, then lingering dust that merges into the carpet. */
+      soil: {
+        ejecta: 4,
+        ejectaSpeed: [9, 22] as [number, number],
+        ejectaSize: [1.4, 3] as [number, number],
+        ejectaLife: [0.9, 1.7] as [number, number],
+        puffs: 2,
+        puffSize: [8, 14] as [number, number],
+        puffLife: [8, 14] as [number, number],
+        puffRise: [3, 7] as [number, number],
+        puffAlpha: 0.45,
+      },
+      /** Pavement / rock: sparks + a grey puff + a couple of chips. */
+      hard: { sparks: 5, chips: 2, puffs: 1, puffSize: [2.5, 5] as [number, number], puffLife: [3, 6] as [number, number], puffAlpha: 0.32 },
+      /** Water: tall white splash columns + mist. */
+      water: {
+        column: 5,
+        columnSpeed: [11, 19] as [number, number],
+        columnSize: [1.2, 3] as [number, number],
+        mist: 2,
+        mistSize: [4, 7.5] as [number, number],
+        mistLife: [2.5, 4.5] as [number, number],
+      },
+      /** Armour (surface 'target'): an incendiary flash, white-orange sparks, a wisp of smoke. */
+      armour: { sparks: 9, sparkSpeed: [18, 70] as [number, number], flashSize: [1.8, 3.2] as [number, number], smokeAlpha: 0.35 },
+      /** HEI/API flash chance per impact on soil / hard ground (armour always flashes); flash size (m) and life (s). */
+      flashChanceSoil: 0.3,
+      flashChanceHard: 0.55,
+      flashSize: [1.2, 2.4] as [number, number],
+      flashLife: [0.06, 0.13] as [number, number],
+      /** A round glancing off armour: speed (m/s) and glowing life (s). */
+      ricochet: { speed: [230, 380] as [number, number], life: [0.35, 0.8] as [number, number] },
+      /** Dust albedos (linear). */
+      soilAlbedo: [0.37, 0.31, 0.24] as [number, number, number],
+      sandAlbedo: [0.55, 0.48, 0.37] as [number, number, number],
+      grassAlbedo: [0.34, 0.3, 0.23] as [number, number, number],
+      hardAlbedo: [0.52, 0.51, 0.5] as [number, number, number],
+      snowAlbedo: [0.88, 0.9, 0.93] as [number, number, number],
+      /** AGM-65 detonation: flash, fireball, ground shock ring, dirt column, lingering smoke. Air burst above airBurstM AGL. */
+      missile: {
+        flash: 1.0,
+        fireball: 0.75,
+        ring: 0.85,
+        dirt: 26,
+        dirtSpeed: [14, 34] as [number, number],
+        smokePuffs: 10,
+        smokeSize: [8, 18] as [number, number],
+        smokeLife: [12, 20] as [number, number],
+        airBurstM: 4,
+      },
+      /** Vehicle destroyed: catastrophic explosion size by kind (fireball + flash + debris), secondary pop delay range, s. */
+      destroyed: {
+        size: { tank: 1, ifv: 0.85, apc: 0.8, truck: 0.6, aaa: 0.8 },
+        debris: 14,
+        secondary: [0.3, 1.5] as [number, number],
+        /** Chance of a secondary pop by kind (tanks: the ammunition always cooks off). */
+        secondaryChance: { tank: 1, ifv: 0.8, apc: 0.6, truck: 0.5, aaa: 0.9 },
+      },
+      /** Camera shake: the gun vibrating the airframe (cockpit / outside, × barrel spin), blasts (arrive at d / c, decay). */
+      shake: { gunCockpit: 0.3, gunOutside: 0.13, blastMax: 0.75, blastRefM: 70, blastTau: 0.35, speedOfSoundMs: 343 },
+      /** Glowing streak pool (sparks, ricochets), and delayed events (secondaries, blast shakes) in flight. */
+      streakCapacity: 384,
+      maxPending: 16,
+    },
   },
   /**
    * The crash director (src/crash + src/game/systems/crash.ts): the airframe breaks into rigid

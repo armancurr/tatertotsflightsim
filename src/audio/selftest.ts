@@ -14,6 +14,9 @@ import type { EngineSound } from '../fleet/types';
 import { rms, goertzelAmplitude, dominantFrequency } from './analysis';
 import { firingFrequency } from './mapping';
 import { jetWhineHz } from './jetMapping';
+import { tf34WhistleHz } from './turbofanMapping';
+import type { CombatAudioFrame } from './combat';
+import type { AudioSystem } from './types';
 import { CONFIG } from '../config';
 
 export interface SelfTestResult {
@@ -40,6 +43,9 @@ const BASE: AudioInputs = {
 interface TimedInputs {
   at: number;
   inputs: Partial<AudioInputs>;
+  /** Combat: a one-shot to fire at this moment (impact, detonation, launch…) and/or a new combat frame. */
+  fire?: (a: AudioSystem) => void;
+  combat?: Partial<CombatAudioFrame>;
   /** From the next frame on (defaults to `inputs`, without the touchdown). */
   after?: Partial<AudioInputs>;
 }
@@ -55,8 +61,26 @@ interface Scenario {
   /** Analysed window [from, to] s (default: from 0.3 s for steady sounds, 0 with events). */
   window?: [number, number];
   muted?: boolean;
+  /** Combat frame fed every update (the gun, the missile motor). */
+  combat?: Partial<CombatAudioFrame>;
   check: (s: Float32Array, sr: number, all: Float32Array, levels: AudioLevels) => { ok: boolean; detail: string };
 }
+
+const NO_COMBAT: CombatAudioFrame = { gunRateRps: 0, gunCaliberMm: 30, gunSpin: 0, gunFiring: false, gunDistanceM: 30, cockpit: false, motor: 0, motorDistanceM: 0 };
+
+/** The gun's buzz: the strongest component between 30 and 180 Hz is the firing rate (±3 %). */
+const fundamentalAt = (hz: number) => (s: Float32Array, sr: number) => {
+  const f = dominantFrequency(s, sr, 30, 180, 0.5);
+  const r = rms(s);
+  return { ok: Math.abs(f - hz) <= hz * 0.03 && r > 0.02, detail: `fundamental ${f.toFixed(1)} Hz (want ${hz}), ${fmtDb(r)}` };
+};
+/** The TF34 whistle: the strongest tone between 700 Hz and 5 kHz is the fan blade-pass frequency (±4 %). */
+const whistleAt = (hz: number) => (s: Float32Array, sr: number) => {
+  const f = spectralPeakHz(s, sr, 700, 5000, 1);
+  const r = rms(s);
+  return { ok: Math.abs(f - hz) < hz * 0.04 && r > 2e-3, detail: `whistle peak ${f} Hz (want ${hz.toFixed(0)}), ${fmtDb(r)}` };
+};
+const GAU8: Partial<CombatAudioFrame> = { gunRateRps: 65, gunCaliberMm: 30, gunSpin: 1, gunFiring: true, gunDistanceM: 30 };
 
 const db = (v: number) => (v > 1e-6 ? 20 * Math.log10(v) : -120);
 const fmtDb = (v: number) => `${db(v).toFixed(1)} dBFS`;
@@ -213,6 +237,49 @@ export const SCENARIOS: Scenario[] = [
     check: silent,
   },
   { name: 'muted at full power', base: { rpm: 2700, power: 1, engineRunning: true }, muted: true, check: silent },
+  // ── A-10C: TF34 turbofans (chase camera 26 m behind) ──
+  { name: 'turbofan idle', engine: 'turbofan', base: JET_IDLE, check: whistleAt(tf34WhistleHz(CONFIG.audio.turbofan.idleCorePct)) },
+  { name: 'turbofan 100 %', engine: 'turbofan', base: JET_MIL, check: whistleAt(tf34WhistleHz(100)) },
+  { name: 'turbofan 100 %, cockpit', engine: 'turbofan', base: { ...JET_MIL, cameraMode: 'cockpit', airspeedKt: 300, onGround: false }, check: audible() },
+  // ── Combat: the gun, explosions, missiles ──
+  { name: 'GAU-8/A burst (outside, 30 m)', base: {}, combat: GAU8, tick: 0.05, window: [0.4, 2], check: fundamentalAt(65) },
+  { name: 'GAU-8/A burst (cockpit)', base: { cameraMode: 'cockpit' }, combat: { ...GAU8, cockpit: true }, tick: 0.05, window: [0.4, 2], check: fundamentalAt(65) },
+  { name: 'M61A1 burst (outside, 30 m)', base: {}, combat: { ...GAU8, gunRateRps: 100, gunCaliberMm: 20 }, tick: 0.05, window: [0.4, 2], check: fundamentalAt(100) },
+  {
+    name: 'GAU-8/A spin-up and stop', base: {}, combat: { ...GAU8, gunSpin: 0.05 }, tick: 0.05, seconds: 2.5, window: [0, 2.5],
+    events: [...[0.1, 0.2, 0.3, 0.4, 0.5].map((at): TimedInputs => ({ at, inputs: {}, combat: { gunSpin: at / 0.55 } })), { at: 0.6, inputs: {}, combat: { gunSpin: 1 } }, { at: 1.6, inputs: {}, combat: { gunFiring: false, gunSpin: 0.5 } }],
+    check: (s, sr) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const firing = win(0.8, 1.5);
+      const after = win(2.0, 2.5);
+      return { ok: firing > 0.02 && after < firing * 0.1, detail: `firing ${fmtDb(firing)}, after the stop ${fmtDb(after)}` };
+    },
+  },
+  {
+    name: 'Maverick boom 686 m away arrives 2 s later', base: {}, seconds: 4, tick: 0.05, window: [0, 4],
+    events: [{ at: 0.1, inputs: {}, fire: (a) => a.combat.detonation({ distanceM: 686, size: 1 }) }],
+    check: (s, sr) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const early = win(0.2, 2.0);
+      const boom = win(2.1, 3.0);
+      return { ok: boom > 0.01 && boom > early * 10, detail: `before ${fmtDb(early)}, on arrival ${fmtDb(boom)}` };
+    },
+  },
+  {
+    name: 'tank cook-off 150 m away', base: {}, seconds: 4, tick: 0.05, window: [0.5, 2],
+    events: [{ at: 0.05, inputs: {}, fire: (a) => a.combat.cookoff({ distanceM: 150, size: 1.1, secondaryDelayS: 0.8, secondarySize: 0.7 }) }],
+    check: audible(0.02),
+  },
+  {
+    name: '30 mm impacts 300 m away (crackle)', base: {}, seconds: 3, tick: 0.02, window: [0.9, 3],
+    events: Array.from({ length: 60 }, (_, i) => ({ at: 0.05 + i / 30, inputs: {}, fire: (a: AudioSystem) => a.combat.impact({ distanceM: 300 + (i % 7), surface: i % 5 === 0 ? 'target' : 'dirt', ricochet: i % 9 === 0 }) })),
+    check: audible(3e-3),
+  },
+  {
+    name: 'Maverick launch + motor (chase)', base: {}, seconds: 2.5, tick: 0.05, window: [0.1, 1.5], combat: { motor: 1, motorDistanceM: 40 },
+    events: [{ at: 0.05, inputs: {}, fire: (a) => a.combat.launch({ distanceM: 20 }) }],
+    check: audible(0.01),
+  },
 ];
 
 function defaultFactory(): OfflineFactory | null {
@@ -243,6 +310,10 @@ export function mixChecks(r: SelfTestResult[]): SelfTestResult[] {
   rel('mix: stall horn audible over the cockpit engine', 'piston cruise, cockpit', 'stall horn (cockpit)', -8, 12);
   rel('mix: gear horn audible over the cockpit engine', 'piston cruise, cockpit', 'gear warning horn (cockpit)', -10, 12);
   rel('mix: the crash is the loudest thing', 'jet afterburner', 'crash (impact + secondary explosions)', -1);
+  rel('mix: the A-10 is quieter than the F-16 at full power', 'turbofan 100 %', 'jet MIL (100 %)', 1);
+  rel('mix: turbofan idle < 100 %', 'turbofan idle', 'turbofan 100 %', 2);
+  rel('mix: the GAU-8 drowns the A-10 engines', 'turbofan 100 %', 'GAU-8/A burst (outside, 30 m)', 4);
+  rel('mix: the GAU-8 is heavier than the M61', 'M61A1 burst (outside, 30 m)', 'GAU-8/A burst (outside, 30 m)', -1);
   const maxPeak = Math.max(...r.map((x) => x.peak));
   out.push({ name: 'mix: nothing clips (limiter + soft clipper)', rms: 0, db: db(maxPeak), peak: maxPeak, ok: maxPeak <= 0.99, detail: `max peak ${maxPeak.toFixed(3)} (${fmtDb(maxPeak)})` });
   return out;
@@ -263,7 +334,9 @@ export async function runAudioSelfTest(opts: { seconds?: number; sampleRate?: nu
       const audio = createAudio({ context: ctx, engine: sc.engine ?? 'piston' });
       if (sc.muted) audio.setMuted(true);
       let cur: AudioInputs = { ...BASE, ...sc.base };
+      let cf: CombatAudioFrame = { ...NO_COMBAT, ...(sc.combat ?? {}) };
       audio.update(cur, 0);
+      if (sc.combat) audio.combat.update(cf);
       // One timeline of suspend points (render-quantum aligned, unique): ticks + events.
       const points = new Map<number, TimedInputs[]>();
       const add = (t: number, e: TimedInputs | null) => {
@@ -286,10 +359,13 @@ export async function runAudioSelfTest(opts: { seconds?: number; sampleRate?: nu
               audio.update({ ...cur, ...e.inputs }, dt);
               cur = { ...cur, ...e.inputs, ...(e.after ?? {}), touchdownFpm: null };
               audio.update(cur, 1 / 240);
+              if (e.combat) cf = { ...cf, ...e.combat };
+              e.fire?.(audio);
             }
           } else {
             audio.update(cur, dt);
           }
+          if (sc.combat || evs.some((e) => e.combat)) audio.combat.update(cf);
           return ctx.resume();
         });
       }
