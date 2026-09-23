@@ -39,5 +39,9 @@ export default defineConfig({
     reporters: ['default'],
     // Fail loudly if anyone leaves a .only or .skip behind: every test must run.
     allowOnly: false,
+    // World generation, fuzz and render tests are heavy: on a slow laptop or a busy CI runner the
+    // 5 s default times out. Timing *budgets* are asserted inside the tests themselves.
+    testTimeout: 20000,
+    hookTimeout: 30000,
   },
 });
