@@ -62,7 +62,7 @@ const A10: AircraftDef = {
   description: 'Twin-engine tank killer built around the 30 mm GAU-8/A Avenger, with four AGM-65 Mavericks — slow, tough, deadly.',
   config: a10Config,
   hud: 'jet',
-  sound: 'jet',
+  sound: 'turbofan',
   createModel: () => createA10Model(),
 };
 

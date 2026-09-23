@@ -63,6 +63,26 @@ describe('audio self-test in Chrome for Testing', () => {
     expect(off).toEqual([]);
   });
 
+  it('combat: GAU-8/A fundamental ≈ 65 Hz, M61A1 ≈ 100 Hz (outside and in the cockpit); TF34 whistle rises with N1; booms arrive at d / c', () => {
+    const hz = (name: string) => Number(/fundamental ([\d.]+) Hz/.exec(get(name).detail)?.[1]);
+    expect(hz('GAU-8/A burst (outside, 30 m)')).toBeCloseTo(65, 0);
+    expect(hz('GAU-8/A burst (cockpit)')).toBeCloseTo(65, 0);
+    expect(hz('M61A1 burst (outside, 30 m)')).toBeCloseTo(100, 0);
+    const whistle = (name: string) => Number(/whistle peak ([\d.]+) Hz/.exec(get(name).detail)?.[1]);
+    expect(whistle('turbofan 100 %')).toBeGreaterThan(whistle('turbofan idle') * 2);
+    for (const n of ['GAU-8/A burst (outside, 30 m)', 'M61A1 burst (outside, 30 m)', 'Maverick boom 686 m away arrives 2 s later', 'tank cook-off 150 m away', 'turbofan 100 %']) {
+      expect(get(n).ok, n).toBe(true);
+      expect(get(n).peak, n).toBeLessThanOrEqual(0.99);
+    }
+    const want: [string, number, number][] = [
+      ['GAU-8/A burst (outside, 30 m)', -16, -4],
+      ['GAU-8/A burst (cockpit)', -16, -4],
+      ['turbofan 100 %', -28, -16],
+      ['turbofan idle', -36, -22],
+    ];
+    expect(want.filter(([n, lo, hi]) => !(get(n).db >= lo && get(n).db <= hi)).map(([n]) => `${n}: ${get(n).db.toFixed(1)}`)).toEqual([]);
+  });
+
   it('nothing clips: every render peaks below full scale', () => {
     for (const r of results) if (!r.name.startsWith('mix:')) expect(r.peak, r.name).toBeLessThanOrEqual(0.99);
   });

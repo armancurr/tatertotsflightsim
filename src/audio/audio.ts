@@ -28,6 +28,8 @@ import { playCrackle, playCrash, playExplosion, playImpact, playTouchdown, type 
 import { createBuilder, noiseBuffer, type EngineVoice, type Knob, type VoiceOutputs } from './builder';
 import { createPistonVoice } from './piston';
 import { createJetVoice } from './jet';
+import { createTurbofanVoice } from './turbofan';
+import { createCombatAudio, type CombatAudio, type CombatAudioApi } from './combat';
 
 const A = CONFIG.audio;
 
@@ -61,6 +63,8 @@ interface Graph {
   ctx: BaseAudioContext;
   kit: OneShotKit;
   master: Knob;
+  /** The master gain node (the combat sound joins the mix here). */
+  masterNode: GainNode;
   view1: Knob;
   view2: Knob;
   viewShelf: Knob;
@@ -190,6 +194,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
     ctx,
     kit,
     master: knob(master.gain),
+    masterNode: master,
     view1: knob(view1.frequency, 1e-3),
     view2: knob(view2.frequency, 1e-3),
     viewShelf: knob(viewShelf.gain, 1e-3),
@@ -215,7 +220,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
 }
 
 const fin = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
-const isEngine = (k: unknown): k is EngineSound => k === 'piston' || k === 'jet';
+const isEngine = (k: unknown): k is EngineSound => k === 'piston' || k === 'jet' || k === 'turbofan';
 
 export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   const seed = opts.seed ?? 4711;
@@ -246,10 +251,33 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     viewCutoff: A.exteriorCutoffHz, distance: 1, cabin: A.exteriorCabinGain, oneShots: 0, lastTouchdown: 0, errors: 0,
     jet: 0, corePct: 0, whineHz: 0, fanHz: 0, whine: 0, fan: 0, roar: 0, afterburner: 0, crackle: 0, intake: 0, ecs: 0,
     hydraulic: 0, aft: 0, engineVoices: 0, crashes: 0, explosions: 0, impacts: 0, pendingExplosions: 0, crashLive: 0,
+    turbofan: 0, gun: 0, gunHz: 0, gunDelayS: 0, motor: 0, combatLive: 0, impactsPlayed: 0, booms: 0, launches: 0,
   };
 
   const makeVoice = (g: Graph, kind: EngineSound): EngineVoice =>
-    kind === 'jet' ? createJetVoice(g.ctx, g.voiceOut, g.kit.rnd) : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
+    kind === 'jet'
+      ? createJetVoice(g.ctx, g.voiceOut, g.kit.rnd)
+      : kind === 'turbofan'
+        ? createTurbofanVoice(g.ctx, g.voiceOut, g.kit.rnd)
+        : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
+  let combat: CombatAudio | null = null;
+  /** Always present; a no-op until the context exists (every call is guarded). */
+  const combatApi: CombatAudioApi = {
+    update: (f) => guard(() => combat?.update(f)),
+    impact: (e) => guard(() => combat?.impact(e)),
+    detonation: (e) => guard(() => combat?.detonation(e)),
+    launch: (e) => guard(() => combat?.launch(e)),
+    cookoff: (e) => guard(() => combat?.cookoff(e)),
+    reset: () => guard(() => combat?.reset()),
+  };
+  function guard(fn: () => void): void {
+    if (disposed) return;
+    try {
+      fn();
+    } catch {
+      L.errors++;
+    }
+  }
 
   const makeLayer = (g: Graph): CrashLayer => {
     const bus = g.ctx.createGain();
@@ -309,6 +337,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     voiceFresh = true;
     L.engineVoices = 1;
     layer = makeLayer(graph);
+    combat = createCombatAudio(c, graph.masterNode, graph.kit);
     primed = false;
     if (last) apply({ ...last, touchdownFpm: null }, 0);
   };
@@ -530,9 +559,13 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
         L.errors++;
       }
     },
+    get combat() {
+      return combatApi;
+    },
     reset() {
       const c = ctx as BaseAudioContext | null;
       try {
+        combat?.reset();
         if (c) silenceCrash(c.currentTime);
         else {
           pending = [];
@@ -574,6 +607,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     },
     levels() {
       L.crashLive = countLive();
+      if (combat) combat.levels(L);
       return { ...L };
     },
     dispose() {
@@ -585,6 +619,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
       graph = null;
       voice = null;
       try {
+        combat?.dispose();
+        combat = null;
         if (v && c) v.retire(c.currentTime, () => undefined);
         if (g) for (const n of g.nodes) n.disconnect();
         analyser?.disconnect();

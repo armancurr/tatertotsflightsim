@@ -1309,7 +1309,7 @@ export const CONFIG = {
       cockpitGain: 0.5,
       /** Channel levels before engineVolume × volume. */
       whistle: 0.2,
-      whistle2: 0.06,
+      whistle2: 0.04,
       core: 0.035,
       roar: 0.3,
       rumble: 0.28,
