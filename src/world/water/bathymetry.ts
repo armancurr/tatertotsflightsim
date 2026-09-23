@@ -1,11 +1,15 @@
 /**
  * Bathymetry around the camera for the water shader: water depth below the
- * surface (sea or lake level) and the signed distance to the shoreline, baked
- * from the shared terrain height function into small grids (a two-level
- * clipmap: near ≈ 16 m texels, far ≈ 144 m) and uploaded as half-float RG
- * textures. The shader uses depth for turquoise shallows / dark deep water and
- * transparency at the waterline, and the shore distance for surf lines and the
- * foam rings around islands. PURE (the baking runs in a worker in the app).
+ * surface (sea or lake level), the signed distance to the shoreline, and what
+ * the reflections see of the land — the top of the terrain + tree canopy +
+ * roofs and a 0..1 land tone (shading.ts) — baked from the shared terrain and
+ * landcover functions into small grids (a two-level clipmap: near ≈ 16 m
+ * texels, far ≈ 144 m) and uploaded as half-float RGBA textures. The shader
+ * uses depth for turquoise shallows / dark deep water and transparency at the
+ * waterline, the shore distance for surf lines and the foam rings around
+ * islands, and the land channels to march reflected rays (hills, mountains
+ * and tree lines mirrored in lakes and rivers). PURE (the baking runs in a
+ * worker in the app).
  *
  * Texel convention = the GPU's: texel (i, j) is centred at
  * (cx − extent/2 + (i + ½)·cell, cz − extent/2 + (j + ½)·cell); sampling is
@@ -13,7 +17,10 @@
  */
 import type { Heightfield } from '../heightfield';
 import { newTerrainSample } from '../heightfield';
+import type { Landcover } from '../landcover';
+import { newLandcover } from '../landcover';
 import { toHalf } from './detail';
+import { landSurface, landTone, treeCover } from './shading';
 
 /** Shore distances are clamped to ± this (m). */
 export const SHORE_DIST_MAX = 2000;
@@ -32,11 +39,98 @@ export interface BathyLevel {
   depth: Float32Array;
   /** Signed distance to the shoreline (m, + in the water). */
   shore: Float32Array;
+  /** Top of the land (terrain + canopy + roofs, m MSL) and its tone 0..1 (shading.ts), for reflections. */
+  surface: Float32Array;
+  tone: Float32Array;
   valid: boolean;
 }
 
 export function newBathyLevel(res: number): BathyLevel {
-  return { res, cx: 0, cz: 0, extent: 1, cell: 1 / res, depth: new Float32Array(res * res), shore: new Float32Array(res * res), valid: false };
+  const n = res * res;
+  return { res, cx: 0, cz: 0, extent: 1, cell: 1 / res, depth: new Float32Array(n), shore: new Float32Array(n), surface: new Float32Array(n).fill(-1e4), tone: new Float32Array(n), valid: false };
+}
+
+export interface WaterTexel {
+  /** Water depth (m, + under water). */
+  depth: number;
+  /** Terrain height (m MSL). */
+  ground: number;
+  /** Top of the land: ground + canopy + roofs (m MSL); the ground itself under water. */
+  surface: number;
+  /** Land tone 0..1 (forest … snow). */
+  tone: number;
+}
+
+export const newWaterTexel = (): WaterTexel => ({ depth: 0, ground: 0, surface: 0, tone: 0 });
+
+/**
+ * Everything a clipmap texel holds at x, z, from ONE terrain sample: the water
+ * depth (as makeWaterDepthFn), the ground, and the land surface/tone from the
+ * landcover weights (slope from the caller's normal: ny, nz) and tree density.
+ */
+export function makeWaterTexelFn(hf: Heightfield, lc: Landcover): (x: number, z: number, gx: number, gz: number, out: WaterTexel) => WaterTexel {
+  const s = newTerrainSample();
+  const w = newLandcover();
+  const lakes = hf.layout.lakes;
+  const sea = hf.layout.seaLevel;
+  return (x, z, gx, gz, out) => {
+    hf.sample(x, z, s);
+    out.ground = s.h;
+    out.depth = s.lakeIndex >= 0 && s.lakeSd < 400 ? lakes[s.lakeIndex].level - s.h : sea - s.h;
+    // gradient (gx, gz) → unit normal's y and z components
+    const inv = 1 / Math.sqrt(1 + gx * gx + gz * gz);
+    lc.fromSample(s, inv, x, z, w, -gz * inv, false);
+    if (w.water > 0 || out.depth > 0) {
+      out.surface = s.h;
+      out.tone = 0.25;
+      return out;
+    }
+    const cover = treeCover(lc.treeDensityFrom(s, w, x, z));
+    out.surface = landSurface(s.h, cover, w.urban);
+    out.tone = landTone(w, cover);
+    return out;
+  };
+}
+
+/**
+ * Bake a level with the full texel function: depth, land surface and tone. The slope for the
+ * landcover comes from the ground heights already baked (backward differences, one texel behind).
+ */
+export function bakeWaterLevel(
+  texel: (x: number, z: number, gx: number, gz: number, out: WaterTexel) => WaterTexel,
+  cx: number,
+  cz: number,
+  extent: number,
+  res: number,
+  out: BathyLevel = newBathyLevel(res),
+): BathyLevel {
+  const cell = extent / res;
+  const x0 = cx - extent / 2 + cell / 2;
+  const z0 = cz - extent / 2 + cell / 2;
+  const ground = new Float32Array(res * 2); // two rows of ground heights
+  const t = newWaterTexel();
+  for (let j = 0; j < res; j++) {
+    const z = z0 + j * cell;
+    const row = (j & 1) * res;
+    const prev = ((j + 1) & 1) * res;
+    for (let i = 0; i < res; i++) {
+      const gx = i >= 2 ? (ground[row + i - 1] - ground[row + i - 2]) / cell : 0;
+      const gz = j >= 1 ? (ground[row + Math.max(0, i - 1)] - ground[prev + Math.max(0, i - 1)]) / cell : 0;
+      texel(x0 + i * cell, z, i >= 2 ? gx : 0, j >= 1 && i >= 1 ? gz : 0, t);
+      const k = j * res + i;
+      out.depth[k] = t.depth;
+      out.surface[k] = t.surface;
+      out.tone[k] = t.tone;
+      ground[row + i] = t.ground;
+    }
+  }
+  out.res = res;
+  out.cx = cx;
+  out.cz = cz;
+  out.extent = extent;
+  out.cell = cell;
+  out.valid = true;
+  return out;
 }
 
 /**
@@ -152,13 +246,17 @@ export function shoreDistanceTransform(lv: BathyLevel): void {
   }
 }
 
-/** Interleave (depth, shore) as half floats for an RG HalfFloat texture. */
+/** Interleave (depth, shore, land surface, tone) as half floats for an RGBA HalfFloat texture. */
 export function packBathymetryHalf(lv: BathyLevel, out: Uint16Array): Uint16Array {
   const n = lv.res * lv.res;
   for (let k = 0; k < n; k++) {
     const d = lv.depth[k];
-    out[k * 2] = toHalf(d < DEPTH_MIN ? DEPTH_MIN : d > DEPTH_MAX ? DEPTH_MAX : d);
-    out[k * 2 + 1] = toHalf(lv.shore[k]);
+    out[k * 4] = toHalf(d < DEPTH_MIN ? DEPTH_MIN : d > DEPTH_MAX ? DEPTH_MAX : d);
+    out[k * 4 + 1] = toHalf(lv.shore[k]);
+    const h = lv.surface[k];
+    out[k * 4 + 2] = toHalf(Number.isFinite(h) ? h : -1e4);
+    const t = lv.tone[k];
+    out[k * 4 + 3] = toHalf(t > 0 ? (t < 1 ? t : 1) : 0);
   }
   return out;
 }

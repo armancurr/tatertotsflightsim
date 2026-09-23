@@ -15,6 +15,7 @@ import {
   WATER_ROUGHNESS_FRAGMENT,
   WATER_NORMAL_FRAGMENT,
   WATER_OPAQUE_FRAGMENT,
+  WATER_REFLECT_PARS,
 } from './shaders';
 
 export type WaterKind = 'sea' | 'lake' | 'river';
@@ -50,6 +51,8 @@ export interface WaterMaterialUniforms {
   // sea
   uSurf: U<THREE.Vector2>;
   uDispRange: U<number>;
+  /** River mouth x, z, plume radius (m), strength. */
+  uMouth: U<THREE.Vector4>;
   // lake
   uTarnDeep: U<THREE.Vector3>;
   uTarnAbsorb: U<THREE.Vector3>;
@@ -60,6 +63,8 @@ export interface WaterMaterialUniforms {
   uMinPx: U<number>;
   uLiftPerM: U<number>;
   uPull: U<number>;
+  /** v_ref · t (m): advection of the river's flow coordinate. */
+  uRiverFlow: U<number>;
 }
 
 export interface WaterMaterial {
@@ -74,6 +79,9 @@ function replaceOnce(src: string, find: string, repl: string): string {
 }
 
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
+/** River detail tile sizes (m): the ripple layers, advected with the flow. */
+export const RIVER_TILES: [number, number] = [4.7, 1.8];
 
 export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms, waveCount: number): WaterMaterial {
   const uniforms: WaterMaterialUniforms = {
@@ -91,6 +99,7 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
     uCaustic: { value: new THREE.Vector2(0.6, 0) },
     uSurf: { value: new THREE.Vector2(60, 7.5) },
     uDispRange: { value: 1500 },
+    uMouth: { value: new THREE.Vector4(0, 0, 1, 0) },
     uTarnDeep: { value: v3(0.0018, 0.005, 0.008) },
     uTarnAbsorb: { value: v3(0.75, 0.28, 0.24) },
     uPiers: { value: new Float32Array(16) },
@@ -99,6 +108,7 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
     uMinPx: { value: 1.4 },
     uLiftPerM: { value: 0.0012 },
     uPull: { value: 0.006 },
+    uRiverFlow: { value: 0 },
   };
   if (kind === 'lake') {
     uniforms.uAbsorb.value.set(0.55, 0.16, 0.2);
@@ -107,15 +117,15 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
     uniforms.uWhitecap.value.set(9, 10, 0, 1);
     uniforms.uDetailL1.value.set(1, 0, 1 / 4.1, 0.05);
     uniforms.uDetailL2.value.set(1, 0, 1 / 1.3, 0.045);
-    uniforms.uBaseVar.value = 0.0025;
+    uniforms.uBaseVar.value = 0.0008;
     uniforms.uCaustic.value.set(0.25, 0);
   } else if (kind === 'river') {
     uniforms.uAbsorb.value.set(0.9, 0.36, 0.55);
     uniforms.uDeep.value.set(0.009, 0.017, 0.012);
     uniforms.uBed.value.set(0.2, 0.17, 0.12);
     uniforms.uWhitecap.value.set(9, 10, 0, 0);
-    uniforms.uDetailL1.value.set(1, 0, 1 / 3.4, 0.06);
-    uniforms.uDetailL2.value.set(0.94, 0.34, 1 / 1.25, 0.05);
+    uniforms.uDetailL1.value.set(1, 0, 1 / RIVER_TILES[0], 0.055);
+    uniforms.uDetailL2.value.set(0.94, 0.34, 1 / RIVER_TILES[1], 0.045);
     uniforms.uBaseVar.value = 0.003;
     uniforms.uCaustic.value.set(0, 0);
   }
@@ -129,6 +139,8 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
   });
   material.name = `water-${kind}`;
   material.defines = { [`WATER_${kind.toUpperCase()}`]: '', WAVE_N: String(Math.max(1, Math.min(16, waveCount))) };
+  // lakes and rivers mirror the land around them (the sea keeps its sky reflection)
+  if (kind !== 'sea') material.defines.WATER_REFLECT = '';
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, shared, uniforms);
     let v = shader.vertexShader;
@@ -139,12 +151,13 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
     shader.vertexShader = v;
     let f = shader.fragmentShader;
     f = replaceOnce(f, '#include <common>', `#include <common>\n${WATER_FRAGMENT_PARS}`);
+    f = replaceOnce(f, '#include <clipping_planes_pars_fragment>', `#include <clipping_planes_pars_fragment>\n${WATER_REFLECT_PARS}`);
     f = replaceOnce(f, '#include <map_fragment>', WATER_SURFACE_FRAGMENT);
     f = replaceOnce(f, '#include <roughnessmap_fragment>', WATER_ROUGHNESS_FRAGMENT);
     f = replaceOnce(f, '#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${WATER_NORMAL_FRAGMENT}`);
     f = replaceOnce(f, '#include <opaque_fragment>', WATER_OPAQUE_FRAGMENT);
     shader.fragmentShader = f;
   };
-  material.customProgramCacheKey = () => `water2-${kind}`;
+  material.customProgramCacheKey = () => `water3-${kind}`;
   return { kind, material, uniforms };
 }

@@ -21,10 +21,12 @@ import { CONFIG, type Config } from '../../config';
 import { getLayout, type WorldLayout } from '../layout';
 import { getHeightfield } from '../heightfield';
 import { createWaveSpectrum, getSeaSpectrum, packWaveUniforms, waterSurfaceAt, type WaveSpectrum, type WaterSurfaceSample } from './waves';
-import { bakeBathymetry, makeWaterDepthFn, newBathyLevel, packBathymetryHalf, shoreDistanceTransform } from './bathymetry';
+import { bakeWaterLevel, makeWaterTexelFn, newBathyLevel, packBathymetryHalf, shoreDistanceTransform, type WaterTexel } from './bathymetry';
+import { getLandcover } from '../landcover';
 import { bakeDetailTile, toHalf } from './detail';
 import { buildRiverRibbon, riverPiers, RIVER_STRIDE } from './river';
-import { createWaterMaterial, type SharedWaterUniforms, type WaterKind, type WaterMaterial, type WaterMaterialUniforms } from './material';
+import { buildReeds, placeReeds } from './reeds';
+import { createWaterMaterial, RIVER_TILES, type SharedWaterUniforms, type WaterKind, type WaterMaterial, type WaterMaterialUniforms } from './material';
 
 export { waterSurfaceAt, newWaterSurfaceSample, createWaveSpectrum, getSeaSpectrum, type WaterSurfaceSample, type WaveSpectrum } from './waves';
 export { riverPiers } from './river';
@@ -110,7 +112,7 @@ function radialGrid(R: number, rings: number, segs: number, r0 = 1): THREE.Buffe
 }
 
 function makeBathyTexture(res: number): THREE.DataTexture {
-  const t = new THREE.DataTexture(new Uint16Array(res * res * 2), res, res, THREE.RGFormat, THREE.HalfFloatType);
+  const t = new THREE.DataTexture(new Uint16Array(res * res * 4), res, res, THREE.RGBAFormat, THREE.HalfFloatType);
   t.minFilter = THREE.LinearFilter;
   t.magFilter = THREE.LinearFilter;
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
@@ -198,10 +200,11 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
   const seaLayers = detailLayers(seaSpec.windDirX, seaSpec.windDirZ, [9.3, 2.9], [12, -23], [Math.sqrt((rest * 0.4) / 2), Math.sqrt((rest * 0.33) / 2)]);
   mats.sea.uniforms.uBaseVar.value = rest * 0.27;
   const lakeLayers = detailLayers(lakeSpec.windDirX, lakeSpec.windDirZ, [4.1, 1.3], [18, -15], [0.05, 0.045]);
-  const riverTiles = [3.4, 1.25];
+  const riverTiles = RIVER_TILES;
+  // the ripple layers are rotated off the flow axis (shaders.ts; no grid in the glitter)
   const riverRot = [
-    [1, 0],
-    [0.94, 0.34],
+    [0.956, 0.292],
+    [0.819, -0.574],
   ];
   const setLayerUniforms = (m: WaterMaterial, ls: DetailLayer[]) => {
     m.uniforms.uDetailL1.value.set(ls[0].c, ls[0].s, ls[0].inv, ls[0].amp);
@@ -210,6 +213,13 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
   setLayerUniforms(mats.sea, seaLayers);
   setLayerUniforms(mats.lake, lakeLayers);
   const rv = mats.river.uniforms;
+  // the river's sediment plume off its mouth
+  if (L.rivers.length) {
+    const pts = L.rivers[0].points;
+    const k = Math.max(0, pts.findIndex((q) => q.z > L.coast.zAt(q.x)));
+    const m = pts[Math.min(pts.length - 1, k + 4)]; // ~160 m out into the bay
+    mats.sea.uniforms.uMouth.value.set(m.x, m.z, 480, 0.85);
+  }
   rv.uMargin.value = 3;
   rv.uMinPx.value = wc.riverMinPixels;
   rv.uLiftPerM.value = wc.riverLiftPerKm / 1000;
@@ -283,6 +293,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
     const ib = new THREE.InterleavedBuffer(rib.attrs, RIVER_STRIDE);
     g.setAttribute('aRiver', new THREE.InterleavedBufferAttribute(ib, 4, 0));
     g.setAttribute('aRiver2', new THREE.InterleavedBufferAttribute(ib, 4, 4));
+    g.setAttribute('aRiver3', new THREE.InterleavedBufferAttribute(ib, 4, 8));
     g.setIndex(new THREE.BufferAttribute(rib.index, 1));
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, mats.river.material);
@@ -314,6 +325,11 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       }
     }
   }
+
+  // ── reeds at the water's edge (instanced, chunked, distance-culled) ───────
+  const reeds = buildReeds(placeReeds(L, { spacing: wc.reedSpacing, rapidsSlope: wc.rapidsSlope, coastZAt: L.coast.zAt }), wc.reedFar);
+  const surfaces = group.children.slice(); // the water surfaces (the GPU timer brackets these)
+  for (const m of reeds.meshes) group.add(m);
 
   // ── baking: worker (browser) or main-thread fallback (node) ──────────────
   const levelsCfg = [wc.bathymetryNear, wc.bathymetryFar];
@@ -371,7 +387,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       worker = null;
     }
   }
-  let depthAt: ((x: number, z: number) => number) | null = null;
+  let texelAt: ((x: number, z: number, gx: number, gz: number, out: WaterTexel) => WaterTexel) | null = null;
   if (!worker) {
     const tile = bakeDetailTile(tileSize, wc.waveSeed);
     applyDetail(
@@ -398,11 +414,11 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       return;
     }
     const t0 = performance.now();
-    if (!depthAt) depthAt = makeWaterDepthFn(getHeightfield());
-    const lv = bakeBathymetry(depthAt, cx, cz, extent, bathyRes);
+    if (!texelAt) texelAt = makeWaterTexelFn(getHeightfield(), getLandcover());
+    const lv = bakeWaterLevel(texelAt, cx, cz, extent, bathyRes);
     shoreDistanceTransform(lv);
     lastBakeMs = performance.now() - t0;
-    applyBathy(level, cx, cz, extent, bathyRes, packBathymetryHalf(lv, new Uint16Array(bathyRes * bathyRes * 2)));
+    applyBathy(level, cx, cz, extent, bathyRes, packBathymetryHalf(lv, new Uint16Array(bathyRes * bathyRes * 4)));
   };
   const pollBathy = (x: number, z: number) => {
     for (let level = 0; level < 2; level++) {
@@ -415,10 +431,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
 
   // ── optional GPU timing of the water draws (debug) ───────────────────────
   let gpuMs = -1;
-  const drawOrder: THREE.Mesh[] = [];
-  group.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) drawOrder.push(o as THREE.Mesh);
-  });
+  const drawOrder: THREE.Mesh[] = surfaces.filter((o) => (o as THREE.Mesh).isMesh) as THREE.Mesh[];
   drawOrder.sort((a, b) => a.renderOrder - b.renderOrder);
   const noop = () => {};
   const setGpuTimer = (renderer: THREE.WebGLRenderer | null): boolean => {
@@ -505,20 +518,22 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       packOffsets(lakeLayers, mats.lake.uniforms.uDetailOff.value, ox, oz, t);
       // river: advect along the flow coordinate at the reference speed
       const vt = wc.riverSpeed * t;
+      rv.uRiverFlow.value = wc.riverSpeed * shared.uTime.value;
       rv.uDetailOff.value.set(
-        wrap(-vt / riverTiles[0], 1),
-        0,
+        wrap((-riverRot[0][0] * vt) / riverTiles[0], 1),
+        wrap((riverRot[0][1] * vt) / riverTiles[0], 1),
         wrap((-riverRot[1][0] * vt) / riverTiles[1], 1),
         wrap((riverRot[1][1] * vt) / riverTiles[1], 1),
       );
       // lakes: mirror calm on still mornings, a breeze later in the day
       const tod = env?.timeOfDay ?? 0;
-      const target = tod === 0 || tod === 3 ? wc.lakeMorningCalm : 0.1;
+      const target = tod === 0 || tod === 3 ? wc.lakeMorningCalm : wc.lakeDayCalm;
       calm += (target - calm) * (dt > 0 ? Math.min(1, dt * 0.7) : 1);
       mats.lake.uniforms.uWaveGain.value = Math.min(1, Math.max(0, 1 - calm));
       // hairline rivers: radians per pixel
       const h = env?.viewportHeight ?? 900;
       rv.uPxAngle.value = (2 * Math.tan(((camera.fov * Math.PI) / 180) / 2)) / Math.max(1, h);
+      reeds.update(camPos, t);
       pollBathy(camPos.x, camPos.z);
     },
     ready(camera) {
@@ -531,7 +546,9 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
     },
     stats() {
       const s = (i: number) => ({ cx: levelState[i].cx, cz: levelState[i].cz, extent: levelState[i].extent, valid: levelState[i].valid });
-      return { drawCalls: group.children.length, bathyBakes, lastBakeMs: Math.round(lastBakeMs * 10) / 10, detailReady, worker: !!worker, gpuMs: Math.round(gpuMs * 1000) / 1000, near: s(0), far: s(1) };
+      let drawCalls = 0;
+      for (const o of group.children) if (o.visible) drawCalls++;
+      return { drawCalls, reedChunks: reeds.meshes.length, reedsVisible: drawCalls - surfaces.length, bathyBakes, lastBakeMs: Math.round(lastBakeMs * 10) / 10, detailReady, worker: !!worker, gpuMs: Math.round(gpuMs * 1000) / 1000, near: s(0), far: s(1) };
     },
     uniforms: (kind) => mats[kind].uniforms,
     surfaceAt: (x, z, time, out) => waterSurfaceAt(x, z, time, seaSpec, out),
@@ -539,9 +556,8 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
     dispose() {
       worker?.terminate();
       worker = null;
-      group.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.geometry.dispose();
-      });
+      for (const o of surfaces) if (o instanceof THREE.Mesh) o.geometry.dispose();
+      reeds.dispose();
       for (const k of Object.keys(mats) as WaterKind[]) mats[k].material.dispose();
       placeholder.dispose();
       if (shared.uDetail.value !== placeholder) shared.uDetail.value.dispose();
