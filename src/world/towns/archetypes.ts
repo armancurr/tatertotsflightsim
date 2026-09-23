@@ -47,10 +47,15 @@ export const FACE = {
   siloRoof: 19,
   cupola: 20,
   cupolaRoof: 21,
+  /** Shop awning: canvas top + valance, and its underside. */
+  awning: 22,
+  awningUnder: 23,
+  /** Tree trunk (trees are silo-mesh instances with FLAG.tree; the crown uses the silo faces). */
+  trunk: 24,
 } as const;
 
 /** Optional parts (per vertex); each is enabled by an instance flag. */
-export const PART = { main: 0, chimney: 1, dormer: 2, cupola: 3 } as const;
+export const PART = { main: 0, chimney: 1, dormer: 2, cupola: 3, awning: 4, trunk: 5 } as const;
 
 /** Instance flag bits (instance record slot `flags`). */
 export const FLAG = {
@@ -79,10 +84,34 @@ export const FLAG = {
   blank: 1 << 17,
   /** Upper tier / rooftop piece of a larger building (no doors, no plinth). */
   upper: 1 << 18,
-  harbour: 1 << 19,
+  /** Standing-seam metal roof on a house/shop (otherwise the roof material follows its colour). */
+  metalRoof: 1 << 19,
+  /** A tree: the silo mesh becomes a lumpy crown on a trunk (see evalVertex). */
+  tree: 1 << 20,
+  /** Shops: a canvas awning over the shopfront (front = local +z). */
+  awning: 1 << 21,
+  /** Solar panels on the sunnier slope of a pitched roof, or in rows on a flat roof. */
+  solar: 1 << 22,
+  /** Stone / rendered finish (old-town buildings, civic buildings). */
+  stone: 1 << 23,
 } as const;
 
-export const PART_FLAG: Record<number, number> = { [PART.chimney]: FLAG.chimney, [PART.dormer]: FLAG.dormers, [PART.cupola]: FLAG.cupola };
+export const PART_FLAG: Record<number, number> = {
+  [PART.chimney]: FLAG.chimney,
+  [PART.dormer]: FLAG.dormers,
+  [PART.cupola]: FLAG.cupola,
+  [PART.awning]: FLAG.awning,
+  [PART.trunk]: FLAG.tree,
+};
+
+/** Tree crowns (silo mesh + FLAG.tree): the crown's widest ring sits this fraction of Hr above its base. */
+export const TREE_EQ = 0.42;
+/** Radius of the underside of the crown (fraction of the widest radius). */
+export const TREE_UNDER = 0.35;
+/** Lumps pull the crown in by up to this fraction of the radius. */
+export const TREE_LUMP = 0.22;
+/** Awning: attach height below (plinth + 1.4 × floor height), projection, drop, valance, side inset (m). */
+export const AWNING = { attach: -1.0, out: 1.5, drop: 0.6, valance: 0.3, inset: 0.3 } as const;
 
 /** Normal modes. */
 export const NMODE = { fixed: 0, slope: 1, hipEnd: 2, gambrelLower: 3, gambrelUpper: 4, dome: 5 } as const;
@@ -205,6 +234,20 @@ function chimney(g: GeoBuilder): void {
   boxPart(g, CHIMNEY_PX, CHIMNEY_PZ, CHIMNEY_H, CHIMNEY_H, { r: 0.25, oy: 0 }, { r: 1, oy: ROOF_T + 0.6 }, FACE.chimney, FACE.chimneyTop, PART.chimney);
 }
 
+/**
+ * Shop awning on the front (+z) wall: a sloping canvas from the wall out over
+ * the pavement, its underside and the valance. Heights are metres below the
+ * awning line (plinth + 1.4 × floor height, added in evalVertex / the shader).
+ */
+function awning(g: GeoBuilder): void {
+  const { attach, out, drop, valance, inset } = AWNING;
+  const P = (sx: number, oz: number, oy: number) => v(0.5 * sx, 0, 0.5, { o: [-sx * inset, attach + oy, oz] });
+  const n = norm3(0, out, drop);
+  g.face([P(-1, out, -drop), P(1, out, -drop), P(1, 0, 0), P(-1, 0, 0)], n, NMODE.fixed, FACE.awning, PART.awning);
+  g.face([P(-1, 0, 0), P(1, 0, 0), P(1, out, -drop), P(-1, out, -drop)], [0, -n[1], -n[2]], NMODE.fixed, FACE.awningUnder, PART.awning);
+  g.face([P(-1, out, -drop - valance), P(1, out, -drop - valance), P(1, out, -drop), P(-1, out, -drop)], [0, 0, 1], NMODE.fixed, FACE.awning, PART.awning);
+}
+
 /** Two dormers on the front (+z) slope of a gable roof (pitch 2·Hr/D). */
 function dormers(g: GeoBuilder): void {
   const dw = 0.9;
@@ -276,6 +319,7 @@ function buildGable(): ArchetypeGeometry {
   pitchedSlab(g, [{ pz: 0, r: 1, mode: NMODE.slope }, { pz: 0.5, r: 0, mode: NMODE.slope }], EAVE, VERGE, -2 * EAVE);
   chimney(g);
   dormers(g);
+  awning(g);
   return g.build();
 }
 
@@ -358,6 +402,7 @@ function buildFlat(): ArchetypeGeometry {
   g.face([v(-0.5, 1, 0.5, { ...t, o: [0, 0, -P] }), v(-0.5, 1, 0.5, { ...t, o: [P, 0, -P] }), v(-0.5, 1, -0.5, { ...t, o: [P, 0, P] }), v(-0.5, 1, -0.5, { ...t, o: [0, 0, P] })], up, NMODE.fixed, FACE.parapetTop);
   // roof deck
   g.face([v(-0.5, 1, 0.5, { o: [P, 0, -P] }), v(0.5, 1, 0.5, { o: [-P, 0, -P] }), v(0.5, 1, -0.5, { o: [-P, 0, P] }), v(-0.5, 1, -0.5, { o: [P, 0, P] })], up, NMODE.fixed, FACE.roofFlat);
+  awning(g);
   return g.build();
 }
 
@@ -405,6 +450,13 @@ function buildSilo(): ArchetypeGeometry {
       }
     }
   }
+  // tree trunk (FLAG.tree): from the ground up into the crown
+  const t = 0.16;
+  const T = (sx: number, sz: number, top: boolean) => v(0, top ? 1 : 0, 0, { r: top ? 0.3 : 0, o: [sx * t, 0, sz * t] });
+  g.face([T(-1, 1, false), T(1, 1, false), T(1, 1, true), T(-1, 1, true)], [0, 0, 1], NMODE.fixed, FACE.trunk, PART.trunk);
+  g.face([T(1, -1, false), T(-1, -1, false), T(-1, -1, true), T(1, -1, true)], [0, 0, -1], NMODE.fixed, FACE.trunk, PART.trunk);
+  g.face([T(1, 1, false), T(1, -1, false), T(1, -1, true), T(1, 1, true)], [1, 0, 0], NMODE.fixed, FACE.trunk, PART.trunk);
+  g.face([T(-1, -1, false), T(-1, 1, false), T(-1, 1, true), T(-1, -1, true)], [-1, 0, 0], NMODE.fixed, FACE.trunk, PART.trunk);
   return g.build();
 }
 
@@ -457,6 +509,14 @@ export const I = {
   aux2: 19,
 } as const;
 
+/** Crown lumps (1 − up to TREE_LUMP), a function of the unit-mesh vertex and the tree's rand. Twin of the GLSL. */
+export function treeLump(px: number, py: number, pz: number, pr: number, rand: number): number {
+  const f = rand * 7;
+  const ph = 6.2831853 * (f - Math.floor(f));
+  const a = Math.atan2(pz, px);
+  return 1 - TREE_LUMP * (0.5 + 0.3 * Math.sin(3 * a + ph + 2 * py + 3 * pr) + 0.2 * Math.sin(7 * a - 2 * ph + 5 * pr));
+}
+
 export interface EvalOut {
   x: number;
   y: number;
@@ -493,11 +553,21 @@ export function evalVertex(g: ArchetypeGeometry, vi: number, inst: Float32Array,
   let n0z = g.normal[vi * 4 + 2];
   const side = part === PART.chimney && flags & FLAG.side ? -1 : 1;
   const cone = (flags & FLAG.cone) !== 0;
+  const tree = (flags & FLAG.tree) !== 0 && part === PART.main;
   const rr = 2 * Math.hypot(px, pz);
   if (mode === NMODE.dome && cone) pr = 1 - rr;
   let lx = px * W * (hk > 0.5 ? ridge : 1) * side + g.offset[vi * 3];
   let ly = py * Hw + pr * Hr + (ps * Hr) / D + g.offset[vi * 3 + 1];
   let lz = pz * D + g.offset[vi * 3 + 2];
+  if (part === PART.awning) ly += inst[io + I.plinth] + 1.4 * inst[io + I.floorH];
+  if (tree) {
+    // the silo mesh as a crown: the wall is the underside (a flared cone), the dome the top
+    const lump = treeLump(px, py, pz, pr, inst[io + I.rand]);
+    const k = mode === NMODE.dome ? lump : (TREE_UNDER + (1 - TREE_UNDER) * py) * lump;
+    lx = px * W * k;
+    lz = pz * D * k;
+    ly = mode === NMODE.dome ? Hw + TREE_EQ * Hr + pr * (1 - TREE_EQ) * Hr : Hw + py * TREE_EQ * Hr;
+  }
   if (!on) lx = ly = lz = 0;
   // normal
   let nx = n0x;
@@ -531,6 +601,13 @@ export function evalVertex(g: ArchetypeGeometry, vi: number, inst: Float32Array,
       ny = n0y / Math.max(Hr, 1e-3);
       nz = n0z / R;
     }
+  }
+  if (tree) {
+    // rounded foliage normals about the crown's centre
+    const R = 0.5 * W;
+    nx = lx / R;
+    ny = (ly - Hw - TREE_EQ * Hr) / ((1 - TREE_EQ) * Hr);
+    nz = lz / R;
   }
   const nl = Math.hypot(nx, ny, nz) || 1;
   nx /= nl;

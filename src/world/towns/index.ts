@@ -160,6 +160,7 @@ export function createTowns(scene: THREE.Scene, opts: TownsOptions): Towns {
     obstacle = createObstacleIndex(bs);
     uniforms = createBuildingUniforms(s.chunkCount);
     uniforms.uBldLod.value.set(cfg.minAngularSize, cfg.midDistance, cfg.farDistance, TALL_SIZE);
+    uniforms.uBldTree.value.set(cfg.treeLodStart, cfg.treeLodEnd);
     nearMat = createBuildingMaterial(uniforms, false);
     midMat = createBuildingMaterial(uniforms, true);
     nearMat.userData.uniforms = uniforms;
@@ -298,6 +299,7 @@ export function createTowns(scene: THREE.Scene, opts: TownsOptions): Towns {
       const cx = e[12];
       const cy = e[13];
       const cz = e[14];
+      uniforms.uBldCam.value.set(cx, cy, cz);
       const fx = focus ? focus.x : cx;
       const fz = focus ? focus.z : cz;
       const h = cfg.hysteresis;
@@ -360,7 +362,8 @@ export function createTowns(scene: THREE.Scene, opts: TownsOptions): Towns {
       // lit windows from the sun elevation
       if (sunDir) {
         const el = (Math.asin(Math.max(-1, Math.min(1, sunDir.y))) * 180) / Math.PI;
-        const t = Math.max(0, Math.min(1, (el - 2) / 12));
+        // lights come on as the sun nears the horizon: ~80 % of full at +4° (dawn), ~20 % at +9° (golden hour)
+        const t = Math.max(0, Math.min(1, (el - 1) / 11));
         night = 1 - t * t * (3 - 2 * t);
         uniforms.uBldNight.value = night;
       }
