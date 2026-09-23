@@ -296,7 +296,7 @@ Surf tForest( vec3 wp, float dense ) {
   }
   if ( far > 0.0 ) {
     // light birch/aspen stands, and clumps of crowns with shadowed gaps at 15–40 m (survive to a few km)
-    canopy = mix( canopy, light, smoothstep( 0.62, 0.8, tNg( p + 500.0, 120.0 ) ) * 0.7 * far );
+    canopy = mix( canopy, light, smoothstep( 0.66, 0.8, sp ) * 0.7 * far );
     canopy *= 1.0 - far * ( 0.16 - 0.3 * smoothstep( 0.25, 0.75, tCellT( p + 11.0, 22.0 ) ) );
   }
   vec3 col = canopy;
@@ -468,11 +468,11 @@ Surf tField( vec2 p ) {
   if ( gFwD < 5.0 ) col *= 0.95 + 0.1 * tNg( p, 14.0 );
   col *= 0.88 + 0.24 * smoothstep( 0.2, 0.8, tFbmT( p + 900.0, 170.0 ) );
   // machine passes: alternating tone (sheen of the direction the machine drove), visible from far
-  if ( pass > 0.0 ) {
+  if ( pass > 0.0 && gFw < passW * 1.6 ) {
     float pi = floor( rc / passW + F.key * 7.0 );
     float alt = mod( pi, 2.0 ) * 2.0 - 1.0;
     float band = 1.0 - smoothstep( passW * 0.5, passW * 1.6, gFw );
-    col *= 1.0 + pass * alt * band * ( 0.6 + 0.4 * tHash( vec2( pi, F.key * 131.0 ) ) );
+    col *= 1.0 + pass * alt * band * ( 0.6 + 0.4 * fract( pi * 0.618034 + F.key * 7.31 ) );
   }
   // headlands: the turning strip at the ends is trampled / re-drilled across (darker, greener)
   if ( head && headTone > 0.0 ) col = mix( col, col * vec3( 0.78, 0.9, 0.8 ), headTone * 4.0 * ( 1.0 - smoothstep( 8.0, 11.0, F.dEnds ) ) );
