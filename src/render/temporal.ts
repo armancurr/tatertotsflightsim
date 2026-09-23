@@ -55,3 +55,87 @@ export function frameJitter(frame: number): number {
   const v = (frame * g) % 1;
   return v < 0 ? v + 1 : v;
 }
+
+// ─── Checkerboard (quarter-pixel) updates ────────────────────────────────────
+// The cloud march renders one pixel of every 2×2 block of the cloud buffer per
+// frame, in Bayer order, into a half-size "march" buffer; the resolve pass
+// (volumetricClouds.ts, mirrored here) rebuilds the full buffer: a freshly
+// marched pixel blends its new sample into the reprojected history with weight
+// `freshAlpha`; the other three carry their reprojected history, clamped to the
+// range of the fresh march samples around them (so a moving occluder or a
+// changed cloud can't leave a ghost); pixels without usable history (off
+// screen, disoccluded, teleport) take the depth-aware upsampled fresh samples.
+
+export interface PixelOffset {
+  x: number;
+  y: number;
+}
+
+/** Bayer 2×2 visiting order of the marched pixel inside each block. */
+export const CHECKER_ORDER: readonly number[] = [0, 0, 1, 1, 1, 0, 0, 1];
+
+/** Pixel offset (0/1, 0/1) inside each 2×2 block marched on `frame`. */
+export function checkerOffset(frame: number, out: PixelOffset): PixelOffset {
+  const f = Number.isFinite(frame) ? Math.floor(frame) : 0;
+  const i = ((f % 4) + 4) % 4;
+  out.x = CHECKER_ORDER[i * 2];
+  out.y = CHECKER_ORDER[i * 2 + 1];
+  return out;
+}
+
+/** Size of the march buffer for a w × h cloud buffer. */
+export function marchBufferSize(w: number, h: number): { width: number; height: number } {
+  return { width: Math.max(1, Math.ceil(w / 2)), height: Math.max(1, Math.ceil(h / 2)) };
+}
+
+/** Was full-buffer pixel (x, y) marched this frame? */
+export function isFreshPixel(x: number, y: number, o: PixelOffset): boolean {
+  return (x & 1) === o.x && (y & 1) === o.y;
+}
+
+/** Continuous march-buffer coordinate (texel centres at integers) of full-buffer pixel (x, y). */
+export function marchCoord(x: number, y: number, o: PixelOffset, out: PixelOffset): PixelOffset {
+  out.x = (x - o.x) / 2;
+  out.y = (y - o.y) / 2;
+  return out;
+}
+
+/** How much clamping (in value units) makes the fresh estimate take over completely. */
+export const CLAMP_TAKEOVER = 0.25;
+
+/**
+ * Weight of the fresh estimate in the resolve (the rest is clamped history).
+ * `clampDistance` = how far the neighbourhood clamp had to move the history:
+ * history that disagrees with the fresh samples around it (a misprojected
+ * edge during a fast camera orbit) gives way to the smooth fresh estimate
+ * instead of leaving a 2×2 checker pattern.
+ */
+export function resolveNewWeight(fresh: boolean, historyOk: boolean, freshAlpha: number, clampDistance = 0): number {
+  if (!historyOk) return 1;
+  const base = fresh ? Math.min(1, Math.max(0, freshAlpha)) : 0;
+  const c = Number.isFinite(clampDistance) ? Math.min(1, Math.max(0, Math.abs(clampDistance) / CLAMP_TAKEOVER)) : 0;
+  return Math.max(base, c);
+}
+
+/**
+ * The history is clamped to [lo − pad, hi + pad] of the fresh 3×3 march
+ * neighbourhood, pad = HISTORY_BOX_PAD·(hi − lo): loose enough that smooth
+ * cloud gradients and the per-frame jitter noise don't flicker, tight enough
+ * that stale history (a changed cloud, a parallax error) is pulled back.
+ */
+export const HISTORY_BOX_PAD = 0.25;
+
+export function clampToRange(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+/**
+ * Similarity (0..1) of two scene clip distances: the weight a cloud sample
+ * marched against clip distance `a` gets for a pixel whose scene lies at `b`
+ * (depth-aware upsampling: the aircraft's pixels don't borrow the sky's clouds).
+ */
+export function clipSimilarity(a: number, b: number): number {
+  const rel = Math.abs(a - b) / Math.max(1e-4, Math.min(a, b));
+  const s = Math.exp(-rel * 25);
+  return Number.isFinite(s) ? s : 0;
+}

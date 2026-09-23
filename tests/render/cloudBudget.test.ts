@@ -42,10 +42,18 @@ describe('cloud budget controller', () => {
     b.update(2.0, 50, false); // a 2 s hitch (tab switch) is ignored
     expect(b.quality).toBe('volumetric');
   });
-  it('without a GPU timer, a low frame rate only degrades once dynamic resolution is at its minimum', () => {
+  it('without a (trusted) GPU timer, only a really low frame rate degrades, and only once dynamic resolution is at its minimum', () => {
     const b = createCloudBudget(opts);
-    expect(run(b, 5, null, 40, false)).toEqual([]);
-    expect(run(b, 3, null, 40, true)).toContain('volumetric-low');
+    run(b, 10, null, 60, false); // past the start-up warm-up
+    expect(run(b, 8, null, 30, false)).toEqual([]);
+    // 40 fps at minimum resolution: busy, but the clouds (~0.5 ms) are not the problem
+    expect(run(b, 10, null, 40, true)).toEqual([]);
+    expect(run(b, 6, null, 30, true)).toContain('volumetric-low');
+  });
+  it('without a timer, the start-up stutter (shader compiles, streaming) never degrades the clouds', () => {
+    const b = createCloudBudget(opts);
+    expect(run(b, 7, null, 20, true)).toEqual([]);
+    expect(b.quality).toBe('volumetric');
   });
   it('probes back up after sustained headroom, and backs off after a failed probe', () => {
     const b = createCloudBudget({ ...opts, upDelay: 5 });
@@ -58,6 +66,24 @@ describe('cloud budget controller', () => {
     expect(run(b, 3, 3)).toEqual(['billboard']);
     expect(run(b, 8, 0.3)).toEqual([]);
     expect(run(b, 4, 0.3)).toEqual(['volumetric-low']);
+  });
+  it('overlapping timer queries (per-pass times adding up to more than the frame interval, as on ANGLE/Metal) are not trusted', () => {
+    // 60 fps, yet "clouds 10 ms + scene 11 ms": the timers overlap, the cloud time is meaningless
+    const b = createCloudBudget(opts);
+    const dt = 1 / 60;
+    for (let t = 0; t < 20; t += dt) b.update(dt, 10, false, 21.5);
+    expect(b.quality).toBe('volumetric');
+    expect(b.timerTrusted).toBe(false);
+    // …then it degrades on the frame rate alone (really low, at minimum resolution)
+    for (let t = 0; t < 6; t += 1 / 30) b.update(1 / 30, 10, true, 21.5);
+    expect(b.quality).not.toBe('volumetric');
+  });
+  it('consistent timings (frame GPU time within the frame interval) are trusted and still enforce the budget', () => {
+    const b = createCloudBudget(opts);
+    const dt = 1 / 60;
+    for (let t = 0; t < 3; t += dt) b.update(dt, 3.5, false, 12);
+    expect(b.timerTrusted).toBe(true);
+    expect(b.quality).toBe('volumetric-low');
   });
   it('a forced quality pins the level', () => {
     const b = createCloudBudget({ ...opts, forced: 'billboard' });
