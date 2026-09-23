@@ -213,9 +213,11 @@ flying fast never hitches.
   sidewalks, shoulders and soft verges, US-style markings (double yellow, dashed lines, crosswalks,
   stop bars), dirt farm tracks, bridges with decks, piers and guard rails, and ~4,000 street lights
   that glow at dusk. A small depth pull keeps roads from sinking into coarse terrain.
-- **Towns (`src/world/towns`)** — ~10,600 buildings: houses with gable/hip roofs, chimneys and
-  dormers, terraces, apartment blocks, glass towers, churches, industrial sheds, farmsteads with
-  barns and silos. One small mesh per building type is stretched per instance in the vertex shader;
+- **Towns (`src/world/towns`)** — ~11,000 buildings and ~19,000 garden and street trees in 26
+  towns: houses with gable/hip roofs, chimneys and dormers, detached garages and swimming pools,
+  terraces, apartment blocks, shops with awnings, glass towers (some round), churches, town halls,
+  schools, water towers and storage tanks, industrial sheds, farmsteads with barns and silos. One
+  small mesh per building type is stretched per instance in the vertex shader;
   a facade shader draws windows, doors, shopfronts and roof materials; windows light up at dusk.
   Placement runs in a worker; far towns collapse into one self-culling mesh. Rooftops are obstacles.
 - **Trees (`src/world/vegetation`) and grass (`src/world/grass`)** — seven species built from leaf

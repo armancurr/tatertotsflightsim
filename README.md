@@ -72,7 +72,7 @@ another device on your network, run `npx vite --host 0.0.0.0`.
 
 | Aircraft | What it's like | Speeds | Carries |
 | --- | --- | --- | --- |
-| **Cessna 172RG Cutlass** | A forgiving four-seat trainer with a 180 hp engine and retractable gear. Steam gauges, flaps, trim, P-factor, ground effect. The one to learn on. | Lifts off ~55 kt, stalls ~48 kt clean, cruises ~125 kt, never exceed 163 kt | Nothing (and a stall horn) |
+| **Cessna 172RG Cutlass** | A forgiving four-seat trainer with a 180 hp engine and retractable gear. Steam gauges, flaps, trim, P-factor, ground effect. The one to learn on. | Lifts off ~55 kt, stalls ~48 kt clean, cruises ~125 kt, never exceed 163 kt | Nothing |
 | **F-16C Fighting Falcon** | A supersonic fighter. Fly-by-wire (9 g, 25° angle-of-attack limit, 300°/s rolls), afterburner, speed brake, jet HUD. Fast and unforgiving. | Rotates ~150 kt, lands ~145 kt, Mach 2 at 40,000 ft | M61A1 20 mm gun (511 rounds), 2 AGM-65 Mavericks, 2 AIM-9 Sidewinders |
 | **A-10C Thunderbolt II** "Warthog" | A slow, tough tank killer with a big straight wing and two slow-spooling turbofans. Split "deceleron" speed brakes; the gun's recoil slows the jet down. | Rotates ~120 kt, stalls ~116 kt, tops out ~370 kt | GAU-8/A 30 mm gun (1,150 rounds), 4 AGM-65 Mavericks, 2 AIM-9 Sidewinders |
 | **Boeing 747-400** | The "Queen of the Skies", flown light (~220 t) so it just fits the 1,600 m runway. Four engines, 64 m of wing, heavy and stately. Steam-gauge style instruments. | Rotates ~150 kt, approach ~150 kt with flaps 30, limit 365 kt | Nothing |
@@ -112,9 +112,11 @@ flight deck are still being tuned.
   passes, and Mi-24 helicopters circle low. They break and pop flares when you lock them, fall
   burning when hit, and a replacement arrives a minute later. They never shoot back.
 - **See a living world.** Taterville, the coastal city of Port Chateau and two dozen villages
-  (~10,600 buildings), roads with moving and parked cars, a river running from the mountains to the
-  sea, lakes, surf on the beaches, a marina, sailing yachts, a ferry, a container ship and a tanker
-  with wakes, light aircraft in the circuit and airliners with contrails overhead.
+  and hamlets (about 11,000 buildings and 19,000 garden and street trees), roads with moving and
+  parked cars, a river running from the mountains to the sea, lakes, surf on the beaches, a
+  marina, sailing yachts, a ferry, a container ship and a tanker with wakes, light aircraft in the
+  circuit and airliners with contrails overhead. Tater Field itself has a tower, hangars, a
+  flight school, a fire station, a fuel farm and dozens of parked aircraft.
 - **Hear it.** Every sound is synthesised in the browser: piston, jet and turbofan engines,
   afterburner, wind, stall and gear horns, tyres, crashes, explosions, and the GAU-8's "BRRRT"
   (heard late from outside, at the speed of sound).

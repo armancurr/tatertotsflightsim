@@ -32,7 +32,7 @@ Stalls, spins and landings are real ("butter" … "hard"), and crashes have a re
 
 ## 2. A world that looks real
 A large procedural world with farmland, forests of individual trees, a river, lakes, a coastal
-city and villages with ~10,600 buildings, roads with moving and parked cars, a marina with boats
+city and villages with about 11,000 buildings, roads with moving and parked cars, a marina with boats
 and ships leaving wakes, other aircraft with contrails, volumetric clouds that cast shadows, and
 four times of day. Tater Field has two crossing runways with real lights, PAPIs and a busy ramp.
 A target range with T-72 tanks, BMP-2s, BTR-80s, trucks and Shilkas (a convoy that drives the
