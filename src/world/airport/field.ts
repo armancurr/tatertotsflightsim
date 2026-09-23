@@ -232,8 +232,22 @@ export function createAirportField(cfg: Config = CONFIG): AirportField {
     rectPoly(R.a0 + hw, R.a1 - hw, R.c0 - hw, R.c0 + hw),
   ];
   // the east side is split where the access road leaves the field (the roads system draws that crossing)
-  const accA = L / 2 - 10 - 20;
-  roadRects.push(rectPoly(R.a0 + hw, accA - 12, R.c1 - hw, R.c1 + hw), rectPoly(accA + 8, R.a1 - hw, R.c1 - hw, R.c1 + hw));
+  let accA = L / 2 - 20;
+  {
+    const lay = cfg === CONFIG ? getLayout() : createLayout(cfg);
+    const st = lay.airport.accessRoadStart;
+    const road = lay.roads.find((r) => r.kind === 'access' && Math.hypot(r.points[0].x - st.x, r.points[0].z - st.z) < 50);
+    if (road)
+      for (let i = 1; i < road.points.length; i++) {
+        const p = rc(road.points[i - 1].x, road.points[i - 1].z);
+        const q = rc(road.points[i].x, road.points[i].z);
+        if ((p.c - R.c1) * (q.c - R.c1) <= 0 && q.c !== p.c) {
+          accA = p.a + ((R.c1 - p.c) / (q.c - p.c)) * (q.a - p.a);
+          break;
+        }
+      }
+  }
+  roadRects.push(rectPoly(R.a0 + hw, accA - 10, R.c1 - hw, R.c1 + hw), rectPoly(accA + 10, R.a1 - hw, R.c1 - hw, R.c1 + hw));
   // a service road from the flight-school car park to the perimeter road
   roadRects.push(rectPoly(540, 552, carpark2.c1, R.c1 - hw));
   for (const [i, p] of roadRects.entries()) paving.push({ kind: 'road', name: `road-${i}`, p, frame: 0 });
