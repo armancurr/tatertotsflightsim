@@ -112,25 +112,51 @@ export const CONFIG = {
       /** Yaw moment at full right rudder (+1). */
       cnRudder: 0.032,
 
-      /** Past the stall, roll damping reverses by this fraction (wing drop / autorotation tendency). */
-      stallRollDampingLoss: 1.6,
+      // ── Stall / spin: strip-theory wing (see aero.ts wingStripMoments) ──
+      // Each half wing is split into spanwise strips that see their own local angle of attack
+      // (α + p·y/V, washout, the ailerons on the outer strips) and local airspeed (u − r·y). The wing's
+      // roll moment (damping, Clr, aileron) and its yaw moment (adverse yaw, the drag of a stalled wing,
+      // leading-edge suction of an unstalled one) come from summing the strips. In attached flow the
+      // strip roll moment is scaled to match clP and clAileron above (their calibration is kept); as the
+      // wing stalls the down-going wing loses lift (autorotation → spin), a down aileron deepens the
+      // stall of its wing, and the gain moves to stripRollGainStalled.
       /**
-       * In a coordinated stall only this fraction of the damping loss applies (the wing drops only when
-       * the aircraft is yawing/slipping, so a coordinated stall breaks straight).
+       * The strip moments take over from the linear ones as the wing stalls AND the flow over it turns
+       * asymmetric: weight = stall weight × smoothstep(onset, full, asymmetry), asymmetry =
+       * |p̂| + |r̂| + kβ·|β| + kA·|aileron| (p̂ = p·b/2V). A stalled wing meeting the air symmetrically keeps
+       * the linear damping, so a coordinated, wings-level stall breaks straight.
        */
-      stallCoordinatedDampingFraction: 0.35,
-      /** Sideslip (deg, plus yaw-rate equivalent) at which the full stall damping loss / autorotation applies. */
-      stallAsymmetryRefDeg: 4,
-      /** The autorotative roll moment saturates above this non-dimensional roll rate p̂ = p·b/2V (bounded spin rate). */
-      stallAutorotationRateLimit: 0.15,
+      /** …where the stall weight ramps from 0 to 1 over ±this many degrees around the stall angle. */
+      stripStallBlendDeg: 1.5,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      /** Strips per half wing. */
+      wingStrips: 4,
+      /** Geometric washout, degrees: the tip meets the air this much lower than the root (root stalls first). */
+      washoutDeg: 3,
+      /** Wing sections lose their lift more gradually past the stall than the whole-wing break above, degrees. */
+      stripStallBreakWidthDeg: 12,
+      /** Gain on the raw strip-theory roll moment once the wing is fully stalled (attached: set by clP). */
+      stripRollGainStalled: 0.7,
+      /** Gain on the strip yaw moment. */
+      stripYawGain: 1,
+      /** The ailerons span the strips outboard of this fraction of the half span. */
+      aileronSpanStart: 0.55,
+      /**
+       * At high α the fin and rudder sit in the wake of the stalled wing and stabiliser: the directional
+       * stability and yaw damping (cnBeta, cnR) lose this fraction once the wing is fully stalled.
+       */
+      stallYawDampingLoss: 0.3,
+      /** …and the rudder loses this fraction (it still stops a spin). */
+      stallRudderLoss: 0.2,
+      /** Fuselage crossflow normal force at high α: ΔCN = k·sin α·|sin α| (referenced to the wing area). */
+      bodyCrossflowCn: 0.3,
       /** Past the stall the flaps keep this fraction of their lift increment (flapped stalls are gentler). */
       postStallFlapLiftFraction: 0.5,
-      /** Past the stall, extra roll moment per radian of sideslip/yaw (uncoordinated stalls drop a wing). */
-      stallWingDrop: 0.12,
-      /** Weight of the yaw rate (non-dimensional r̂ = r·b/2V) relative to sideslip in the stall wing drop. */
-      stallWingDropYawGain: 2,
       /** Past the stall, extra nose-down pitch moment coefficient (the "break"). */
-      stallPitchBreak: -0.08,
+      stallPitchBreak: -0.12,
       /** Past the stall the tail sits in the stalled wing's wake: elevator/trim effectiveness drops by this fraction. */
       stallTailBlanking: 0.4,
       /** Extra dynamic pressure over the tail from the propeller slipstream, as a fraction of thrust/(½ρ·disc area). */
