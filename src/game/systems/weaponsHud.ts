@@ -221,6 +221,9 @@ const mod: SystemModule = {
       aircraft: def?.id ?? null,
       demo,
       exterior: frame.exterior,
+      glass: frame.glass && frame.glass.visible ? { w: Math.round(frame.glass.w), h: Math.round(frame.glass.h), boreX: Math.round(frame.glass.boreX), boreY: Math.round(frame.glass.boreY), ppd: Math.round(frame.glass.ppd * 100) / 100 } : null,
+      hudBox,
+      texts: model.texts.filter((t) => t.show).map((t) => ({ s: t.s, x: Math.round(t.x), y: Math.round(t.y), align: t.align })),
       gunCross: model.gunCross.show,
       pipper: model.pipper.show ? { x: Math.round(model.pipper.x), y: Math.round(model.pipper.y), arc: Math.round(model.pipper.arc * 100) / 100, inRange: model.pipper.inRange, clamped: model.pipper.clamped } : null,
       lead: model.lead.show ? { x: Math.round(model.lead.x), y: Math.round(model.lead.y), rangeM: Math.round(model.lead.rangeM), inRange: model.lead.inRange, clamped: model.lead.clamped } : null,
@@ -278,6 +281,9 @@ const mod: SystemModule = {
         const comb = f.cameraMode === 'cockpit' && def?.hud === 'jet' ? f.aircraft.hudCombiner : undefined;
         frame.glass = comb ? projectHudGlassObjects(glass, cam, comb, root3.quaternion, f.state.velocity, vw, vh) : null;
         frame.gearUp = f.readings ? f.readings.gear === 'up' : f.state.gearPos < 0.02;
+        const rd = f.readings as (typeof f.readings & { speedBrake?: boolean }) | undefined;
+        frame.speedBrake = rd ? !!rd.speedBrake : undefined;
+        frame.abOrEngine = rd ? (Number(rd.afterburner) > 0.02 || rd.engineStatus === 'OFF' || rd.engineStatus === 'FAILED') : undefined;
         frame.ax = root3.position.x;
         frame.ay = root3.position.y;
         frame.az = root3.position.z;
