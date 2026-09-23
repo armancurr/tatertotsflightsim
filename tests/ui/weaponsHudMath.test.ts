@@ -249,12 +249,12 @@ describe('text', () => {
 });
 
 describe('visibility per aircraft', () => {
-  it('Cessna: nothing; F-16: gun only; A-10: gun + Maverick + range cue + markers', () => {
+  it('Cessna: nothing; F-16: gun + Maverick; A-10: gun + Maverick + range cue + markers', () => {
     const c = weaponsVisibility(CONFIG.weapons);
     expect(c.any).toBe(false);
     expect(c.gun || c.missiles || c.rangeCue || c.markers).toBe(false);
     const f = weaponsVisibility(F16_WEAPONS);
-    expect(f.any && f.gun && !f.missiles && f.rangeCue).toBe(true);
+    expect(f.any && f.gun && f.missiles && f.rangeCue).toBe(true);
     const a = weaponsVisibility(A10_WEAPONS);
     expect(a.any && a.gun && a.missiles && a.rangeCue && a.markers).toBe(true);
     expect(weaponsVisibility(null as never).any).toBe(false);
