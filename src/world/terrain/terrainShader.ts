@@ -67,6 +67,7 @@ varying float vWaterLevel;
 varying vec3 vWNormal;
 varying vec4 vWarp;      // field-model domain warp (160-m district warp xy, 14-m field warp zw)
 varying vec4 vMacro;     // macro variation at 1.1, 4.2, 9 and 26 km
+varying vec4 vRelief;    // mountain relief (260 m + 900 m gullies): normal offset xz, ridge 0..1, weight
 ${HASH_GLSL}
 `;
 
@@ -86,6 +87,53 @@ vec3 transformed = vec3( position );
                 14.0 * ( tNoiseH( p * 0.0045 ) - 0.5 ), 14.0 * ( tNoiseH( p * 0.0045 + 9.1 ) - 0.5 ) );
   vMacro = vec4( textureLod( uNoise, p / ( 1100.0 * 32.0 ), 0.0 ).r, textureLod( uNoise, p / ( 4200.0 * 32.0 ) + 0.37, 0.0 ).g,
                  textureLod( uNoise, p / ( 9000.0 * 16.0 ) + 0.61, 0.0 ).b, textureLod( uNoise, p / ( 26000.0 * 32.0 ) + 0.13, 0.0 ).r );
+  // Mountain relief, the broad octaves (per vertex: they are much larger than the vertex spacing).
+  // Eroded gullies and ribs down the fall line — normal + shading only, the heightfield stays
+  // smooth. The fall direction is quantised to 22.5° sectors (two nearest blended) so the pattern
+  // never twists (see tFlowFrames).
+  vRelief = vec4( 0.0, 0.0, 0.5, 0.0 );
+  if ( wp0.y > 360.0 ) {
+    vec3 nW = normalize( mat3( modelMatrix ) * objectNormal );
+    float mk = smoothstep( 380.0, 900.0, wp0.y ) * smoothstep( 0.03, 0.16, 1.0 - nW.y );
+    if ( mk > 0.0 ) {
+      vec2 g = normalize( nW.xz + 1e-4 );
+      float sct = atan( g.y, g.x ) / 0.39269908;
+      float s0 = floor( sct );
+      float ft = smoothstep( 0.3, 0.7, sct - s0 );
+      float spacing = aMorph.z / 64.0;
+      float foot = distance( wp0, cameraPosition ) * 0.0012;
+      vec2 nSum = vec2( 0.0 );
+      float rSum = 0.0;
+      float wSum = 0.0;
+      for ( int o = 0; o < 2; o++ ) {
+        float W = o == 0 ? 260.0 : 900.0;   // across the fall line, m (10× longer along it)
+        float A = o == 0 ? 90.0 : 250.0;    // relief amplitude, m
+        float vis = ( 1.0 - smoothstep( W * 0.12, W * 0.3, spacing ) ) * ( 1.0 - smoothstep( W * 0.1, W * 0.35, foot ) );
+        if ( vis <= 0.0 ) continue;
+        vec2 off = o == 0 ? vec2( 3100.0, 5700.0 ) : vec2( 7300.0, 1900.0 );
+        vec2 sc = vec2( 1.0 / ( W * 32.0 ), 1.0 / ( W * 320.0 ) );
+        for ( int k = 0; k < 2; k++ ) {
+          float wk = k == 0 ? 1.0 - ft : ft;
+          if ( wk <= 0.0 ) continue;
+          float a = ( s0 + float( k ) ) * 0.39269908;
+          vec2 d = vec2( cos( a ), sin( a ) );
+          vec2 gp = vec2( -d.y, d.x );
+          vec2 q = p + off;
+          vec2 uv = vec2( dot( q, gp ), dot( q, d ) ) * sc;
+          float v0 = textureLod( uNoise, uv, 0.0 ).r;
+          float v1 = textureLod( uNoise, uv + vec2( 0.1 / 32.0, 0.0 ), 0.0 ).r;
+          float c = 2.0 * v0 - 1.0;
+          float ow = o == 0 ? 0.8 : 0.5;
+          rSum += ( 1.0 - c * c ) * wk * vis * ow;
+          nSum -= gp * ( A * -4.0 * c * ( v1 - v0 ) / ( 0.1 * W ) ) * wk * vis;
+        }
+        wSum += vis * ( o == 0 ? 0.8 : 0.5 );
+      }
+      // gully strength varies from massif to massif (smooth grassy domes next to deeply carved faces)
+      float var = 0.35 + 1.1 * smoothstep( 0.2, 0.8, vMacro.x );
+      if ( wSum > 0.0 ) vRelief = vec4( nSum * mk * var, mix( 0.5, rSum / wSum, min( var, 1.0 ) ), mk * min( wSum / 0.8, 1.0 ) );
+    }
+  }
 }
 `;
 
@@ -105,6 +153,7 @@ varying float vWaterLevel;
 varying vec3 vWNormal;
 varying vec4 vWarp;
 varying vec4 vMacro;
+varying vec4 vRelief;
 uniform float uTime;
 uniform vec4 uPavedA[8];   // centre x, centre z, half length, half width
 uniform vec4 uPavedB[8];   // forward x, forward z, kind (0 runway, 1 taxiway/apron), unused
@@ -162,11 +211,11 @@ float tStripes( float x, float period, float fw ) {
 // wherever that direction turns (|p| is kilometres, so a degree of turn slides it by tens of metres:
 // a maze of contour-like lines). Instead the direction is quantised to fixed 22.5° sectors and the
 // two nearest frames are blended: each pattern is a plain rotation of the noise, stable in space.
-vec2 fDir0; vec2 fDir1; float fT;
+vec2 fDir0 = vec2( 1.0, 0.0 ); vec2 fDir1 = vec2( 0.0, 1.0 ); float fT = 0.0;
 void tFlowFrames( vec2 g ) {
   float s = atan( g.y, g.x ) / 0.39269908;
   float s0 = floor( s );
-  fT = s - s0;
+  fT = smoothstep( 0.3, 0.7, s - s0 );
   float a0 = s0 * 0.39269908;
   fDir0 = vec2( cos( a0 ), sin( a0 ) );
   fDir1 = vec2( cos( a0 + 0.39269908 ), sin( a0 + 0.39269908 ) );
@@ -180,6 +229,8 @@ float tFlow1( vec2 p, vec2 d, float W, float L, int ch ) {
   return ch == 0 ? t.r : ch == 1 ? t.g : t.b;
 }
 float tFlow( vec2 p, float W, float L, int ch ) {
+  if ( fT <= 0.0 ) return tFlow1( p, fDir0, W, L, ch );
+  if ( fT >= 1.0 ) return tFlow1( p, fDir1, W, L, ch );
   return mix( tFlow1( p, fDir0, W, L, ch ), tFlow1( p, fDir1, W, L, ch ), fT );
 }
 
@@ -217,14 +268,13 @@ float tAirportClear( vec2 p ) {
 // Woodland. Near the camera the 3D trees stand on a dark, shaded forest floor (the gaps between
 // crowns read as depth); beyond them (a few km) the canopy itself is drawn: irregular crowns with
 // shadowed gaps, species patches (dark spruce, mid-green broadleaf, light birch), clearings.
-Surf tForest( vec3 wp ) {
+Surf tForest( vec3 wp, float dense ) {
   vec2 p = wp.xz;
   float sp = tFbmT( p, 260.0 );
   vec3 conifer = vec3( 0.014, 0.028, 0.016 );
   vec3 decid = vec3( 0.032, 0.058, 0.02 );
   vec3 light = vec3( 0.05, 0.078, 0.028 );
   vec3 canopy = mix( conifer, decid, smoothstep( 0.36, 0.6, sp ) );
-  canopy = mix( canopy, light, smoothstep( 0.62, 0.8, tNg( p + 500.0, 120.0 ) ) * 0.7 );
   canopy *= 0.8 + 0.4 * tN( p, 38.0 );
   float far = smoothstep( 1800.0, 3200.0, distance( wp, cameraPosition ) );
   float bump = 0.0;
@@ -237,38 +287,44 @@ Surf tForest( vec3 wp ) {
     canopy *= mix( 1.0, mix( 0.45, 1.2, crown ) * tone, k );
     bump = crown * 1.2 * k;
   }
-  // canopy texture that survives to a few km: clumps of crowns and shadowed gaps at 15–40 m
-  canopy *= 0.84 + 0.3 * smoothstep( 0.25, 0.75, tCellT( p + 11.0, 22.0 ) ) * far;
-  vec3 floorC = mix( vec3( 0.016, 0.02, 0.011 ), vec3( 0.03, 0.032, 0.018 ), tN( p, 5.0 ) );
-  floorC = mix( floorC, canopy, 0.25 );
-  // thin forest (the edge band, where few trees stand): scrub and rough grass, not shade
-  vec3 scrub = mix( vec3( 0.04, 0.058, 0.024 ), vec3( 0.06, 0.075, 0.03 ), tN( p, 9.0 ) );
-  floorC = mix( scrub, floorC, smoothstep( 0.5, 0.85, vLc0.x ) );
-  vec3 col = mix( floorC, canopy, far );
+  if ( far > 0.0 ) {
+    // light birch/aspen stands, and clumps of crowns with shadowed gaps at 15–40 m (survive to a few km)
+    canopy = mix( canopy, light, smoothstep( 0.62, 0.8, tNg( p + 500.0, 120.0 ) ) * 0.7 * far );
+    canopy *= 1.0 - far * ( 0.16 - 0.3 * smoothstep( 0.25, 0.75, tCellT( p + 11.0, 22.0 ) ) );
+  }
+  vec3 col = canopy;
+  if ( far < 1.0 ) {
+    float fn = tN( p, 5.0 );
+    vec3 floorC = mix( vec3( 0.016, 0.02, 0.011 ), vec3( 0.03, 0.032, 0.018 ), fn );
+    floorC = mix( floorC, canopy, 0.25 );
+    // thin forest (the edge band, where few trees stand): scrub and rough grass, not shade
+    vec3 scrub = mix( vec3( 0.04, 0.058, 0.024 ), vec3( 0.06, 0.075, 0.03 ), fn );
+    floorC = mix( scrub, floorC, dense );
+    col = mix( floorC, canopy, far );
+  }
   return tSurf( col, L_SOIL, 0.5 * ( 1.0 - far ), 0.97, bump );
 }
 
 // Grass: airfield, verges, pasture, upland rough grazing, alpine meadows.
 Surf tGrass( vec2 p, float height, float slope ) {
   float n1 = tN( p, 70.0 );
-  float n2 = tNg( p, 14.0 );
+  float n2 = gFwD < 5.0 ? tNg( p, 14.0 ) : 0.5;
   vec3 col = mix( vec3( 0.048, 0.076, 0.028 ), vec3( 0.082, 0.108, 0.04 ), n1 );
   // drier, yellower patches and lush dark ones
   col = mix( col, vec3( 0.15, 0.14, 0.065 ), smoothstep( 0.6, 0.9, tFbmT( p, 420.0 ) ) * 0.5 );
   col *= 0.9 + 0.2 * n2;
   // tussocks, rushes and dung patches (a few metres), fading into the mean with distance
-  float tus = smoothstep( 0.55, 0.8, tN( p + 40.0, 3.5 ) ) * ( 1.0 - smoothstep( 0.6, 2.5, gFw ) );
-  col *= 1.0 - 0.18 * tus;
+  if ( gFw < 2.5 ) col *= 1.0 - 0.18 * smoothstep( 0.55, 0.8, tN( p + 40.0, 3.5 ) ) * ( 1.0 - smoothstep( 0.6, 2.5, gFw ) );
   // upland rough grazing on the hills: bracken, heather, dry bents, grey outcrops on steeper ground
   float alp = smoothstep( 1100.0, 1700.0, height );
   float up = smoothstep( 160.0, 650.0, height ) * ( 1.0 - alp );
   if ( up > 0.0 ) {
-    float pb = tFbmT( p, 110.0 );
+    vec4 un = tN4( p / 95.0 );   // one fetch: bracken, heather, dry bents, outcrops
     vec3 u = col * vec3( 0.95, 0.92, 0.88 );
-    u = mix( u, vec3( 0.062, 0.078, 0.028 ), smoothstep( 0.5, 0.7, pb ) * 0.8 );                     // bracken
-    u = mix( u, vec3( 0.055, 0.05, 0.036 ), smoothstep( 0.55, 0.85, tFbmT( p + 300.0, 70.0 ) ) * 0.5 ); // heather
-    u = mix( u, vec3( 0.13, 0.12, 0.06 ), smoothstep( 0.55, 0.78, tNg( p, 160.0 ) ) * 0.55 );        // dry bents
-    float st = ( 1.0 - smoothstep( 0.1, 0.3, tCellT( p, 11.0 ) ) ) * smoothstep( 0.1, 0.3, slope ) * smoothstep( 0.4, 0.75, tN( p, 45.0 ) );
+    u = mix( u, vec3( 0.062, 0.078, 0.028 ), smoothstep( 0.5, 0.7, un.b ) * 0.8 );   // bracken
+    u = mix( u, vec3( 0.055, 0.05, 0.036 ), smoothstep( 0.6, 0.85, un.r ) * 0.5 );   // heather
+    u = mix( u, vec3( 0.13, 0.12, 0.06 ), smoothstep( 0.58, 0.8, un.g ) * 0.55 );    // dry bents
+    float st = ( 1.0 - smoothstep( 0.08, 0.2, un.a ) ) * smoothstep( 0.1, 0.3, slope );
     u = mix( u, vec3( 0.2, 0.19, 0.17 ), st * 0.85 );
     col = mix( col, u, up );
   }
@@ -314,7 +370,7 @@ vec2 tBales( vec2 q, float period, float spacing, float key, vec2 sOff ) {
 // faint stripes up to a few thousand feet; drill rows and tramlines below ~1,000 ft.
 Surf tField( vec2 p ) {
   Field F = fieldAt( p, vWarp );
-  if ( F.woodlot > 0.5 && tAirportClear( p ) < 0.5 ) return tForest( vWPos );
+  if ( F.woodlot > 0.5 && tAirportClear( p ) < 0.5 ) return tForest( vWPos, 1.0 );
   int kind = int( F.kind + 0.5 );
   float sh = F.shade;
   vec3 col;
@@ -402,7 +458,7 @@ Surf tField( vec2 p ) {
   }
   // moisture / soil variation inside the field (broad, gentle), and soil zones across field boundaries
   col *= 0.9 + 0.2 * tN( p + F.key * 5000.0, 80.0 );
-  col *= 0.95 + 0.1 * tNg( p, 14.0 );
+  if ( gFwD < 5.0 ) col *= 0.95 + 0.1 * tNg( p, 14.0 );
   col *= 0.88 + 0.24 * smoothstep( 0.2, 0.8, tFbmT( p + 900.0, 170.0 ) );
   // machine passes: alternating tone (sheen of the direction the machine drove), visible from far
   if ( pass > 0.0 ) {
@@ -473,16 +529,20 @@ Surf tRock( vec3 wp, vec3 N ) {
   float tone = tFbmT( p, 240.0 );
   vec3 col = mix( vec3( 0.13, 0.125, 0.115 ), vec3( 0.25, 0.232, 0.205 ), tone );
   col = mix( col, col * vec3( 1.12, 0.98, 0.84 ), smoothstep( 0.3, 0.8, tN( p, 900.0 ) ) );  // warm ochre / cool grey massifs
-  // warped, dipping strata, only where the rock is steep enough to show its bedding (cliffs, ribs)
-  vec2 dip = normalize( vec2( tN( p, 3000.0 ), tNg( p, 3000.0 ) ) - 0.5 + 1e-3 );
-  float y = wp.y + 55.0 * ( tFbmT( p, 500.0 ) - 0.5 ) + dot( p, dip ) * 0.12;
-  float thick = mix( 5.0, 13.0, tN( p, 1500.0 ) );
-  float band = fract( y / thick );
-  float strat = smoothstep( 0.0, 0.08, band ) * ( 1.0 - smoothstep( 0.55, 0.7, band ) );
-  float sv = ( 1.0 - smoothstep( thick * 0.08, thick * 0.25, gFwD ) ) * smoothstep( 0.5, 0.7, slope );
-  col *= 1.0 + ( strat - 0.5 ) * 0.16 * sv * ( 0.6 + 0.8 * tNg( p, 300.0 ) );
+  // warped, dipping strata, only where the rock is steep enough to show its bedding (cliffs)
+  float strat = 0.5;
+  float sv = 0.0;
+  if ( slope > 0.5 && gFwD < 3.2 ) {
+    vec2 dip = normalize( vec2( tN( p, 3000.0 ), tNg( p, 3000.0 ) ) - 0.5 + 1e-3 );
+    float y = wp.y + 55.0 * ( tFbmT( p, 500.0 ) - 0.5 ) + dot( p, dip ) * 0.12;
+    float thick = mix( 5.0, 13.0, tN( p, 1500.0 ) );
+    float band = fract( y / thick );
+    strat = smoothstep( 0.0, 0.08, band ) * ( 1.0 - smoothstep( 0.55, 0.7, band ) );
+    sv = ( 1.0 - smoothstep( thick * 0.08, thick * 0.25, gFwD ) ) * smoothstep( 0.5, 0.7, slope );
+    col *= 1.0 + ( strat - 0.5 ) * 0.16 * sv * ( 0.6 + 0.8 * tNg( p, 300.0 ) );
+  }
   // ribs catch the light-coloured fresh rock, gullies collect dark debris and water stains
-  col *= 0.86 + 0.28 * tRidge;
+  col *= 0.92 + 0.16 * tRidge;
   // water / lichen streaks down the fall line
   float streak = tFlow( p, 7.0, 110.0, 1 );
   col *= 1.0 - 0.3 * smoothstep( 0.55, 0.85, streak ) * smoothstep( 0.15, 0.35, slope );
@@ -508,12 +568,12 @@ Surf tSnow( vec2 p, float slope ) {
   // wind-packed snow: faint sastrugi ripples, blue-grey where it is thin, rock showing through
   float n = tN( p, 24.0 );
   vec3 col = vec3( 0.8, 0.82, 0.86 ) * ( 0.93 + 0.07 * n );
-  col *= 0.97 + 0.03 * tStripes( dot( p, vec2( 0.8, 0.6 ) ) + 6.0 * tN( p, 40.0 ), 3.5, gFw );
+  if ( gFw < 2.0 ) col *= 0.97 + 0.03 * tStripes( dot( p, vec2( 0.8, 0.6 ) ) + 6.0 * tN( p, 40.0 ), 3.5, gFw );
   col = mix( col, vec3( 0.62, 0.64, 0.67 ), smoothstep( 0.3, 0.45, slope ) * 0.5 );   // wind-scoured, dirty on steep ground
   // thin snow over rock ribs (the relief term): a grey cast and a few dark stones
   float rib = smoothstep( 0.62, 0.9, tRidge );
   col = mix( col, vec3( 0.5, 0.5, 0.5 ), rib * 0.35 );
-  col = mix( col, vec3( 0.16, 0.15, 0.14 ), rib * smoothstep( 0.72, 0.9, tNg( p, 5.0 ) ) * 0.8 );
+  if ( rib > 0.0 && gFw < 4.0 ) col = mix( col, vec3( 0.16, 0.15, 0.14 ), rib * smoothstep( 0.72, 0.9, tNg( p, 5.0 ) ) * 0.8 );
   return tSurf( col, L_SNOW, 1.0, 0.5, 0.0 );
 }
 
@@ -717,7 +777,7 @@ Surf tClassSurf( int k, vec3 wp, vec3 N ) {
   vec2 p = wp.xz;
   if ( k == 0 ) return tField( p );
   if ( k == 1 ) return tGrass( p, wp.y, 1.0 - N.y );
-  if ( k == 2 ) return tForest( wp );
+  if ( k == 2 ) return tForest( wp, smoothstep( 0.45, 0.8, vLc0.x ) );
   if ( k == 3 ) return tRock( wp, N );
   if ( k == 4 ) return tScree( p, N );
   if ( k == 5 ) return tSnow( p, 1.0 - N.y );
@@ -739,62 +799,45 @@ vec3 terrainAlbedo( out float rough ) {
   float slope = 1.0 - N.y;
 
   // per-pixel break-up of the vertex-interpolated class boundaries
+  // (the fine octaves only where they are resolved, the snow edge only where there is snow)
   vec4 nz = tN4( p / 26.0 );
-  vec4 nz2 = tN4( p / 6.5 );
-  float nb = ( nz.r - 0.5 ) + ( nz2.g - 0.5 ) * 0.45;
+  float nb = nz.r - 0.5;
+  if ( gFwD < 4.0 ) nb += ( tN4( p / 6.5 ).g - 0.5 ) * 0.45 * ( 1.0 - smoothstep( 2.0, 4.0, gFwD ) );
   float nb2 = tN( p + 7.7, 41.0 ) - 0.5;
-  float nSnow = tNg( p, 9.0 ) - 0.5;
-  // gullies: streaks down the fall line where snow lingers
+  float nSnow = vLc1.x > 0.0 ? tNg( p, 9.0 ) - 0.5 : 0.0;
+  // the fall-line direction (gullies, streaks)
   vec2 g = normalize( N.xz + 1e-4 );
-  tFlowFrames( g );
-  float streak = smoothstep( 0.25, 0.75, tFlow( p, 30.0, 260.0, 0 ) );
-
-  // Mountain relief (normal + shading only; the heightfield stays smooth): eroded gullies and ribs
-  // down the fall line at two scales (~70 m and ~260 m across), V-shaped (ridged noise), so the
-  // smooth ranges read as carved rock from any altitude. Gullies hold snow and are shaded.
-  vec2 reliefN = vec2( 0.0 );
-  float reliefAO = 1.0;
-  tRidge = 0.5;
+  // Mountain relief: the broad octaves come per vertex (vRelief); near the camera a 70-m octave
+  // of gullies is added per pixel. Gullies are shaded and hold the snow; the ribs blow clear.
+  vec2 reliefN = vRelief.xy;
+  float rr = vRelief.z;
+  float rw = vRelief.w;
   float mtnK = smoothstep( 380.0, 900.0, wp.y ) * smoothstep( 0.03, 0.16, slope );
-  if ( mtnK > 0.0 ) {
-    float ridgeSum = 0.0;
-    float wSum = 0.0;
-    for ( int o = 0; o < 3; o++ ) {
-      float W = o == 0 ? 70.0 : o == 1 ? 260.0 : 900.0;      // across the fall line, m
-      float L = W * 10.0;                                    // along it: long gullies
-      float A = o == 0 ? 26.0 : o == 1 ? 90.0 : 250.0;       // relief amplitude, m
-      float vis = 1.0 - smoothstep( W * 0.12, W * 0.45, gFwD );
-      if ( vis <= 0.0 ) continue;
-      vec2 off = o == 0 ? vec2( 0.0 ) : o == 1 ? vec2( 3100.0, 5700.0 ) : vec2( 7300.0, 1900.0 );
-      float r = 0.0;
-      vec2 n = vec2( 0.0 );
-      for ( int k = 0; k < 2; k++ ) {
-        vec2 d = k == 0 ? fDir0 : fDir1;
-        float wk = k == 0 ? 1.0 - fT : fT;
-        vec2 gp = vec2( -d.y, d.x );
-        float v0 = tFlow1( p + off, d, W, L, 0 );
-        float v1 = tFlow1( p + off + gp * ( 0.1 * W ), d, W, L, 0 );
-        float c = 2.0 * v0 - 1.0;
-        r += ( 1.0 - c * c ) * wk;                          // soft ridged: 1 on the ribs, 0 in the gully bottoms
-        float dh = A * -4.0 * c * ( v1 - v0 ) / ( 0.1 * W ); // d(relief)/d(across)
-        n -= gp * dh * wk;
-      }
-      float ow = o == 0 ? 1.0 : o == 1 ? 0.8 : 0.5;
-      reliefN += n * vis;
-      ridgeSum += r * vis * ow;
-      wSum += vis * ow;
+  if ( ( mtnK > 0.0 || vLc0.w > 0.0 ) && gFwD < 21.0 ) {
+    tFlowFrames( g );
+    float vis = 1.0 - smoothstep( 5.6, 21.0, gFwD );
+    float r = 0.0;
+    vec2 n = vec2( 0.0 );
+    for ( int k = 0; k < 2; k++ ) {
+      vec2 d = k == 0 ? fDir0 : fDir1;
+      float wk = k == 0 ? 1.0 - fT : fT;
+      if ( wk <= 0.0 ) continue;
+      vec2 gp = vec2( -d.y, d.x );
+      float v0 = tFlow1( p, d, 70.0, 420.0, 0 );
+      float v1 = tFlow1( p + gp * 7.0, d, 70.0, 420.0, 0 );
+      float c = 2.0 * v0 - 1.0;
+      r += ( 1.0 - c * c ) * wk;
+      n -= gp * ( 20.0 * -4.0 * c * ( v1 - v0 ) / 7.0 ) * wk;
     }
-    if ( wSum > 0.0 ) {
-      float r = ridgeSum / wSum;
-      tRidge = mix( 0.5, r, mtnK );
-      reliefAO = 1.0 - 0.25 * ( 1.0 - r ) * mtnK * min( wSum, 1.0 );
-      // snow lies in the gullies, the ribs blow clear
-      streak = mix( streak, smoothstep( 0.3, 0.8, 1.0 - r ), mtnK * min( wSum, 1.0 ) );
-    }
-    reliefN *= mtnK;
+    reliefN += n * vis * mtnK;
+    rr = rw > 0.0 ? mix( rr, r, vis * 0.55 ) : r;
+    rw = max( rw, vis * mtnK );
   }
+  tRidge = mix( 0.5, rr, rw );
+  float reliefAO = 1.0 - 0.18 * ( 1.0 - rr ) * rw;
+  float streak = mix( 0.5, smoothstep( 0.3, 0.8, 1.0 - rr ), rw );
 
-  if ( mtnK > 0.0 ) {
+  if ( rw > 0.0 ) {
     nb += ( 0.5 - tRidge ) * 0.7;
     nb2 += ( tRidge - 0.5 ) * 0.9;
   }
@@ -808,10 +851,12 @@ vec3 terrainAlbedo( out float rough ) {
   rough = 0.0;
   tBump = 0.0;
   tDetN = vec2( 0.0 );
-  // minor classes: plain colours
+  // minor classes: plain colours (slivers under 1.5 % are skipped and the rest renormalised)
+  float wIn = 0.0;
   for ( int k = 0; k < 8; k++ ) {
-    if ( k == i1 || k == i2 || w[ k ] < 0.004 ) continue;
+    if ( k == i1 || k == i2 || w[ k ] < 0.015 ) continue;
     Surf s = tClassSurf( k, wp, N );
+    wIn += w[ k ];
     col += w[ k ] * s.col;
     rough += w[ k ] * s.rough;
     tBump += w[ k ] * s.bump;
@@ -841,7 +886,9 @@ vec3 terrainAlbedo( out float rough ) {
     tDetN = w1 * n1.xy;
   }
   col += ( w1 + w2 ) * mix( c1, c2, b2 );
-  col *= reliefAO;
+  float wNorm = 1.0 / max( wIn + w1 + w2, 1e-3 );
+  col *= reliefAO * wNorm;
+  rough *= wNorm;
   tDetN += reliefN;
 
   // airport pavement from the layout (the airport renderer draws its own on top)
