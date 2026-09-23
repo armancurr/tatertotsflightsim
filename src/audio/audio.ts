@@ -1,33 +1,33 @@
 /**
  * The aircraft's sound: a fully synthesised WebAudio graph (no sound files).
  *
- *   engine (Lycoming O-360 + 2-blade prop) ─┐
- *     cycle oscillator (PeriodicWave of one 4-stroke cycle, 4 uneven exhaust pulses) → tone LP
- *     exhaust noise (pink) → band-pass → AM at the firing rate (pulse oscillator → gain.gain)
- *     prop buzz (PeriodicWave blade pulse at the blade-pass rate) + blade-slap noise AM'd at it
- *     valve-train tick, starter motor (AM'd at the compression rate while cranking)
- *   rolling rumble (brown noise LP by speed/surface), brake scrub, touchdown one-shots ─┤
- *                                                                    → aircraft bus → view LP ×2
- *                                                                      (muffled cabin / open air,
- *                                                                      air absorption) → distance → master
+ *   engine voice (swapped per aircraft: piston.ts = Cessna O-360 + prop, jet.ts = F-16 F110 turbofan)
+ *     ├─ exterior path ─┐
+ *   rolling rumble, brake scrub, touchdown one-shots ─┤→ aircraft bus → view LP ×2 + shelf
+ *                                                        (muffled cabin / open air, air absorption)
+ *                                                        → distance → master
+ *     └─ cabin path (horns, motors, whistle, intake howl, ECS, hydraulics) → cabin bus → master
  *   wind (pink band-pass sweeping with airspeed + hiss) → wind LP (duller in the cabin) → master
- *   cabin bus (stall horn reed, gear pump hum, flap motor whine, door-seal whistle, gear clunk) → master
- *   fx bus (crash boom/debris, fire bed + crackles) → master
- *   master (volume × mute × pause) → gentle compressor → destination
+ *   crash layer (impact, metal, debris, scraping, explosions, impacts, crackles) + fire bed → fx bus → master
+ *   master (volume × mute × pause) → glue compressor → limiter → soft clipper → destination
  *
  * Every continuous parameter moves with setTargetAtTime (and only when its target changes),
  * so there are no zipper noises or clicks. The AudioContext is created lazily in resume()
  * (call it on the first user gesture); without WebAudio every method is a harmless no-op.
  */
 import { CONFIG } from '../config';
-import type { AudioInputs, AudioLevels, AudioSystem } from './types';
+import type { EngineSound } from '../fleet/types';
+import type { AudioInputs, AudioLevels, AudioMeter, AudioSystem } from './types';
 import {
-  bladePassFrequency, brakeScrubGain, cabinBusGain, clamp, crashIntensity, cycleFrequency, distanceGain, dopplerFactor,
-  engineMix, exhaustCenterHz, firingFrequency, masterGain, rollingCutoffHz, rollingGain, stallHornOn, touchdownIntensity,
-  viewCutoffHz, whistleGain, windCenterHz, windGain,
+  brakeScrubGain, cabinBusGain, clamp, crashIntensity, distanceGain, dopplerFactor, masterGain, rollingCutoffHz, rollingGain,
+  stallHornOn, touchdownIntensity, viewCutoffHz, windCenterHz, windGain,
 } from './mapping';
-import { beepWaveform, engineCycleWaveform, fourierSeries, gateWaveform, hornWaveform, mulberry32, noiseSamples, propWaveform, pulseWaveform, type NoiseKind } from './waves';
-import { playCatch, playCrackle, playCrash, playGearClunk, playTouchdown, type OneShotKit } from './oneshots';
+import { crashDistanceGain, createRateLimiter, explosionSize, fireLevel, impactIntensity, secondaryExplosions, type PlannedExplosion } from './crashPlan';
+import { beepWaveform, gateWaveform, hornWaveform, mulberry32, softClipCurve } from './waves';
+import { playCrackle, playCrash, playExplosion, playImpact, playTouchdown, type OneShotKit } from './oneshots';
+import { createBuilder, noiseBuffer, type EngineVoice, type Knob, type VoiceOutputs } from './builder';
+import { createPistonVoice } from './piston';
+import { createJetVoice } from './jet';
 
 const A = CONFIG.audio;
 
@@ -37,18 +37,8 @@ export interface CreateAudioOptions {
   /** Factory used by resume() to create the real context (default: window.AudioContext). */
   createContext?: () => BaseAudioContext | null;
   seed?: number;
-}
-
-/** A parameter that is only re-targeted when its target actually changes. */
-class Knob {
-  last = Number.NaN;
-  constructor(readonly param: AudioParam, private readonly eps = 1e-4) {}
-  set(v: number, t: number, tau: number): void {
-    if (!Number.isFinite(v)) return;
-    if (Math.abs(v - this.last) <= this.eps * Math.max(1, Math.abs(this.last))) return;
-    this.last = v;
-    this.param.setTargetAtTime(v, t, tau);
-  }
+  /** Initial engine voice (default 'piston'). */
+  engine?: EngineSound;
 }
 
 function defaultContext(): BaseAudioContext | null {
@@ -58,6 +48,14 @@ function defaultContext(): BaseAudioContext | null {
 }
 
 const isOffline = (c: BaseAudioContext) => typeof (c as OfflineAudioContext).startRendering === 'function';
+
+/** The crash one-shots play through a replaceable layer, so a reset can silence all of them at once. */
+interface CrashLayer {
+  bus: GainNode;
+  kit: OneShotKit;
+  live: Map<AudioScheduledSourceNode, number>;
+  retired: boolean;
+}
 
 interface Graph {
   ctx: BaseAudioContext;
@@ -69,103 +67,50 @@ interface Graph {
   distance: Knob;
   cabin: Knob;
   windLP: Knob;
-  cycleF: Knob;
-  fireF: Knob;
-  propF: Knob;
-  bpfF: Knob;
-  crankF: Knob;
-  exRate: Knob;
-  tone: Knob;
-  toneLP: Knob;
-  exBP: Knob;
-  exhaust: Knob;
-  propLP: Knob;
-  prop: Knob;
-  propNoise: Knob;
-  mech: Knob;
-  starter: Knob;
-  crank: Knob;
   wind: Knob;
   windBP: Knob;
   hiss: Knob;
-  whistle: Knob;
   roll: Knob;
   rollLP: Knob;
   scrub: Knob;
   horn: Knob;
   gearHorn: Knob;
-  gear: Knob;
-  flap: Knob;
   fire: Knob;
+  fireLP: Knob;
   acFx: GainNode;
-  engineBus: GainNode;
-  cabinFx: GainNode;
   fxBus: GainNode;
+  clip: WaveShaperNode;
+  voiceOut: VoiceOutputs;
   nodes: AudioNode[];
 }
 
 function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
-  const nodes: AudioNode[] = [];
-  const keep = <T extends AudioNode>(n: T): T => {
-    nodes.push(n);
-    return n;
-  };
-  const gain = (v: number) => {
-    const g = keep(ctx.createGain());
-    g.gain.value = v;
-    return g;
-  };
-  const filter = (type: BiquadFilterType, f: number, q: number, dbGain = 0) => {
-    const b = keep(ctx.createBiquadFilter());
-    b.type = type;
-    b.frequency.value = f;
-    b.Q.value = q;
-    b.gain.value = dbGain;
-    return b;
-  };
-  const buffer = (kind: NoiseKind, seconds: number, s: number) => {
-    const n = Math.max(1, Math.round(ctx.sampleRate * seconds));
-    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
-    buf.getChannelData(0).set(noiseSamples(kind, n, s));
-    return buf;
-  };
-  const wave = (samples: Float32Array, harmonics: number) => {
-    const w = fourierSeries(samples, harmonics);
-    return ctx.createPeriodicWave(w.real, w.imag, { disableNormalization: false });
-  };
   const rnd = mulberry32(seed);
-  const white = buffer('white', 2.6, seed + 1);
-  const pink = buffer('pink', 3.3, seed + 2);
-  const brown = buffer('brown', 4.1, seed + 3);
-  const loop = (buf: AudioBuffer) => {
-    const s = keep(ctx.createBufferSource());
-    s.buffer = buf;
-    s.loop = true;
-    s.start(0, rnd() * buf.duration * 0.9);
-    return s;
-  };
-  const osc = (type: OscillatorType | PeriodicWave, f: number) => {
-    const o = keep(ctx.createOscillator());
-    if (typeof type === "string") o.type = type as OscillatorType;
-    else o.setPeriodicWave(type);
-    o.frequency.value = f;
-    o.start(0);
-    return o;
-  };
-  const chain = (...ns: AudioNode[]) => {
-    for (let i = 0; i < ns.length - 1; i++) ns[i].connect(ns[i + 1]);
-    return ns[ns.length - 1];
-  };
+  const b = createBuilder(ctx, rnd);
+  const { gain, filter, osc, loop, chain, knob } = b;
+  const white = noiseBuffer(ctx, 'white', 2.6, seed + 1);
+  const pink = noiseBuffer(ctx, 'pink', 3.3, seed + 2);
+  const brown = noiseBuffer(ctx, 'brown', 4.1, seed + 3);
 
-  // ── Output ────────────────────────────────────────────────────────────────
+  // ── Output: glue compressor → limiter → soft clipper ──────────────────────
   const master = gain(0);
-  const comp = keep(ctx.createDynamicsCompressor());
-  comp.threshold.value = -12;
-  comp.knee.value = 10;
-  comp.ratio.value = 3.5;
-  comp.attack.value = 0.004;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = A.glueThresholdDb;
+  comp.knee.value = 8;
+  comp.ratio.value = A.glueRatio;
+  comp.attack.value = 0.005;
   comp.release.value = 0.25;
-  chain(master, comp, ctx.destination);
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = A.limiterThresholdDb;
+  limiter.knee.value = 0;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.001;
+  limiter.release.value = 0.1;
+  const clip = ctx.createWaveShaper();
+  clip.curve = softClipCurve(4097, A.softClipKnee, A.softClipCeiling) as Float32Array<ArrayBuffer>;
+  clip.oversample = '2x';
+  b.nodes.push(comp, limiter, clip);
+  chain(master, comp, limiter, clip, ctx.destination);
 
   // ── Buses ─────────────────────────────────────────────────────────────────
   const acBus = gain(1);
@@ -181,64 +126,10 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   chain(windBus, windLP, master);
   const fxBus = gain(A.effectsVolume);
   fxBus.connect(master);
-  const engineBus = gain(A.engineVolume);
-  engineBus.connect(acBus);
   const acFx = gain(A.effectsVolume);
   acFx.connect(acBus);
-  const cabinFx = gain(A.effectsVolume);
-  cabinFx.connect(cabin);
-
-  // ── Engine ────────────────────────────────────────────────────────────────
-  const engineWave = wave(engineCycleWaveform(2048), 72);
-  const propWave = wave(propWaveform(1024), 40);
-  const pulseWave = wave(pulseWaveform(1024, 0.3), 24);
-  const cycleOsc = osc(engineWave, 0);
-  const tone = gain(0);
-  const toneLP = filter('lowpass', 400, 0.9);
-  chain(cycleOsc, toneLP, tone, engineBus);
-
-  const fireOsc = osc(pulseWave, 0);
-  const exSrc = loop(pink);
-  const exBP = filter('bandpass', 200, 0.9);
-  const exAM = gain(0.4);
-  const exAmDepth = gain(0.6);
-  chain(fireOsc, exAmDepth).connect(exAM.gain);
-  const exhaust = gain(0);
-  chain(exSrc, exBP, exAM, exhaust, engineBus);
-
-  const propOsc = osc(propWave, 0);
-  const propLP = filter('lowpass', 900, 0.7);
-  const prop = gain(0);
-  chain(propOsc, propLP, prop, engineBus);
-  const bpfOsc = osc(pulseWave, 0);
-  const propSrc = loop(white);
-  const propBP = filter('bandpass', 1700, 0.6);
-  const propAM = gain(0.3);
-  chain(bpfOsc, gain(0.7)).connect(propAM.gain);
-  const propNoise = gain(0);
-  chain(propSrc, propBP, propAM, propNoise, engineBus);
-
-  const mechSrc = loop(white);
-  const mechBP = filter('bandpass', 3200, 1.6);
-  const mechAM = gain(0.2);
-  chain(cycleOsc, gain(0.8)).connect(mechAM.gain);
-  const mech = gain(0);
-  chain(mechSrc, mechBP, mechAM, mech, engineBus);
-
-  // Starter: motor whine + compression chug, both pulsing at the cranking firing rate.
-  const crankLfo = osc('sine', 6);
-  const starterOsc = osc('sawtooth', 96);
-  const starterBP = filter('bandpass', 850, 1.2);
-  const starterAM = gain(0.55);
-  chain(crankLfo, gain(0.45)).connect(starterAM.gain);
-  const starter = gain(0);
-  chain(starterOsc, starterBP, starterAM, starter, engineBus);
-  const crankSrc = loop(brown);
-  const crankLP = filter('lowpass', 260, 0.8);
-  const crankAM = gain(0.5);
-  chain(crankLfo, gain(0.5)).connect(crankAM.gain);
-  const crank = gain(0);
-  chain(crankSrc, crankLP, crankAM, crank, engineBus);
+  const engineOut = gain(1);
+  engineOut.connect(acBus);
 
   // ── Wind ──────────────────────────────────────────────────────────────────
   const windSrc = loop(pink);
@@ -253,11 +144,6 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   const hissHP = filter('highpass', 3500, 0.5);
   const hiss = gain(0);
   chain(hissSrc, hissHP, hiss, windBus);
-  const whistleSrc = loop(white);
-  const whistleBP = filter('bandpass', A.whistleHz, 22);
-  chain(osc('sine', 0.31), gain(35)).connect(whistleBP.frequency);
-  const whistle = gain(0);
-  chain(whistleSrc, whistleBP, whistle, cabin);
 
   // ── Ground ────────────────────────────────────────────────────────────────
   const rollSrc = loop(brown);
@@ -270,7 +156,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   chain(scrubSrc, scrubBP, scrub, acBus);
 
   // ── Stall horn: reed tone with a little vibrato → band-pass → nasal formant ──
-  const hornOsc = osc(wave(hornWaveform(1024), 16), A.stallHornHz);
+  const hornOsc = osc(b.wave(hornWaveform(1024), 16), A.stallHornHz);
   chain(osc('sine', 5.5), gain(10)).connect(hornOsc.frequency);
   const hornBP = filter('bandpass', A.stallHornHz, A.stallHornQ);
   const hornNasal = filter('peaking', A.stallHornHz * 2, 3, 7);
@@ -278,102 +164,149 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   chain(hornOsc, hornBP, hornNasal, horn, cabin);
 
   // ── Gear warning horn: electronic tone through a small cabin speaker, beeped by a soft-edged gate ──
-  const ghOsc = osc(wave(beepWaveform(1024), 14), A.gearHornHz);
+  const ghOsc = osc(b.wave(beepWaveform(1024), 14), A.gearHornHz);
   const ghSpeaker = filter('bandpass', A.gearHornHz * 1.6, 0.6);
   const ghBody = filter('peaking', A.gearHornHz, 2, 4);
   const ghGate = gain(0.5);
-  // The gate wave (DC removed, normalised to ±1) swings the gate gain 0 ↔ 1 at the beep rate.
-  chain(osc(wave(gateWaveform(1024, A.gearHornDuty), 32), A.gearHornRateHz), gain(0.5)).connect(ghGate.gain);
+  chain(osc(b.wave(gateWaveform(1024, A.gearHornDuty), 32), A.gearHornRateHz), gain(0.5)).connect(ghGate.gain);
   const gearHorn = gain(0);
   chain(ghOsc, ghSpeaker, ghBody, ghGate, gearHorn, cabin);
 
-  // ── Motors ────────────────────────────────────────────────────────────────
-  const gearOsc = osc('sawtooth', 118);
-  const gearBP = filter('bandpass', 430, 1.3);
-  const gear = gain(0);
-  chain(gearOsc, gearBP, gear, cabin);
-  const gearWhine = osc('sine', 790);
-  chain(gearWhine, gain(0.18), gear);
-  const flapOsc = osc('sawtooth', 290);
-  chain(osc('sine', 7), gain(5)).connect(flapOsc.frequency);
-  const flapBP = filter('bandpass', 950, 2);
-  const flap = gain(0);
-  chain(flapOsc, flapBP, flap, cabin);
-
-  // ── Fire bed after a crash ────────────────────────────────────────────────
+  // ── Fire bed after a crash: low roar with a slow, irregular flutter ──
   const fireSrc = loop(brown);
   const fireLP = filter('lowpass', 650, 0.7);
+  const fireAM = gain(0.8);
+  chain(osc('sine', 0.7), gain(0.12)).connect(fireAM.gain);
+  chain(osc('sine', 1.9), gain(0.08)).connect(fireAM.gain);
+  const fireHissSrc = loop(pink);
+  const fireHissBP = filter('bandpass', 1800, 0.6);
   const fire = gain(0);
-  chain(fireSrc, fireLP, fire, fxBus);
+  chain(fireSrc, fireLP, fireAM, fire);
+  chain(fireHissSrc, fireHissBP, gain(0.25), fireAM);
+  fire.connect(fxBus);
 
-  const k = (p: AudioParam, eps?: number) => new Knob(p, eps);
+  const kit: OneShotKit = { ctx, white, pink, brown, rnd };
   return {
     ctx,
-    kit: { ctx, white, pink, brown, rnd },
-    master: k(master.gain),
-    view1: k(view1.frequency, 1e-3),
-    view2: k(view2.frequency, 1e-3),
-    viewShelf: k(viewShelf.gain, 1e-3),
-    distance: k(distance.gain),
-    cabin: k(cabin.gain),
-    windLP: k(windLP.frequency, 1e-3),
-    cycleF: k(cycleOsc.frequency, 2e-4),
-    fireF: k(fireOsc.frequency, 2e-4),
-    propF: k(propOsc.frequency, 2e-4),
-    bpfF: k(bpfOsc.frequency, 2e-4),
-    crankF: k(crankLfo.frequency, 1e-3),
-    exRate: k(exSrc.playbackRate, 1e-3),
-    tone: k(tone.gain),
-    toneLP: k(toneLP.frequency, 1e-3),
-    exBP: k(exBP.frequency, 1e-3),
-    exhaust: k(exhaust.gain),
-    propLP: k(propLP.frequency, 1e-3),
-    prop: k(prop.gain),
-    propNoise: k(propNoise.gain),
-    mech: k(mech.gain),
-    starter: k(starter.gain),
-    crank: k(crank.gain),
-    wind: k(wind.gain),
-    windBP: k(windBP.frequency, 1e-3),
-    hiss: k(hiss.gain),
-    whistle: k(whistle.gain),
-    roll: k(roll.gain),
-    rollLP: k(rollLP.frequency, 1e-3),
-    scrub: k(scrub.gain),
-    horn: k(horn.gain),
-    gearHorn: k(gearHorn.gain),
-    gear: k(gear.gain),
-    flap: k(flap.gain),
-    fire: k(fire.gain),
+    kit,
+    master: knob(master.gain),
+    view1: knob(view1.frequency, 1e-3),
+    view2: knob(view2.frequency, 1e-3),
+    viewShelf: knob(viewShelf.gain, 1e-3),
+    distance: knob(distance.gain),
+    cabin: knob(cabin.gain),
+    windLP: knob(windLP.frequency, 1e-3),
+    wind: knob(wind.gain),
+    windBP: knob(windBP.frequency, 1e-3),
+    hiss: knob(hiss.gain),
+    roll: knob(roll.gain),
+    rollLP: knob(rollLP.frequency, 1e-3),
+    scrub: knob(scrub.gain),
+    horn: knob(horn.gain),
+    gearHorn: knob(gearHorn.gain),
+    fire: knob(fire.gain),
+    fireLP: knob(fireLP.frequency, 1e-3),
     acFx,
-    engineBus,
-    cabinFx,
     fxBus,
-    nodes,
+    clip,
+    voiceOut: { exterior: engineOut, cabin, kit },
+    nodes: b.nodes,
   };
 }
 
 const fin = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const isEngine = (k: unknown): k is EngineSound => k === 'piston' || k === 'jet';
 
 export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   const seed = opts.seed ?? 4711;
   let ctx: BaseAudioContext | null = null;
   let graph: Graph | null = null;
+  let voice: EngineVoice | null = null;
+  let voiceFresh = true;
+  let engineKind: EngineSound = isEngine(opts.engine) ? opts.engine : 'piston';
   let disposed = false;
   let muted = false;
   let last: AudioInputs | null = null;
   let primed = false;
-  let prev = { gear: false, starting: false, crashed: false };
+  let prevCrashed = false;
   let crashAge = 0;
+  let pending: PlannedExplosion[] = [];
+  let layer: CrashLayer | null = null;
+  const retiredLayers = new Set<CrashLayer>();
+  let listenerDist: number = A.refDistanceM;
+  let analyser: AnalyserNode | null = null;
+  let meterBuf: Float32Array<ArrayBuffer> | null = null;
+  const explosionOk = createRateLimiter(A.crash.maxExplosionsPerS);
+  const impactOk = createRateLimiter(A.crash.maxImpactsPerS);
   const L: AudioLevels = {
     master: 0, engineVolume: A.engineVolume, exhaust: 0, prop: 0, mechanical: 0, starter: 0, cycleHz: 0, firingHz: 0,
     bladeHz: 0, doppler: 1, wind: 0, whistle: 0, rolling: 0, scrub: 0, horn: 0, gearHorn: 0, gear: 0, flap: 0, fire: 0,
     viewCutoff: A.exteriorCutoffHz, distance: 1, cabin: A.exteriorCabinGain, oneShots: 0, lastTouchdown: 0, errors: 0,
+    jet: 0, corePct: 0, whineHz: 0, fanHz: 0, whine: 0, fan: 0, roar: 0, afterburner: 0, crackle: 0, intake: 0, ecs: 0,
+    hydraulic: 0, aft: 0, engineVoices: 0, crashes: 0, explosions: 0, impacts: 0, pendingExplosions: 0, crashLive: 0,
+  };
+
+  const makeVoice = (g: Graph, kind: EngineSound): EngineVoice =>
+    kind === 'jet' ? createJetVoice(g.ctx, g.voiceOut, g.kit.rnd) : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
+
+  const makeLayer = (g: Graph): CrashLayer => {
+    const bus = g.ctx.createGain();
+    bus.gain.value = 1;
+    bus.connect(g.fxBus);
+    const live = new Map<AudioScheduledSourceNode, number>();
+    const lay: CrashLayer = { bus, live, retired: false, kit: { ...g.kit, live } };
+    lay.kit.onEnded = () => {
+      if (lay.retired && live.size === 0) {
+        bus.disconnect();
+        retiredLayers.delete(lay);
+      }
+    };
+    return lay;
+  };
+
+  const countLive = () => {
+    let n = layer ? layer.live.size : 0;
+    for (const r of retiredLayers) n += r.live.size;
+    return n;
+  };
+
+  /** Fade and stop every crash sound, forget the pending explosions, put the fire out. */
+  const silenceCrash = (t: number) => {
+    pending = [];
+    crashAge = 0;
+    L.pendingExplosions = 0;
+    L.fire = 0;
+    const g = graph;
+    if (!g) return;
+    g.fire.set(0, t, 0.05);
+    if (layer) {
+      const old = layer;
+      old.retired = true;
+      old.bus.gain.cancelScheduledValues(t);
+      old.bus.gain.setTargetAtTime(0, t, 0.03);
+      const stopAt = t + 0.15;
+      for (const [src, end] of old.live) {
+        if (end <= stopAt) continue;
+        try {
+          src.stop(stopAt);
+        } catch {
+          /* already stopped */
+        }
+      }
+      if (old.live.size === 0) old.bus.disconnect();
+      else retiredLayers.add(old);
+      layer = makeLayer(g);
+    }
+    L.crashLive = countLive();
   };
 
   const build = (c: BaseAudioContext) => {
     ctx = c;
     graph = buildGraph(c, seed);
+    voice = makeVoice(graph, engineKind);
+    voiceFresh = true;
+    L.engineVoices = 1;
+    layer = makeLayer(graph);
     primed = false;
     if (last) apply({ ...last, touchdownFpm: null }, 0);
   };
@@ -385,6 +318,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
       L.errors++;
       ctx = null;
       graph = null;
+      voice = null;
     }
   }
 
@@ -397,22 +331,25 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   function apply(a: AudioInputs, dtIn: number): void {
     const g = graph;
     const c = ctx;
-    if (!g || !c) return;
+    const v = voice;
+    if (!g || !c || !v || !layer) return;
     const t = c.currentTime;
+    const paused = !!a.paused;
     const dt = Number.isFinite(dtIn) ? clamp(dtIn, 0, 1) : 0;
+    const dtRun = paused ? 0 : dt;
     const tau = A.rampTau;
     const exterior = a.cameraMode !== 'cockpit';
     const crashed = !!a.crashed;
-    const rpm = fin(a.rpm, 0);
 
     // Master
-    L.master = masterGain(muted, !!a.paused);
+    L.master = masterGain(muted, paused);
     g.master.set(L.master, t, 0.06);
 
     // View / listener
-    const dist = fin(a.listenerDistanceM, A.refDistanceM);
+    const dist = fin(a.listenerDistanceM, v.refDistanceM);
+    listenerDist = exterior ? Math.max(0, dist) : 0;
     L.viewCutoff = viewCutoffHz(a.cameraMode, dist);
-    L.distance = distanceGain(a.cameraMode, dist);
+    L.distance = distanceGain(a.cameraMode, dist, v.refDistanceM);
     L.cabin = cabinBusGain(a.cameraMode);
     g.view1.set(L.viewCutoff, t, A.cameraRampTau);
     g.view2.set(exterior ? A.exteriorCutoffHz : L.viewCutoff * 1.6, t, A.cameraRampTau);
@@ -421,43 +358,19 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     g.cabin.set(L.cabin, t, A.cameraRampTau);
     g.windLP.set(exterior ? A.exteriorCutoffHz : 1500, t, A.cameraRampTau);
 
-    // Engine
-    const mix = engineMix({ rpm, power: a.power, engineRunning: !!a.engineRunning, starting: !!a.starting, crashed });
+    // Engine voice
     const dop = exterior ? dopplerFactor(fin(a.closingSpeedMs, 0)) : 1;
     L.doppler = dop;
-    L.exhaust = mix.exhaust;
-    L.prop = mix.prop;
-    L.mechanical = mix.mechanical;
-    L.starter = mix.starter;
-    L.cycleHz = cycleFrequency(rpm) * dop;
-    L.firingHz = firingFrequency(rpm) * dop;
-    L.bladeHz = bladePassFrequency(rpm) * dop;
-    g.cycleF.set(L.cycleHz, t, tau);
-    g.fireF.set(L.firingHz, t, tau);
-    g.propF.set(L.bladeHz, t, tau);
-    g.bpfF.set(L.bladeHz, t, tau);
-    g.exRate.set(dop, t, tau);
-    g.crankF.set(Math.max(3, firingFrequency(rpm)), t, tau);
-    const rpmN = clamp(rpm / CONFIG.aircraft.engine.maxRpm, 0, 1);
-    g.tone.set(0.6 * mix.exhaust, t, tau);
-    g.toneLP.set(260 + 2600 * mix.brightness, t, tau);
-    g.exBP.set(exhaustCenterHz(rpm), t, tau);
-    g.exhaust.set(0.85 * mix.exhaust, t, tau);
-    g.propLP.set(650 + 3800 * Math.pow(rpmN, 1.5), t, tau);
-    g.prop.set(0.42 * mix.prop, t, tau);
-    g.propNoise.set(0.3 * mix.prop, t, tau);
-    g.mech.set(0.05 * mix.mechanical, t, tau);
-    g.starter.set(0.32 * mix.starter, t, tau);
-    g.crank.set(0.55 * mix.starter, t, tau);
+    L.aft = clamp(fin(a.aft, 0), -1, 1);
+    L.oneShots += v.update(a, { t, dt: dtRun, tau, exterior, doppler: dop, crashed, primed: primed && !voiceFresh }, L);
+    voiceFresh = false;
 
     // Airflow
     const ias = fin(a.airspeedKt, 0);
     L.wind = windGain(ias);
-    L.whistle = whistleGain(ias, a.cameraMode);
     g.wind.set(L.wind * A.windVolume, t, tau);
     g.windBP.set(windCenterHz(ias), t, tau);
     g.hiss.set(Math.pow(L.wind, 1.5) * A.windVolume * 0.3, t, tau);
-    g.whistle.set(L.whistle * A.whistleVolume, t, tau);
 
     // Ground
     const gs = fin(a.groundSpeedKt, 0);
@@ -467,33 +380,14 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     g.rollLP.set(rollingCutoffHz(gs, a.surface), t, tau);
     g.scrub.set(L.scrub * A.rollingVolume * 0.4, t, tau);
 
-    // Horn / motors
+    // Horns
     L.horn = stallHornOn(!!a.stallWarning, ias, crashed) ? A.stallHornVolume : 0;
     g.horn.set(L.horn, t, 0.025);
     L.gearHorn = a.gearWarning === true && !crashed ? A.gearHornVolume : 0;
     g.gearHorn.set(L.gearHorn, t, 0.02);
-    L.gear = a.gearMoving && !crashed ? A.motorVolume : 0;
-    L.flap = a.flapsMoving && !crashed ? A.motorVolume : 0;
-    g.gear.set(L.gear, t, 0.08);
-    g.flap.set(L.flap, t, 0.06);
 
-    // Discrete events (not on the first frame: its "edges" are just the initial state)
+    // Touchdown
     const kit = g.kit;
-    if (primed) {
-      if (crashed && !prev.crashed) {
-        crashAge = 0;
-        playCrash(kit, g.fxBus, t, crashIntensity(fin(a.crashSpeedKt, ias)));
-        L.oneShots++;
-      }
-      if (prev.gear && !a.gearMoving && !crashed) {
-        playGearClunk(kit, g.cabinFx, t);
-        L.oneShots++;
-      }
-      if (prev.starting && !a.starting && a.engineRunning && !crashed) {
-        playCatch(kit, g.engineBus, t);
-        L.oneShots++;
-      }
-    }
     if (a.touchdownFpm !== null && a.touchdownFpm !== undefined && !crashed) {
       const i = touchdownIntensity(a.touchdownFpm);
       if (i > 0) {
@@ -503,18 +397,38 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
       }
     }
 
-    // Fire bed + crackles while the wreck burns
+    // Crash: layered impact, secondary explosions on a randomised schedule, fire, crackles; reset silences it.
+    const near = crashDistanceGain(listenerDist);
+    if (primed && crashed && !prevCrashed) {
+      const I = crashIntensity(fin(a.crashSpeedKt, ias));
+      crashAge = 0;
+      playCrash(layer.kit, layer.bus, t, I, near);
+      pending = secondaryExplosions(kit.rnd, I);
+      L.crashes++;
+      L.oneShots++;
+    } else if (!crashed && prevCrashed) {
+      silenceCrash(t);
+    }
     if (crashed) {
-      crashAge += dt;
-      const burn = Math.exp(-crashAge / 22);
-      L.fire = 0.55 * burn;
-      if (!a.paused && kit.rnd() < dt * 9 * burn) playCrackle(kit, g.fxBus, t + 0.01, burn);
+      crashAge += dtRun;
+      while (pending.length && pending[0].at <= crashAge) {
+        const e = pending.shift() as PlannedExplosion;
+        playExplosion(layer.kit, layer.bus, t + 0.005, e.size, near);
+        L.explosions++;
+      }
+      L.fire = fireLevel(crashAge);
+      const burn = L.fire / Math.max(1e-6, A.crash.fireLevel);
+      if (!paused && kit.rnd() < dtRun * 10 * burn) playCrackle(layer.kit, layer.bus, t + 0.01, burn * near);
+      g.fire.set(L.fire * near, t, 0.4);
+      g.fireLP.set(420 + 500 * burn, t, 0.5);
     } else {
       L.fire = 0;
+      g.fire.set(0, t, 0.05);
     }
-    g.fire.set(L.fire, t, 0.4);
+    L.pendingExplosions = pending.length;
+    L.crashLive = countLive();
 
-    prev = { gear: !!a.gearMoving && !crashed, starting: !!a.starting, crashed };
+    prevCrashed = crashed;
     primed = true;
   }
 
@@ -553,10 +467,104 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     get muted() {
       return muted;
     },
+    setEngine(kind) {
+      if (disposed || !isEngine(kind) || kind === engineKind) return;
+      engineKind = kind;
+      const g = graph;
+      const c = ctx as BaseAudioContext | null;
+      if (!g || !c) return;
+      try {
+        const old = voice;
+        voice = makeVoice(g, kind);
+        voiceFresh = true;
+        L.engineVoices++;
+        if (old) old.retire(c.currentTime, () => void (L.engineVoices = Math.max(1, L.engineVoices - 1)));
+        if (last) apply({ ...last, touchdownFpm: null }, 0);
+      } catch {
+        L.errors++;
+      }
+    },
+    get engine() {
+      return engineKind;
+    },
+    explosion(e) {
+      const g = graph;
+      const c = ctx as BaseAudioContext | null;
+      if (disposed || !g || !c || !layer || !e) return;
+      try {
+        const t = c.currentTime;
+        if (!explosionOk(t)) return;
+        // The crash effects drive the explosions: follow them instead of the randomised schedule.
+        pending = [];
+        L.pendingExplosions = 0;
+        const size = explosionSize(typeof e.size === 'number' ? e.size : Number.NaN);
+        playExplosion(layer.kit, layer.bus, t, size, crashDistanceGain(fin(e.distanceM, listenerDist)));
+        L.explosions++;
+        L.crashLive = countLive();
+      } catch {
+        L.errors++;
+      }
+    },
+    impact(e) {
+      const g = graph;
+      const c = ctx as BaseAudioContext | null;
+      if (disposed || !g || !c || !layer || !e) return;
+      try {
+        const I = impactIntensity(fin(e.speed ?? e.speedMs, 0));
+        if (I < 0.02) return;
+        const t = c.currentTime;
+        if (!impactOk(t)) return;
+        playImpact(layer.kit, layer.bus, t, I, crashDistanceGain(fin(e.distanceM, listenerDist)));
+        L.impacts++;
+        L.crashLive = countLive();
+      } catch {
+        L.errors++;
+      }
+    },
+    reset() {
+      const c = ctx as BaseAudioContext | null;
+      try {
+        if (c) silenceCrash(c.currentTime);
+        else {
+          pending = [];
+          L.pendingExplosions = 0;
+          L.fire = 0;
+        }
+      } catch {
+        L.errors++;
+      }
+    },
+    meter(): AudioMeter | null {
+      const g = graph;
+      if (!g || disposed) return null;
+      try {
+        if (!analyser) {
+          analyser = g.ctx.createAnalyser();
+          analyser.fftSize = 2048;
+          g.clip.connect(analyser);
+          meterBuf = new Float32Array(analyser.fftSize);
+        }
+        const buf = meterBuf as Float32Array<ArrayBuffer>;
+        analyser.getFloatTimeDomainData(buf);
+        let s = 0;
+        let p = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const x = buf[i];
+          s += x * x;
+          const ax = Math.abs(x);
+          if (ax > p) p = ax;
+        }
+        return { rms: Math.sqrt(s / buf.length), peak: p };
+      } catch {
+        L.errors++;
+        return null;
+      }
+    },
     get context() {
       return ctx;
     },
     levels() {
+      L.crashLive = countLive();
       return { ...L };
     },
     dispose() {
@@ -564,9 +572,13 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
       disposed = true;
       const c = ctx as BaseAudioContext | null;
       const g = graph as Graph | null;
+      const v = voice as EngineVoice | null;
       graph = null;
+      voice = null;
       try {
+        if (v && c) v.retire(c.currentTime, () => undefined);
         if (g) for (const n of g.nodes) n.disconnect();
+        analyser?.disconnect();
       } catch {
         /* ignore */
       }

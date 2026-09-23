@@ -151,3 +151,40 @@ describe('analysis', () => {
     expect(dominantFrequency(s, sr, 100, 3000, 10)).toBeCloseTo(1780, -1);
   });
 });
+
+describe('jet waveforms and the soft clipper', () => {
+  it('buzz-saw: rich in shaft harmonics (many multiple pure tones), finite, normalised', async () => {
+    const { buzzsawWaveform } = await import('../../src/audio/waves');
+    const s = buzzsawWaveform(2048, 5);
+    expect(s.every(Number.isFinite)).toBe(true);
+    expect(Math.max(...s.map(Math.abs))).toBeCloseTo(1, 6);
+    const f = fourierSeries(s, 40);
+    const amp = (k: number) => Math.hypot(f.real[k], f.imag[k]);
+    let strong = 0;
+    for (let k = 1; k <= 36; k++) if (amp(k) > 0.05 * amp(1)) strong++;
+    expect(strong).toBeGreaterThan(25);
+  });
+  it('whine partial: mostly the fundamental', async () => {
+    const { whineWaveform } = await import('../../src/audio/waves');
+    const f = fourierSeries(whineWaveform(1024), 6);
+    const amp = (k: number) => Math.hypot(f.real[k], f.imag[k]);
+    expect(amp(1)).toBeGreaterThan(3 * amp(2));
+    expect(amp(2)).toBeGreaterThan(amp(4));
+  });
+  it('fuzz: soft-clip curve is odd, monotone, linear below the knee and never reaches the ceiling', async () => {
+    const { softClipCurve } = await import('../../src/audio/waves');
+    fc.assert(fc.property(fc.integer({ min: 3, max: 4096 }), fc.double({ min: 0.1, max: 0.95, noNaN: true }), fc.double({ min: 0.5, max: 1, noNaN: true }), (n, knee, ceil) => {
+      const c = softClipCurve(n, knee, ceil);
+      expect(c.length % 2).toBe(1);
+      const top = Math.max(knee + 0.01, ceil);
+      for (let i = 0; i < c.length; i++) {
+        expect(Number.isFinite(c[i])).toBe(true);
+        expect(Math.abs(c[i])).toBeLessThan(top);
+        expect(c[i]).toBeCloseTo(-c[c.length - 1 - i], 6);
+        if (i) expect(c[i]).toBeGreaterThanOrEqual(c[i - 1]);
+        const x = (i / (c.length - 1)) * 2 - 1;
+        if (Math.abs(x) <= knee) expect(c[i]).toBeCloseTo(x, 6);
+      }
+    }), { numRuns: 40 });
+  });
+});

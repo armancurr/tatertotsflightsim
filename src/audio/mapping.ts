@@ -168,11 +168,12 @@ export function viewCutoffHz(cameraMode: CameraMode, distanceM: number = A.refDi
   return clamp(A.exteriorCutoffHz / (1 + d / A.absorptionHalfM), 600, A.exteriorCutoffHz);
 }
 
-/** Exterior distance attenuation 0..1 (inverse distance beyond refDistanceM); 1 in the cockpit. */
-export function distanceGain(cameraMode: CameraMode, distanceM: number = A.refDistanceM): number {
+/** Exterior distance attenuation 0..1 (inverse distance beyond `refM`, default refDistanceM); 1 in the cockpit. */
+export function distanceGain(cameraMode: CameraMode, distanceM: number = A.refDistanceM, refM: number = A.refDistanceM): number {
   if (cameraMode === 'cockpit') return 1;
+  const ref = Number.isFinite(refM) && refM > 0 ? refM : A.refDistanceM;
   const d = pos(distanceM, 1e7);
-  return clamp01(A.refDistanceM / Math.max(A.refDistanceM, d));
+  return clamp01(ref / Math.max(ref, d));
 }
 
 /** Level of cabin-only sounds (horn, motors, whistle) for the view. */
