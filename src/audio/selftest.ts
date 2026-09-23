@@ -16,6 +16,8 @@ import { firingFrequency } from './mapping';
 import { jetWhineHz } from './jetMapping';
 import { tf34WhistleHz } from './turbofanMapping';
 import type { CombatAudioFrame } from './combat';
+import type { AirAudioFrame } from './airTargets';
+import { airDoppler } from './airTargetsMapping';
 import type { AudioSystem } from './types';
 import { CONFIG } from '../config';
 
@@ -63,6 +65,8 @@ interface Scenario {
   muted?: boolean;
   /** Combat frame fed every update (the gun, the missile motor). */
   combat?: Partial<CombatAudioFrame>;
+  /** Enemy aircraft fed every update. */
+  air?: AirAudioFrame;
   check: (s: Float32Array, sr: number, all: Float32Array, levels: AudioLevels) => { ok: boolean; detail: string };
 }
 
@@ -153,6 +157,33 @@ function boomOnsets(all: Float32Array, sr: number, from: number): number {
   }
   return onsets;
 }
+
+/** One enemy aircraft `d` m north of a listener at the origin, flying south (toward it) at `v` m/s. */
+const airFrame = (kind: 'fighter' | 'attack' | 'helo', d: number, v: number): AirAudioFrame => ({
+  listener: { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 1, ry: 0, rz: 0, cockpit: false },
+  sources: [{ id: 1, kind, x: 60, y: 0, z: -d, vx: 0, vy: 0, vz: v }],
+  count: 1,
+  dt: 1 / 60,
+});
+
+/** The rotor: the signal's envelope beats at the blade-pass rate (×2 over the neighbouring rates). */
+const rotorAt = (hz: number) => (s: Float32Array, sr: number) => {
+  const a = Math.exp((-2 * Math.PI * 80) / sr);
+  const env = new Float32Array(s.length);
+  let y = 0;
+  for (let i = 0; i < s.length; i++) {
+    y = a * y + (1 - a) * Math.abs(s[i]);
+    env[i] = y;
+  }
+  let mean = 0;
+  for (let i = 0; i < env.length; i++) mean += env[i];
+  mean /= Math.max(1, env.length);
+  for (let i = 0; i < env.length; i++) env[i] -= mean;
+  const at = goertzelAmplitude(env, sr, hz);
+  const off = (goertzelAmplitude(env, sr, hz * 0.62) + goertzelAmplitude(env, sr, hz * 1.4)) / 2;
+  const ratio = at / Math.max(1e-12, off);
+  return { ok: ratio > 2 && rms(s) > 2e-3, detail: `rotor beat ${hz.toFixed(1)} Hz ×${ratio.toFixed(1)} over its neighbours, ${fmtDb(rms(s))}` };
+};
 
 const JET_IDLE: Partial<AudioInputs> = { rpm: CONFIG.audio.jet.idleCorePct, power: 0.02, engineRunning: true, listenerDistanceM: 26, aft: 0.95 };
 const JET_MIL: Partial<AudioInputs> = { rpm: 100, power: 1, engineRunning: true, listenerDistanceM: 26, aft: 0.95 };
@@ -280,6 +311,13 @@ export const SCENARIOS: Scenario[] = [
     events: [{ at: 0.05, inputs: {}, fire: (a) => a.combat.launch({ distanceM: 20 }) }],
     check: audible(0.01),
   },
+  // ── Enemy aircraft (src/audio/airTargets.ts) ──
+  {
+    name: 'MiG-29 300 m, closing at 120 m/s (Doppler-shifted whine)', base: {}, tick: 0.05, air: airFrame('fighter', 300, 120),
+    check: whineAt(CONFIG.audio.airTargets.fighter.whineHz * airDoppler(120)),
+  },
+  { name: 'MiG-29 2.5 km away', base: {}, tick: 0.05, air: airFrame('fighter', 2500, 120), check: audible(1e-4) },
+  { name: 'Mi-24 250 m (rotor)', base: {}, tick: 0.05, seconds: 2.5, air: airFrame('helo', 250, 0), check: rotorAt(CONFIG.audio.airTargets.helo.bladeHz) },
 ];
 
 function defaultFactory(): OfflineFactory | null {
@@ -314,6 +352,8 @@ export function mixChecks(r: SelfTestResult[]): SelfTestResult[] {
   rel('mix: turbofan idle < 100 %', 'turbofan idle', 'turbofan 100 %', 2);
   rel('mix: the GAU-8 drowns the A-10 engines', 'turbofan 100 %', 'GAU-8/A burst (outside, 30 m)', 4);
   rel('mix: the GAU-8 is heavier than the M61', 'M61A1 burst (outside, 30 m)', 'GAU-8/A burst (outside, 30 m)', -1);
+  rel('mix: a MiG 2.5 km away is far quieter than at 300 m', 'MiG-29 2.5 km away', 'MiG-29 300 m, closing at 120 m/s (Doppler-shifted whine)', 12);
+  rel('mix: a MiG passing 300 m away is no louder than our own jet', 'MiG-29 300 m, closing at 120 m/s (Doppler-shifted whine)', 'jet MIL (100 %)', 0);
   const maxPeak = Math.max(...r.map((x) => x.peak));
   out.push({ name: 'mix: nothing clips (limiter + soft clipper)', rms: 0, db: db(maxPeak), peak: maxPeak, ok: maxPeak <= 0.99, detail: `max peak ${maxPeak.toFixed(3)} (${fmtDb(maxPeak)})` });
   return out;
@@ -337,6 +377,7 @@ export async function runAudioSelfTest(opts: { seconds?: number; sampleRate?: nu
       let cf: CombatAudioFrame = { ...NO_COMBAT, ...(sc.combat ?? {}) };
       audio.update(cur, 0);
       if (sc.combat) audio.combat.update(cf);
+      if (sc.air) audio.air.update(sc.air);
       // One timeline of suspend points (render-quantum aligned, unique): ticks + events.
       const points = new Map<number, TimedInputs[]>();
       const add = (t: number, e: TimedInputs | null) => {
@@ -366,6 +407,7 @@ export async function runAudioSelfTest(opts: { seconds?: number; sampleRate?: nu
             audio.update(cur, dt);
           }
           if (sc.combat || evs.some((e) => e.combat)) audio.combat.update(cf);
+          if (sc.air) audio.air.update(sc.air);
           return ctx.resume();
         });
       }

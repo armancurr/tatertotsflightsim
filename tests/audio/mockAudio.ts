@@ -156,6 +156,13 @@ export class MockDelay extends MockNode {
   }
 }
 
+export class MockStereoPanner extends MockNode {
+  pan = new MockParam(0, 'panner.pan');
+  constructor(ctx: MockAudioContext) {
+    super(ctx, 'stereoPanner');
+  }
+}
+
 export class MockWaveShaper extends MockNode {
   curve: Float32Array | null = null;
   oversample = 'none';
@@ -235,6 +242,9 @@ export class MockAudioContext {
   }
   createAnalyser() {
     return new MockAnalyser(this);
+  }
+  createStereoPanner() {
+    return new MockStereoPanner(this);
   }
   createBuffer(ch: number, len: number, sr: number) {
     if (!(len > 0) || !(sr > 0)) violations.push(`createBuffer(${ch},${len},${sr})`);

@@ -9,6 +9,7 @@
  *     └─ cabin path (horns, motors, whistle, intake howl, ECS, hydraulics) → cabin bus → master
  *   wind (pink band-pass sweeping with airspeed + hiss) → wind LP (duller in the cabin) → master
  *   crash layer (impact, metal, debris, scraping, explosions, impacts, crackles) + fire bed → fx bus → master
+ *   combat (gun, impacts, missiles, booms) and the enemy aircraft's engines (airTargets.ts) → master
  *   master (volume × mute × pause) → glue compressor → limiter → soft clipper → destination
  *
  * Every continuous parameter moves with setTargetAtTime (and only when its target changes),
@@ -30,6 +31,7 @@ import { createPistonVoice } from './piston';
 import { createJetVoice } from './jet';
 import { createTurbofanVoice } from './turbofan';
 import { createCombatAudio, type CombatAudio, type CombatAudioApi } from './combat';
+import { createAirAudio, type AirAudio, type AirAudioApi } from './airTargets';
 
 const A = CONFIG.audio;
 
@@ -252,6 +254,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     jet: 0, corePct: 0, whineHz: 0, fanHz: 0, whine: 0, fan: 0, roar: 0, afterburner: 0, crackle: 0, intake: 0, ecs: 0,
     hydraulic: 0, aft: 0, engineVoices: 0, crashes: 0, explosions: 0, impacts: 0, pendingExplosions: 0, crashLive: 0,
     turbofan: 0, gun: 0, gunHz: 0, gunDelayS: 0, motor: 0, combatLive: 0, impactsPlayed: 0, booms: 0, launches: 0,
+    airVoices: 0, airLevel: 0, airDoppler: 1,
   };
 
   const makeVoice = (g: Graph, kind: EngineSound): EngineVoice =>
@@ -269,6 +272,11 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     launch: (e) => guard(() => combat?.launch(e)),
     cookoff: (e) => guard(() => combat?.cookoff(e)),
     reset: () => guard(() => combat?.reset()),
+  };
+  let air: AirAudio | null = null;
+  const airApi: AirAudioApi = {
+    update: (f) => guard(() => air?.update(f)),
+    reset: () => guard(() => air?.reset()),
   };
   function guard(fn: () => void): void {
     if (disposed) return;
@@ -338,6 +346,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     L.engineVoices = 1;
     layer = makeLayer(graph);
     combat = createCombatAudio(c, graph.masterNode, graph.kit);
+    air = createAirAudio(c, graph.masterNode, seed + 17);
     primed = false;
     if (last) apply({ ...last, touchdownFpm: null }, 0);
   };
@@ -562,10 +571,14 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     get combat() {
       return combatApi;
     },
+    get air() {
+      return airApi;
+    },
     reset() {
       const c = ctx as BaseAudioContext | null;
       try {
         combat?.reset();
+        air?.reset();
         if (c) silenceCrash(c.currentTime);
         else {
           pending = [];
@@ -608,6 +621,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     levels() {
       L.crashLive = countLive();
       if (combat) combat.levels(L);
+      if (air) air.levels(L);
       return { ...L };
     },
     dispose() {
@@ -621,6 +635,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
       try {
         combat?.dispose();
         combat = null;
+        air?.dispose();
+        air = null;
         if (v && c) v.retire(c.currentTime, () => undefined);
         if (g) for (const n of g.nodes) n.disconnect();
         analyser?.disconnect();

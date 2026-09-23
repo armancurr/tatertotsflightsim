@@ -1437,6 +1437,37 @@ export const CONFIG = {
       /** Explosions: Maverick detonation size 1; a tank cook-off ~1.2. Rumble tail length grows with distance. */
       boom: { level: 1.1, rumbleS: 1.6, farRumbleS: 3.2, maxPerS: 8 },
     },
+    /**
+     * The enemy aircraft (src/audio/airTargets.ts): the nearest `voices` within `maxRangeM` of the
+     * listener, each a procedural voice — jet roar + turbine whine for the MiG-29 / Su-25, rotor
+     * thump + blade slap + tail-rotor buzz + turbine whine for the Mi-24 — Doppler-shifted by the
+     * closing speed, attenuated with distance (full inside refDistanceM, then (ref/d)^exponent),
+     * low-passed by air absorption, faded out from fadeFromM to maxRangeM, panned left/right.
+     */
+    airTargets: {
+      volume: 1.8,
+      voices: 3,
+      maxRangeM: 3000,
+      fadeFromM: 2300,
+      refDistanceM: 90,
+      distanceExponent: 0.9,
+      /** Air absorption low-pass: maxCutoffHz near, halving every absorptionHalfM, floor minCutoffHz. */
+      maxCutoffHz: 14000,
+      absorptionHalfM: 700,
+      minCutoffHz: 700,
+      /** Doppler factor limits (a fighter passing at 300 m/s + our own speed). */
+      dopplerMin: 0.55,
+      dopplerMax: 1.9,
+      /** Stereo spread (0 = mono). */
+      pan: 0.75,
+      /** Level ramp time constant, s (voices fade in/out, no clicks). */
+      rampS: 0.12,
+      /** Per class: level; jet roar band centre, turbine whine and compressor tone, Hz; exhaust vs inlet directivity. */
+      fighter: { level: 1, roarHz: 520, whineHz: 3100, compressorHz: 1150, aftRoar: 0.55, frontWhine: 0.8 },
+      attack: { level: 0.95, roarHz: 440, whineHz: 2450, compressorHz: 900, aftRoar: 0.5, frontWhine: 1 },
+      /** Mi-24: 5-blade main rotor ≈ 240 rpm (20 Hz blade pass), tail rotor buzz, TV3-117 whine. */
+      helo: { level: 0.95, bladeHz: 20, thumpHz: 85, slapHz: 650, tailHz: 58, whineHz: 4200, whine2Hz: 1650, advancingSlap: 0.8 },
+    },
   },
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────
