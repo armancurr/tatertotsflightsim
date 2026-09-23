@@ -100,6 +100,13 @@ export interface FbwConfig {
   pitchZeta: number;
   /** Roll-rate response time constant, s. */
   rollTau: number;
+  /**
+   * Roll-command shaping (optional): the commanded roll acceleration is limited to rollAccelDeg (deg/s²)
+   * while the rate builds and rollStopAccelDeg while it is taken off — a tap gives a modest bank change,
+   * a held stick builds to the full rate over ~maxRollRateDeg / rollAccelDeg seconds, releases stop crisply.
+   */
+  rollAccelDeg?: number;
+  rollStopAccelDeg?: number;
   /** Yaw loop (sideslip → 0, turn coordination): natural frequency (rad/s) and damping. */
   yawOmega: number;
   yawZeta: number;
@@ -1880,6 +1887,9 @@ function makeF16(): AircraftConfig {
       pitchOmega: 5,
       pitchZeta: 0.8,
       rollTau: 0.12,
+      /** Held full stick: 300 °/s after ~0.7 s; a 0.3 s keyboard tap ≈ 35° of bank. */
+      rollAccelDeg: 420,
+      rollStopAccelDeg: 1200,
       yawOmega: 3,
       yawZeta: 0.8,
       pedalBetaDeg: 6,
