@@ -94,7 +94,7 @@ describe('A-10 weapons HUD in the game', () => {
     await until(async () => (await hud()).message === 'NO LOCK', 'NO LOCK', 3_000);
   }, 30_000);
 
-  it('CCIP pipper low over the range: IN RNG inside 4,000 ft; cockpit view and 1024 × 768', async () => {
+  it('CCIP pipper low over the range: IN RNG inside 4,000 ft; cockpit view and 1024 × 768', { timeout: 45_000, retry: 2 }, async () => {
     await sim('sim.teleport({ x: 0, z: -4200, aglFt: 150, headingDeg: 0, speedKt: 250 })');
     await until(async () => (await hud()).pipper?.inRange === true, 'pipper in range');
     await page.screenshot({ path: 'qa/tmp/combathud-e2e-pipper-chase-1440.png' });
@@ -111,8 +111,8 @@ describe('A-10 weapons HUD in the game', () => {
     await page.waitForTimeout(1200);
     await page.screenshot({ path: 'qa/tmp/combathud-e2e-pipper-chase-1024.png' });
     await page.setViewportSize({ width: 1440, height: 900 });
-    // The pipper comes into range as the jet settles at 150 ft: wall-clock dependent on a loaded machine.
-  }, { timeout: 45_000, retry: 2 });
+    // (Retried: the pipper comes into range as the jet settles at 150 ft — wall-clock dependent on a loaded machine.)
+  });
 
   it('the Cessna shows none of it', async () => {
     await sim('sim.selectAircraft("c172rg")');
