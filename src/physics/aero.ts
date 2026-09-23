@@ -52,8 +52,10 @@ function postStallBlend(alpha: number, aS: number, aN: number, width: number): n
 }
 
 /** How far into the stall the wing is: 0 attached … 1 fully separated. */
-export function stallFactor(alphaRad: number, flapsDeg: number, cfg: Config = CONFIG): number {
-  return postStallBlend(alphaRad, stallAlphaRad(flapsDeg, cfg), negativeStallAlphaRad(cfg), cfg.aircraft.aero.stallBreakWidthDeg * DEG);
+export function stallFactor(
+  alphaRad: number, flapsDeg: number, cfg: Config = CONFIG, breakWidthDeg: number = cfg.aircraft.aero.stallBreakWidthDeg,
+): number {
+  return postStallBlend(alphaRad, stallAlphaRad(flapsDeg, cfg), negativeStallAlphaRad(cfg), breakWidthDeg * DEG);
 }
 
 /**
@@ -61,12 +63,14 @@ export function stallFactor(alphaRad: number, flapsDeg: number, cfg: Config = CO
  * stall angle, then collapsing over stallBreakWidthDeg toward the flat-plate
  * curve flatPlateLift·sin(2α). Continuous everywhere, α in radians.
  */
-export function liftCoefficient(alphaRad: number, flapsDeg: number, cfg: Config = CONFIG): number {
+export function liftCoefficient(
+  alphaRad: number, flapsDeg: number, cfg: Config = CONFIG, breakWidthDeg: number = cfg.aircraft.aero.stallBreakWidthDeg,
+): number {
   const a = cfg.aircraft.aero;
   const cl0 = a.cl0 + a.clFlapsFull * flapFraction(flapsDeg, cfg);
   const aS = stallAlphaRad(flapsDeg, cfg);
   const aN = negativeStallAlphaRad(cfg);
-  const b = postStallBlend(alphaRad, aS, aN, a.stallBreakWidthDeg * DEG);
+  const b = postStallBlend(alphaRad, aS, aN, breakWidthDeg * DEG);
   // Flat plate, plus part of the flap increment (a flapped wing still lifts more when stalled).
   const fp = a.flatPlateLift * Math.sin(2 * alphaRad) + a.postStallFlapLiftFraction * (cl0 - a.cl0) * Math.cos(alphaRad);
   if (b >= 1) return fp;
@@ -75,26 +79,153 @@ export function liftCoefficient(alphaRad: number, flapsDeg: number, cfg: Config 
 }
 
 /**
+ * Transonic/supersonic zero-lift drag factor (1 for aircraft without a transonic config): 1 up to
+ * machCrit, a smooth rise to peakFactor at machPeak, then easing toward factorAtMach2 at Mach 2 and
+ * holding there. Continuous in Mach.
+ */
+export function machDragFactor(mach: number, cfg: Config = CONFIG): number {
+  const t = cfg.aircraft.aero.transonic;
+  if (!t || !(mach > t.machCrit)) return 1;
+  if (mach <= t.machPeak) return 1 + (t.peakFactor - 1) * smoothstep(t.machCrit, t.machPeak, mach);
+  return t.peakFactor + (t.factorAtMach2 - t.peakFactor) * smoothstep(t.machPeak, 2, mach);
+}
+
+/**
  * Drag coefficient: parasite (cd0 + gear + flaps) + induced CL²/(π·e·AR) +
  * sideslip cdBeta·β², blended past the stall toward flatPlateDrag·sin²α.
  * Induced drag is held at its stall-peak value past the stall so total drag
  * never falls as α grows.
  */
-export function dragCoefficient(alphaRad: number, betaRad: number, flapsDeg: number, gearPos: number, cfg: Config = CONFIG): number {
+export function dragCoefficient(
+  alphaRad: number, betaRad: number, flapsDeg: number, gearPos: number, cfg: Config = CONFIG,
+  breakWidthDeg: number = cfg.aircraft.aero.stallBreakWidthDeg, mach = 0,
+): number {
   const ac = cfg.aircraft;
   const a = ac.aero;
   const f = flapFraction(flapsDeg, cfg);
-  const parasite = a.cd0 + a.cdGear * clamp(gearPos, 0, 1) + a.cdFlapsFull * f + a.cdBeta * betaRad * betaRad;
+  const tr = a.transonic;
+  const parasite = a.cd0 * machDragFactor(mach, cfg) + a.cdGear * clamp(gearPos, 0, 1) + a.cdFlapsFull * f + a.cdBeta * betaRad * betaRad;
   const aS = stallAlphaRad(flapsDeg, cfg);
   const aN = negativeStallAlphaRad(cfg);
   const aspect = (ac.wingSpan * ac.wingSpan) / ac.wingArea;
   const clAtt = attachedLift(clamp(alphaRad, aN, aS), a.cl0 + a.clFlapsFull * f, a.clAlpha, aS, aN, a.stallRoundingDeg * DEG);
-  const induced = (clAtt * clAtt) / (Math.PI * ac.oswald * aspect);
-  const b = postStallBlend(alphaRad, aS, aN, a.stallBreakWidthDeg * DEG);
+  const induced = ((clAtt * clAtt) / (Math.PI * ac.oswald * aspect)) * (tr && mach > 1 ? 1 + tr.inducedGain * (mach - 1) : 1);
+  const b = postStallBlend(alphaRad, aS, aN, breakWidthDeg * DEG);
   if (b <= 0) return parasite + induced;
   const s = Math.sin(alphaRad);
   const separated = Math.max(a.flatPlateDrag * s * s, induced);
   return parasite + induced + (separated - induced) * b;
+}
+
+// ─── Strip-theory wing (roll/yaw moments, stall and spin) ───────────────────────
+
+export interface StripGeometry {
+  /** Spanwise station of each strip centre (m, > 0) and its area (m²; both halves together sum to wingArea). */
+  y: Float64Array;
+  area: Float64Array;
+  /** Washout at the station, rad (+ = more incidence than mid-span). */
+  twist: Float64Array;
+  /** 1 where the strip carries aileron, else 0. */
+  aileron: Float64Array;
+  /** Gain that makes the attached-flow strip roll damping equal config clP. */
+  kAttached: number;
+  /** Local α change (rad) of the aileron strips at full aileron that reproduces config clAileron. */
+  aileronAlpha: number;
+}
+
+const stripCache = new WeakMap<object, StripGeometry>();
+
+/** Spanwise strips of one half wing from the planform (constant-chord inner panel, tapered outer panel). */
+export function wingStripGeometry(cfg: Config = CONFIG): StripGeometry {
+  const ac = cfg.aircraft;
+  const cached = stripCache.get(ac);
+  if (cached) return cached;
+  const a = ac.aero;
+  const n = Math.max(1, Math.round(a.wingStrips));
+  const semi = ac.wingSpan / 2;
+  const geo = ac.geometry;
+  const chordAt = (y: number) => {
+    if (y <= geo.wingTaperStart) return geo.wingRootChord;
+    const t = clamp((y - geo.wingTaperStart) / Math.max(1e-6, semi - geo.wingTaperStart), 0, 1);
+    return geo.wingRootChord + (geo.wingTipChord - geo.wingRootChord) * t;
+  };
+  const g: StripGeometry = {
+    y: new Float64Array(n), area: new Float64Array(n), twist: new Float64Array(n), aileron: new Float64Array(n), kAttached: 1, aileronAlpha: 0,
+  };
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const yc = ((i + 0.5) / n) * semi;
+    g.y[i] = yc;
+    g.area[i] = chordAt(yc) * (semi / n);
+    sum += g.area[i];
+    g.twist[i] = a.washoutDeg * DEG * (0.5 - yc / semi);
+    g.aileron[i] = yc / semi >= a.aileronSpanStart ? 1 : 0;
+  }
+  const k = ac.wingArea / 2 / sum;
+  let sy2 = 0;
+  let syAil = 0;
+  for (let i = 0; i < n; i++) {
+    g.area[i] *= k;
+    sy2 += g.area[i] * g.y[i] * g.y[i];
+    syAil += g.area[i] * g.y[i] * g.aileron[i];
+  }
+  const S = ac.wingArea;
+  const b = ac.wingSpan;
+  // Strip theory: Clp = −4·CLα·Σ(S·y²)/(S·b²) (per half wing), Clδa = 2·CLα·Δα·Σ_ail(S·y)/(S·b).
+  const clpStrip = (-4 * a.clAlpha * sy2) / (S * b * b);
+  g.kAttached = clpStrip < 0 ? a.clP / clpStrip : 1;
+  g.aileronAlpha = syAil > 0 ? (a.clAileron * S * b) / (2 * a.clAlpha * syAil * g.kAttached) : 0;
+  stripCache.set(ac, g);
+  return g;
+}
+
+/**
+ * The wing's roll and yaw moments from strip theory (N·m, aircraft convention: L + right wing down,
+ * N + nose right). Each strip meets the air at its local angle of attack atan2(w + p·y, u − r·y) plus
+ * washout and aileron and reads its lift/drag from the same curves as the whole wing. Roll comes from
+ * the strips' normal force: roll damping, the yaw-rate roll (Clr), the ailerons — scaled in attached
+ * flow to the calibrated clP/clAileron — and, once the down-going wing stalls, autorotation. Yaw comes
+ * from the strips' chordwise force: adverse yaw, the leading-edge suction of an unstalled wing, and
+ * the loss of it (plus the drag) of a stalled one.
+ *
+ * @param u forward, w downward air-relative body speeds (m/s); p roll, r yaw rates (rad/s)
+ * @param wingStall whole-wing stall factor 0..1 (blends the roll gain toward stripRollGainStalled)
+ */
+export function wingStripMoments(
+  u: number, w: number, p: number, r: number, density: number, flapsDeg: number, aileron: number, wingStall: number,
+  cfg: Config = CONFIG,
+): { L: number; N: number } {
+  const a = cfg.aircraft.aero;
+  const g = wingStripGeometry(cfg);
+  const ail = clamp(aileron, -1, 1) * g.aileronAlpha;
+  const half = 0.5 * density;
+  const bw = a.stripStallBreakWidthDeg;
+  let L = 0;
+  let N = 0;
+  for (let i = 0; i < g.y.length; i++) {
+    const y = g.y[i];
+    for (let side = -1; side <= 1; side += 2) {
+      const x = side * y;
+      const ui = u - r * x;
+      const wi = w + p * x;
+      const qi = half * (ui * ui + wi * wi) * g.area[i];
+      const ai = Math.atan2(wi, ui);
+      // Right aileron (+) raises the right aileron: less α on the right outer strips, more on the left.
+      const aEff = ai + g.twist[i] - side * ail * g.aileron[i];
+      const cl = liftCoefficient(aEff, flapsDeg, cfg, bw);
+      const cd = dragCoefficient(aEff, 0, flapsDeg, 0, cfg, bw);
+      const ca = Math.cos(ai);
+      const sa = Math.sin(ai);
+      const cn = cl * ca + cd * sa;
+      // Chordwise force (+ aft): leading-edge suction while attached, lost as the strip stalls.
+      const cAtt = cd * ca - cl * sa;
+      const cc = cAtt + (a.cd0 - cAtt) * stallFactor(aEff, flapsDeg, cfg, bw);
+      L -= x * qi * cn;
+      N += x * qi * cc;
+    }
+  }
+  const kL = g.kAttached + (a.stripRollGainStalled - g.kAttached) * clamp(wingStall, 0, 1);
+  return { L: L * kL, N: N * a.stripYawGain };
 }
 
 /** Pilot surfaces as the aero model sees them (per unit, this sim's sign convention). */
@@ -103,6 +234,14 @@ export interface SurfaceInputs {
   aileron: number;
   rudder: number;
   elevatorTrim: number;
+}
+
+/** Optional inputs of computeAero beyond the classic ones (defaults: Mach 0, speed brake in). */
+export interface AeroExtras {
+  /** Flight Mach number (drives the transonic drag rise of jets). */
+  mach?: number;
+  /** Speed brake extension 0..1. */
+  speedBrake?: number;
 }
 
 export interface AeroResult {
@@ -149,6 +288,7 @@ export function computeAero(
   thrust: number,
   cfg: Config = CONFIG,
   wingHeightM = Infinity,
+  extras: AeroExtras = {},
 ): AeroResult {
   const ac = cfg.aircraft;
   const a = ac.aero;
@@ -171,9 +311,19 @@ export function computeAero(
   const phi = Number.isFinite(h16) ? (h16 * h16) / (1 + h16 * h16) : 1;
   const ge = (1 - phi) * (1 - sf);
   const CL0 = liftCoefficient(alpha, flapsDeg, cfg);
-  const CL = CL0 * (1 + a.groundEffectLift * ge);
+  // Fuselage crossflow (Allen & Perkins) past the stall: the body meets the air broadside and adds a normal
+  // force ΔCN = k·sin α·|sin α| (resolved into lift and drag) — it keeps a spin's descent slow.
+  const sinA = Math.sin(alpha);
+  const dCN = a.bodyCrossflowCn * sinA * Math.abs(sinA) * sf;
+  const CL = CL0 * (1 + a.groundEffectLift * ge) + dCN * Math.cos(alpha);
   const aspect = (b * b) / S;
-  const CD = dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg) - ge * ((CL0 * CL0) / (Math.PI * ac.oswald * aspect));
+  const mach = extras.mach ?? 0;
+  const sb = extras.speedBrake ?? 0;
+  const CD =
+    dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg, a.stallBreakWidthDeg, mach) -
+    ge * ((CL0 * CL0) / (Math.PI * ac.oswald * aspect)) +
+    dCN * Math.abs(sinA) +
+    a.cdSpeedBrake * clamp(sb, 0, 1);
   const f = flapFraction(flapsDeg, cfg);
 
   // Propeller slipstream adds dynamic pressure over the tail (momentum theory Δp = T/A).
@@ -213,22 +363,31 @@ export function computeAero(
   const dampC = halfRhoVS * c * (c / 2);
   const W = ac.mass * cfg.sim.gravity;
 
-  // Stall: roll damping is lost (reversed past stallRollDampingLoss = 1) as the wing stalls. Only part of
-  // the loss applies while the aircraft is coordinated, so a coordinated stall breaks straight and a
-  // slipping/yawing one drops a wing and autorotates. The autorotative moment saturates at high roll
-  // rates (the down-going wing goes deep into the flat-plate region), which bounds the spin rate.
+  // Wing roll/yaw moments. Attached flow, or a stalled wing meeting the air symmetrically: the calibrated
+  // linear derivatives (a coordinated stall breaks straight). A stalled wing with asymmetric flow — rolling,
+  // yawing, sideslipping or with aileron — strip theory: the down-going (or down-aileron) wing stalls deeper,
+  // loses lift and suction (wing drop, autorotation → spin). Blend weight = stall × asymmetry.
   const Vref = V > 5 ? V : 5;
-  const pHat = (p * b) / (2 * Vref);
-  const rHat = (r * b) / (2 * Vref);
-  const asym = clamp((Math.abs(beta) + a.stallWingDropYawGain * Math.abs(rHat)) / (a.stallAsymmetryRefDeg * DEG), 0, 1);
-  const coord = a.stallCoordinatedDampingFraction;
-  const loss = a.stallRollDampingLoss * sf * (coord + (1 - coord) * asym);
-  const pLim = a.stallAutorotationRateLimit;
+  const asym = (Math.abs(p) + Math.abs(r)) * (b / (2 * Vref)) + a.stripAsymBeta * Math.abs(beta) + a.stripAsymAileron * Math.abs(ctl.aileron);
+  const aStall = stallAlphaRad(flapsDeg, cfg);
+  const nearStall = smoothstep(aStall - a.stripStallBlendDeg * DEG, aStall + a.stripStallBlendDeg * DEG, alpha);
+  const wStrip = nearStall * smoothstep(a.stripAsymOnset, a.stripAsymFull, asym);
+  let Lwing = qbar * S * b * a.clAileron * ctl.aileron + dampB * (a.clP * p + a.clR * r);
+  let Nwing = qbar * S * b * a.cnAileron * ctl.aileron + dampB * a.cnP * p;
+  if (wStrip > 0) {
+    const st = wingStripMoments(ad.u * fade, ad.w * fade, p * fade, r * fade, density, flapsDeg, ctl.aileron, sf, cfg);
+    Lwing += (st.L - Lwing) * wStrip;
+    Nwing += (st.N - Nwing) * wStrip;
+  }
+  // At high α the fin sits in the wake of the stalled wing: directional stability and yaw damping fade,
+  // the rudder a little.
+  const finK = 1 - a.stallYawDampingLoss * sf;
+  const rudK = 1 - a.stallRudderLoss * sf;
 
   const Lroll =
-    qbar * S * b * (a.clBeta * beta + a.clAileron * ctl.aileron - a.stallWingDrop * sf * beta - a.clP * loss * pLim * Math.tanh(pHat / pLim)) +
+    qbar * S * b * a.clBeta * beta +
     qTail * S * b * a.clRudder * ctl.rudder +
-    dampB * (a.clP * p + a.clR * r + a.stallWingDrop * sf * a.stallWingDropYawGain * r);
+    Lwing;
   // Ground effect: less downwash at the tail near the ground → nose-down, growing with lift.
   const hr = wingHeightM > 0 ? wingHeightM / (a.groundEffectScale * b) : 0;
   const groundEffect = 1 / (1 + hr * hr);
@@ -237,13 +396,14 @@ export function computeAero(
     qTail * S * c * (1 - a.stallTailBlanking * sf) * (a.cmElevator * ctl.elevator + a.cmTrim * ctl.elevatorTrim) +
     dampC * kTail * (a.cmQ + a.cmAlphaDot) * q;
   const Nyaw =
-    qbar * S * b * (kTail * a.cnBeta * beta + a.cnAileron * ctl.aileron - a.pFactor * (posThrust / W) * (alpha > 0 ? alpha : 0)) +
-    qTail * S * b * a.cnRudder * ctl.rudder +
-    dampB * (a.cnP * p + kTail * a.cnR * r);
+    qbar * S * b * (kTail * finK * a.cnBeta * beta - a.pFactor * (posThrust / W) * (alpha > 0 ? alpha : 0)) +
+    qTail * S * b * rudK * a.cnRudder * ctl.rudder +
+    dampB * kTail * finK * a.cnR * r +
+    Nwing;
 
   const t = torqueFromLMN(Lroll, Mpitch, Nyaw);
-  // Thrust acts at the prop hub: τ = hub × (0, 0, −T).
-  const hub = ac.geometry.propHub;
+  // Thrust acts at the prop hub (a jet: its thrust point): τ = hub × (0, 0, −T).
+  const hub = ac.engine.jet ? ac.engine.jet.thrustPoint : ac.geometry.propHub;
   const tx = t.x - hub.y * thrust;
   const ty = t.y + hub.x * thrust;
 

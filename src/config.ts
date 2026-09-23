@@ -13,6 +13,114 @@
 
 const DEG = Math.PI / 180;
 
+// ─── Aircraft sub-configs that only some aircraft have (owned by src/physics) ──────────────────
+
+/** Piston + propeller (the Cessna) or turbofan with afterburner (the F-16). */
+export type EngineType = 'piston' | 'jet';
+
+/** Turbofan with afterburner. `engine.idleRpm` / `engine.maxRpm` are core speed in % (≈ 70 / 100). */
+export interface JetEngineConfig {
+  /** Sea-level static thrust at military (full dry) power, N. */
+  milThrustN: number;
+  /** Sea-level static thrust with full afterburner, N. */
+  maxThrustN: number;
+  /** Sea-level static thrust at idle, N. */
+  idleThrustN: number;
+  /** Throttle above this detent lights the afterburner (below it: idle → military). */
+  abDetent: number;
+  /** Afterburner intensity just past the detent (minimum AB), 0..1. */
+  abMin: number;
+  /** Afterburner light-off needs the core at ≥ this fraction of military. */
+  abLightCore: number;
+  /** Afterburner intensity ramp rates, 1/s (up ≈ 1 s to full; down = cut). */
+  abRampUpPerSec: number;
+  abRampDownPerSec: number;
+  /** Core spool time constants, s: accelerating from idle / near military, and decelerating. */
+  spoolUpTauIdle: number;
+  spoolUpTauMil: number;
+  spoolDownTau: number;
+  /** Thrust lapse with density: thrust ∝ σ^k. */
+  densityExponent: number;
+  /**
+   * Mach effect on thrust (momentum drag at low speed, ram recovery above): dry thrust ×
+   * (1 − lowSpeedLapse·M + ramDry·M²), afterburner increment × (1 − lowSpeedLapse·M + ramAb·M²).
+   */
+  lowSpeedLapse: number;
+  ramDry: number;
+  ramAb: number;
+  /** Where the thrust acts (body frame, m): on the body axis → no pitching moment. */
+  thrustPoint: { x: number; y: number; z: number };
+}
+
+/** Transonic/supersonic drag (jets). CD0 × factor(M), induced drag × (1 + inducedGain·max(0, M − 1)). */
+export interface TransonicConfig {
+  /** Drag divergence starts here… */
+  machCrit: number;
+  /** …and CD0 peaks here, at peakFactor × the subsonic value. */
+  machPeak: number;
+  peakFactor: number;
+  /** CD0 factor at Mach 2 (falls from the peak toward it). */
+  factorAtMach2: number;
+  inducedGain: number;
+}
+
+/** Fly-by-wire control laws (see src/physics/fbw.ts). Null = direct mechanical controls. */
+export interface FbwConfig {
+  /** Stick full aft / forward commands these load factors (gear up), g. */
+  maxG: number;
+  minG: number;
+  /** Angle-of-attack limiter, deg (gear up / gear handle down), and the negative limit. */
+  aoaLimitDeg: number;
+  aoaLimitGearDownDeg: number;
+  minAoaDeg: number;
+  /** Full lateral stick commands this roll rate, deg/s (gear up / down); reduced at high α. */
+  maxRollRateDeg: number;
+  maxRollRateGearDownDeg: number;
+  /** Roll rate is scaled down to this fraction as α rises from rollAoaStartDeg to the AoA limit. */
+  rollAoaStartDeg: number;
+  rollAtAoaLimitFraction: number;
+  /**
+   * Sideslip limiter (departure protection): the roll command fades out as |β| grows from
+   * betaLimitStartDeg to betaLimitFullDeg (a fast roll at high α turns α into β — roll coupling).
+   */
+  betaLimitStartDeg: number;
+  betaLimitFullDeg: number;
+  /**
+   * Curved stick gradients (like the F-16's force stick): command ∝ (1 − k)·s + k·s³ in roll and
+   * (1 − k)·s + k·s·|s| in pitch — fine control near centre, full authority at the stops.
+   */
+  rollShaping: number;
+  pitchShaping: number;
+  /** Gear handle down (take-off/landing gains): full stick commands this flight-path rate, deg/s. */
+  pathRateGearDownDeg: number;
+  /** Neutral stick holds the flight path up to this bank angle (bank compensation), deg. */
+  bankCompensationDeg: number;
+  /** Pitch loop: natural frequency (rad/s) and damping of the angle-of-attack response. */
+  pitchOmega: number;
+  pitchZeta: number;
+  /** Roll-rate response time constant, s. */
+  rollTau: number;
+  /** Yaw loop (sideslip → 0, turn coordination): natural frequency (rad/s) and damping. */
+  yawOmega: number;
+  yawZeta: number;
+  /** Full pedal commands this sideslip in the air, deg. */
+  pedalBetaDeg: number;
+  /**
+   * On the wheels (take-off/landing gains): pitch-rate command. Stabilator = stick × groundElevatorGain
+   * (feed-forward) + groundPitchRateGain × (q_cmd − q) [per rad/s]; full stick commands
+   * groundPitchRateDeg, and the command fades to 0 at groundPitchLimitDeg of pitch (tail-strike
+   * protection, rate groundPitchProtectGain per rad of margin).
+   */
+  groundElevatorGain: number;
+  groundPitchRateGain: number;
+  groundPitchRateDeg: number;
+  groundPitchLimitDeg: number;
+  groundPitchProtectGain: number;
+  /** Seconds after lift-off over which the ground (direct) laws blend into the flight laws. */
+  liftoffBlendS: number;
+}
+
+
 export const CONFIG = {
   // ─── Simulation core ───────────────────────────────────────────────────────
   sim: {
@@ -105,32 +213,67 @@ export const CONFIG = {
 
       // Yaw
       cnBeta: 0.065,
-      cnP: -0.03,
+      /**
+       * Yaw from roll rate (wing adverse yaw minus the fin's proverse part). Tuned down from −0.03 with
+       * cnAileron so an aileron-only (keyboard) roll-in no longer swings the nose the wrong way first:
+       * the heading follows the bank within ~0.3 s, < 1° wrong-way (tests/physics/turn-entry.test.ts).
+       */
+      cnP: -0.01,
       cnR: -0.099,
-      /** Yaw moment at full right aileron (+1) — adverse yaw, so negative. */
-      cnAileron: -0.006,
+      /**
+       * Yaw moment at full right aileron (+1). The 172's Frise-type, differential ailerons (20° up /
+       * 15° down) are designed to cancel aileron adverse yaw: net slightly proverse (was −0.006, which
+       * swung the nose ~5° the wrong way on a keyboard roll-in).
+       */
+      cnAileron: 0.001,
       /** Yaw moment at full right rudder (+1). */
       cnRudder: 0.032,
 
-      /** Past the stall, roll damping reverses by this fraction (wing drop / autorotation tendency). */
-      stallRollDampingLoss: 1.6,
+      // ── Stall / spin: strip-theory wing (see aero.ts wingStripMoments) ──
+      // Each half wing is split into spanwise strips that see their own local angle of attack
+      // (α + p·y/V, washout, the ailerons on the outer strips) and local airspeed (u − r·y). The wing's
+      // roll moment (damping, Clr, aileron) and its yaw moment (adverse yaw, the drag of a stalled wing,
+      // leading-edge suction of an unstalled one) come from summing the strips. In attached flow the
+      // strip roll moment is scaled to match clP and clAileron above (their calibration is kept); as the
+      // wing stalls the down-going wing loses lift (autorotation → spin), a down aileron deepens the
+      // stall of its wing, and the gain moves to stripRollGainStalled.
       /**
-       * In a coordinated stall only this fraction of the damping loss applies (the wing drops only when
-       * the aircraft is yawing/slipping, so a coordinated stall breaks straight).
+       * The strip moments take over from the linear ones as the wing stalls AND the flow over it turns
+       * asymmetric: weight = stall weight × smoothstep(onset, full, asymmetry), asymmetry =
+       * |p̂| + |r̂| + kβ·|β| + kA·|aileron| (p̂ = p·b/2V). A stalled wing meeting the air symmetrically keeps
+       * the linear damping, so a coordinated, wings-level stall breaks straight.
        */
-      stallCoordinatedDampingFraction: 0.35,
-      /** Sideslip (deg, plus yaw-rate equivalent) at which the full stall damping loss / autorotation applies. */
-      stallAsymmetryRefDeg: 4,
-      /** The autorotative roll moment saturates above this non-dimensional roll rate p̂ = p·b/2V (bounded spin rate). */
-      stallAutorotationRateLimit: 0.15,
+      /** …where the stall weight ramps from 0 to 1 over ±this many degrees around the stall angle. */
+      stripStallBlendDeg: 1.5,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      /** Strips per half wing. */
+      wingStrips: 4,
+      /** Geometric washout, degrees: the tip meets the air this much lower than the root (root stalls first). */
+      washoutDeg: 3,
+      /** Wing sections lose their lift more gradually past the stall than the whole-wing break above, degrees. */
+      stripStallBreakWidthDeg: 12,
+      /** Gain on the raw strip-theory roll moment once the wing is fully stalled (attached: set by clP). */
+      stripRollGainStalled: 0.7,
+      /** Gain on the strip yaw moment. */
+      stripYawGain: 1,
+      /** The ailerons span the strips outboard of this fraction of the half span. */
+      aileronSpanStart: 0.55,
+      /**
+       * At high α the fin and rudder sit in the wake of the stalled wing and stabiliser: the directional
+       * stability and yaw damping (cnBeta, cnR) lose this fraction once the wing is fully stalled.
+       */
+      stallYawDampingLoss: 0.3,
+      /** …and the rudder loses this fraction (it still stops a spin). */
+      stallRudderLoss: 0.2,
+      /** Fuselage crossflow normal force at high α: ΔCN = k·sin α·|sin α| (referenced to the wing area). */
+      bodyCrossflowCn: 0.3,
       /** Past the stall the flaps keep this fraction of their lift increment (flapped stalls are gentler). */
       postStallFlapLiftFraction: 0.5,
-      /** Past the stall, extra roll moment per radian of sideslip/yaw (uncoordinated stalls drop a wing). */
-      stallWingDrop: 0.12,
-      /** Weight of the yaw rate (non-dimensional r̂ = r·b/2V) relative to sideslip in the stall wing drop. */
-      stallWingDropYawGain: 2,
       /** Past the stall, extra nose-down pitch moment coefficient (the "break"). */
-      stallPitchBreak: -0.08,
+      stallPitchBreak: -0.12,
       /** Past the stall the tail sits in the stalled wing's wake: elevator/trim effectiveness drops by this fraction. */
       stallTailBlanking: 0.4,
       /** Extra dynamic pressure over the tail from the propeller slipstream, as a fraction of thrust/(½ρ·disc area). */
@@ -152,9 +295,17 @@ export const CONFIG = {
       groundEffectScale: 0.25,
       /** P-factor/torque: yaw moment coefficient (nose left) per unit (thrust/weight · alpha), for alpha > 0 (rigged neutral in cruise). */
       pFactor: 0.08,
+      /** Extra zero-lift drag with the speed brake out (aircraft without one: 0). */
+      cdSpeedBrake: 0,
+      /** Mach drag rise (jets); null = incompressible (the Cessna never gets near it). */
+      transonic: null as TransonicConfig | null,
     },
 
     engine: {
+      /** Piston + constant-speed prop. */
+      type: 'piston' as EngineType,
+      /** Jet parameters (jets only). */
+      jet: null as JetEngineConfig | null,
       /** Lycoming O-360: 180 hp. */
       maxPowerW: 134000,
       /** Static (zero airspeed) full-throttle thrust, N. */
@@ -192,6 +343,10 @@ export const CONFIG = {
       rateDegPerSec: 6,
       /** Max flap extension speed (white arc top), knots. */
       vfeKt: 100,
+      /** Trailing-edge flaps that come down automatically with the gear handle (F-16 flaperons), deg; 0 = none. */
+      autoWithGearDeg: 0,
+      /** …only below this IAS, kt. */
+      autoRetractKt: 0,
     },
 
     gear: {
@@ -323,6 +478,9 @@ export const CONFIG = {
       /** Sliding friction of the tail skid/tailcone on a gentle scrape. */
       tailSkidFriction: 0.4,
     },
+
+    /** Fly-by-wire control laws; null = the pilot's controls drive the surfaces directly. */
+    fbw: null as FbwConfig | null,
 
     limits: {
       vsoKt: 40,
@@ -1209,29 +1367,169 @@ export function cloneConfig(): Config {
  * contact points both read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch
  * the ground at y = −1.75 with the struts extended.
  *
- * The flight values below start as a rough placeholder derived from the C172 section; the
- * physics owner replaces them with the real F-16 model (jet engine + afterburner, high-AoA
- * aero, Mach drag rise, fly-by-wire limits).
+ * Flight model (src/physics): F110 turbofan with afterburner (engine.type 'jet'), a CLα ≈ 3.5/rad
+ * wing whose leading-edge-extension vortex lift carries CLmax ≈ 1.6 to ~32° α, transonic drag rise,
+ * speed brake, flaperons that droop 20° with the gear handle, and fly-by-wire (g / roll-rate
+ * command, 25° AoA limiter, sideslip-zeroing yaw loop). Calibration: src/physics/aircraft.ts header.
+ * Stability derivatives after Stevens & Lewis / Nguyen et al. (NASA TP-1538), rounded.
  */
 function makeF16(): AircraftConfig {
-  const a = structuredClone(CONFIG.aircraft);
-  a.name = 'F-16C Fighting Falcon';
-  a.registration = '90-0772';
-  a.mass = 12000;
-  a.inertia = { pitch: 75674, yaw: 85552, roll: 12875 };
-  a.wingArea = 27.87;
-  a.wingSpan = 9.96;
-  a.meanChord = 3.45;
-  a.engine.maxPowerW = 12e6;
-  a.engine.staticThrustN = 76000;
-  a.gear.retractable = true;
-  a.gear.transitTime = 4;
-  // Struts sized for ~11× the Cessna's weight.
-  a.ground = { ...a.ground, springMain: 650000, damperMain: 65000, springNose: 420000, damperNose: 38000 };
-  a.limits.vneKt = 800;
-  a.limits.structuralFailureG = 13.5;
-  a.geometry = {
-    ...a.geometry,
+  const c172 = CONFIG.aircraft;
+  return {
+    name: 'F-16C Fighting Falcon',
+    registration: '90-0772',
+    /** Clean, full internal fuel (~3,200 kg), pilot, gun ammo. */
+    mass: 12000,
+    inertia: { pitch: 75674, yaw: 85552, roll: 12875 },
+    wingArea: 27.87,
+    wingSpan: 9.96,
+    meanChord: 3.45,
+    oswald: 0.8,
+
+    aero: {
+      /** Cambered (LEF-scheduled) wing: CL at zero body α. */
+      cl0: 0.1,
+      clAlpha: 3.5,
+      /** Vortex lift from the strakes keeps the lift rising to CLmax ≈ 1.6 at ~32°. */
+      stallAlphaDeg: 32,
+      stallAlphaNegDeg: -20,
+      stallRoundingDeg: 14,
+      stallBreakWidthDeg: 15,
+      flatPlateLift: 1.3,
+      flatPlateDrag: 1.7,
+      cd0: 0.0185,
+      cdGear: 0.02,
+      /** Flaperons 20° (gear handle down). */
+      cdFlapsFull: 0.02,
+      clFlapsFull: 0.3,
+      stallAlphaFlapsShiftDeg: 0,
+      cmFlapsFull: -0.03,
+      cdBeta: 0.4,
+      cyBeta: -1.0,
+      cyRudder: -0.1,
+      /** Relaxed static stability: nearly neutral in pitch; the FBW does the rest. */
+      cm0: 0,
+      cm0Tail: 0,
+      cmAlpha: -0.25,
+      cmQ: -5,
+      cmAlphaDot: -1.5,
+      /** All-moving stabilator (~10 m², ±25°): big authority — it has to rotate against the thrust line. */
+      cmElevator: 0.6,
+      cmTrim: 0.05,
+      clBeta: -0.06,
+      clP: -0.35,
+      clR: 0.1,
+      /** Flaperons + differential stabilator. */
+      clAileron: 0.05,
+      clRudder: 0.01,
+      cnBeta: 0.12,
+      cnP: -0.02,
+      cnR: -0.35,
+      cnAileron: -0.004,
+      cnRudder: 0.045,
+      stripStallBlendDeg: 3,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      wingStrips: 4,
+      /** Leading-edge flaps, not twist, keep the outer wing flying. */
+      washoutDeg: 0,
+      stripStallBreakWidthDeg: 20,
+      /** Low-aspect-ratio wing: weak autorotation (the F-16 is spin-resistant; the FBW keeps it out of it anyway). */
+      stripRollGainStalled: 0.3,
+      stripYawGain: 1,
+      aileronSpanStart: 0.3,
+      /** Past ~30° α the fin sits in the fuselage/strake wake (the F-16's famous loss of directional stability). */
+      stallYawDampingLoss: 0.5,
+      stallRudderLoss: 0.5,
+      bodyCrossflowCn: 0.4,
+      postStallFlapLiftFraction: 0.5,
+      stallPitchBreak: -0.02,
+      stallTailBlanking: 0.3,
+      /** No propeller: nothing blows over the tail, no P-factor. */
+      propwashTail: 0,
+      propwashTailMaxRatio: 1,
+      cmGroundEffect: 0.03,
+      groundEffectLift: 0.12,
+      groundEffectScale: 0.25,
+      pFactor: 0,
+      /** Two 60° petals beside the nozzle. */
+      cdSpeedBrake: 0.06,
+      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.0, inducedGain: 0.7 },
+    },
+
+    engine: {
+      type: 'jet',
+      jet: {
+        /** F110-GE-129: 17,155 lbf dry, ~29,000 lbf with afterburner (installed). */
+        milThrustN: 76300,
+        maxThrustN: 129000,
+        idleThrustN: 3500,
+        abDetent: 0.9,
+        abMin: 0.3,
+        abLightCore: 0.92,
+        abRampUpPerSec: 1.0,
+        abRampDownPerSec: 3,
+        spoolUpTauIdle: 3.2,
+        spoolUpTauMil: 0.6,
+        spoolDownTau: 1.1,
+        densityExponent: 0.8,
+        lowSpeedLapse: 0.45,
+        ramDry: 0.3,
+        ramAb: 0.4,
+        /** Nozzle centre, slightly below the CG (≈ 1.45 m above the runway). */
+        thrustPoint: { x: 0, y: -0.3, z: 7.0 },
+      },
+      // Piston/prop keys unused by a jet except where noted.
+      maxPowerW: 0,
+      staticThrustN: 76300,
+      propEfficiency: 1,
+      spoolUpTau: 1,
+      spoolDownTau: 1,
+      idlePower: 0,
+      /** Core speed (N2), % — what `state.engine.rpm` reports for a jet. */
+      idleRpm: 70,
+      maxRpm: 100,
+      /** Jet fuel starter spin-up to light-off, s (shortened for play). */
+      startTime: 6,
+      /** Windmilling core % per knot with the engine off. */
+      windmillRpmPerKt: 0.05,
+      /** Starter-motored core %, before light-off. */
+      crankRpm: 25,
+      rpmTau: 0.35,
+      spinDownTau: 3,
+      windmillDragCoeff: 0,
+    },
+
+    flaps: {
+      /** Flaperon droop, deg (they also come down automatically with the gear handle). */
+      notchesDeg: [0, 10, 20],
+      rateDegPerSec: 15,
+      vfeKt: 370,
+      autoWithGearDeg: 20,
+      autoRetractKt: 370,
+    },
+
+    gear: {
+      retractable: true,
+      transitTime: 4,
+      vleKt: 300,
+      retractDelay: 1.5,
+      squatSwitch: true,
+    },
+
+    surfaces: {
+      elevatorMaxDeg: 25,
+      aileronMaxDeg: 20,
+      rudderMaxDeg: 30,
+      flapMaxDeg: 20,
+      trimTabMaxDeg: 0,
+      nosewheelSteerMaxDeg: 32,
+    },
+
+    geometry: {
+      ...c172.geometry,
     length: 15.06,
     height: 4.88,
     noseWheel: { x: 0, y: -1.75, z: -3.5 },
@@ -1267,8 +1565,110 @@ function makeF16(): AircraftConfig {
       { name: 'bellyMid', x: 0, y: -0.8, z: 0.0 },
       { name: 'cabinRoof', x: 0, y: 1.25, z: -3.8 },
     ],
+    },
+
+    /** Visual-only (src/aircraft; the F-16 model owner may override). */
+    model: structuredClone(c172.model),
+
+    ground: {
+      /** Struts sized for ~11× the Cessna's weight. */
+      springMain: 650000,
+      damperMain: 65000,
+      springNose: 420000,
+      damperNose: 38000,
+      rollingFriction: { ...c172.ground.rollingFriction },
+      /** Anti-skid brakes. */
+      brakeFriction: 0.45,
+      lateralFriction: 0.7,
+      frictionSmoothing: 0.25,
+      /** Nosewheel steering is for taxiing: its authority fades out by ~50 kt. */
+      steeringFadeSpeed: 25,
+      steeringMinFraction: 0.08,
+      longitudinalSmoothing: 0.05,
+      bottomOutStiffness: 10,
+      reboundDampingFactor: 3,
+      tailSkidFriction: 0.4,
+    },
+
+    fbw: {
+      maxG: 9,
+      minG: -3,
+      aoaLimitDeg: 25,
+      aoaLimitGearDownDeg: 16,
+      minAoaDeg: -10,
+      maxRollRateDeg: 300,
+      maxRollRateGearDownDeg: 120,
+      rollAoaStartDeg: 10,
+      rollAtAoaLimitFraction: 0.25,
+      betaLimitStartDeg: 3,
+      betaLimitFullDeg: 8,
+      rollShaping: 0.6,
+      pitchShaping: 0.5,
+      pathRateGearDownDeg: 6,
+      bankCompensationDeg: 45,
+      pitchOmega: 5,
+      pitchZeta: 0.8,
+      rollTau: 0.12,
+      yawOmega: 3,
+      yawZeta: 0.8,
+      pedalBetaDeg: 6,
+      groundElevatorGain: 0.5,
+      groundPitchRateGain: 10,
+      groundPitchRateDeg: 5,
+      /** Tail clearance: the tailcone meets the runway at ≈ 13.5° with the struts compressed. */
+      groundPitchLimitDeg: 12,
+      groundPitchProtectGain: 2,
+      liftoffBlendS: 1,
+    },
+
+    limits: {
+      vsoKt: 115,
+      vs1Kt: 130,
+      vrKt: 150,
+      vxKt: 250,
+      vyKt: 350,
+      vaKt: 350,
+      vnoKt: 600,
+      /** 800 KCAS placard. */
+      vneKt: 800,
+      gLimitPos: 9,
+      gLimitNeg: -3,
+      /** Ultimate load ≈ 1.5 × 9 g. */
+      structuralFailureG: 13.5,
+      structuralFailureNegG: -6,
+      /** IAS beyond 800 × 1.08 ≈ 865 KIAS fails the airframe. */
+      overspeedFailureFactor: 1.08,
+      maxAngularRate: 8,
+    },
+
+    stall: {
+      warningMarginDeg: 3,
+      recoveryHysteresisDeg: 2,
+    },
+
+    landing: {
+      butterFpm: 150,
+      smoothFpm: 360,
+      firmFpm: 660,
+      hardFpm: 960,
+      maxBankDeg: 12,
+      /** Nose gear first. */
+      minPitchDeg: -3,
+      minAirborneTime: 1.5,
+      ditchSpeedKt: 0,
+      scrapeSpeedMs: 3,
+      terrainImpactMs: 8,
+      terrainPenetrationM: 0.3,
+      nearGroundAglM: 40,
+      obstacleCheckAglM: 400,
+    },
+
+    spawn: {
+      runwayStartOffset: 60,
+      /** 3° final from 6 km at 150 kt, flaperons down (notch 2 = 20°). */
+      approach: { distance: 6000, height: 330, speedKt: 150, flapsNotch: 2, throttle: 0.5, aimPointM: 300 },
+    },
   };
-  return a;
 }
 
 export const F16_AIRCRAFT: AircraftConfig = makeF16();
