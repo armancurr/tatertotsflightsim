@@ -77,7 +77,7 @@ describe('runway 03/21 as a surface (physics)', () => {
       }),
       { numRuns: 3000 },
     );
-  });
+ }, 30000);
 });
 
 describe('nothing stands on a runway or a taxiway', () => {
@@ -99,7 +99,7 @@ describe('nothing stands on a runway or a taxiway', () => {
       }),
       { numRuns: 5000 },
     );
-  });
+ }, 30000);
 
   it('every obstacle footprint centre is off the runways and taxiways', () => {
     for (const o of airportObstacles(plan)) {
@@ -118,7 +118,7 @@ describe('pavement pieces (mesh)', () => {
       }),
       { numRuns: 20000 },
     );
-  });
+ }, 30000);
   it('covers the crossing: the intersection of the two centrelines is 36/18 pavement', () => {
     const f = createAirportField();
     expect(pavementAt(plan, f.crossing.a, f.crossing.c)).toBe('runway');

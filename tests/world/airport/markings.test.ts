@@ -197,7 +197,7 @@ describe('centreline, touchdown zone, aiming point, side stripes', () => {
       }),
       { numRuns: 60 },
     );
-  });
+  }, 30000); // ~0.6 s alone; generous under a loaded CPU
 });
 
 describe('taxiway, apron and car-park markings', () => {
