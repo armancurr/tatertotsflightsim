@@ -231,3 +231,14 @@ weights were a local array indexed with variables, which Apple's Metal driver ke
 plain colour fixed it, with the picture unchanged (mean difference 0.02–0.04/255). Auto quality now
 steps MSAA 4 → 2 → 0 before the image gets blurrier. Default quality at Taterville is now about
 59 fps. Full quality (4× MSAA) is still about 42 there, logged as P1 in RESUME.md.
+
+**Black blocks over the F-16 (JT's play test, after the release candidate).** In chase view with
+the afterburner lit, a big stair-stepped black rectangle covered the jet. The plume shader took
+`pow()` of an interpolated varying. With MSAA, an edge pixel shades outside its triangle, where that
+value dips below 0, and `pow()` of a negative is NaN on Apple GPUs. Additive blending wrote the NaN
+into the HDR target, and the new bloom chain blurred it into whole mip texels. It was invisible
+before bloom. Fixed at the source, plus containment in `src/render/hdrSafe.ts`: bloom and metering
+drop NaN, Inf and negative taps, checked on the bits because fast-math compilers fold `isnan()`.
+The exposure feedback loop can't keep a NaN. Tests: a repo-wide lint (no `pow()` of a bare varying)
+and browser e2e tests for the repro and for a forced NaN. Lesson: any full-screen blur turns one bad
+pixel into a visible block, so every post pass that reads the scene must sanitise its input.

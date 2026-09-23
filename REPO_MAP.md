@@ -7,7 +7,7 @@ descriptions come from each file's own opening comment, so this map stays accura
 `npm run repo-map` after adding, moving or renaming files.
 
 Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.worktrees/`
-(temporary agent workspaces) and the QA image folders. 803 files, 196,206 lines.
+(temporary agent workspaces) and the QA image folders. 806 files, 198,032 lines.
 
 ## Start here
 
@@ -120,8 +120,8 @@ Project root: the page (`index.html`), build/test config, the licence and the pr
 | `LICENSE` | 22 | MIT licence. |
 | `PLAN.md` | 132 | The build plan: architecture contracts, agent rules and the wave history. |
 | `README.md` | 355 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
-| `RECORD.md` | 234 | The build log: what was done, decisions, bugs found and their causes. |
-| `REPO_MAP.md` | 1414 | This file: every folder and file and what it is for. |
+| `RECORD.md` | 245 | The build log: what was done, decisions, bugs found and their causes. |
+| `REPO_MAP.md` | 1417 | This file: every folder and file and what it is for. |
 | `RESUME.md` | 161 | Hand-off notes: exactly where the work stopped and what to do next. |
 | `SECURITY.md` | 24 | How to report a security problem privately. |
 | `index.html` | 25 | The one web page. Holds the canvas container and the HUD layer and loads `src/main.ts`. |
@@ -172,15 +172,15 @@ Extra documentation (how the tests are organised) and shelved work waiting to be
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `a10-burning-convoy.jpg` | 967 |  |
+| `a10-burning-convoy.jpg` | 1181 |  |
 | `a10-cockpit.jpg` | 846 |  |
-| `a10-maverick-hit.jpg` | 1386 |  |
-| `a10-maverick-lock.jpg` | 843 |  |
+| `a10-maverick-hit.jpg` | 1653 |  |
+| `a10-maverick-lock.jpg` | 1239 |  |
 | `b747-cockpit.jpg` | 827 |  |
 | `b747-final.jpg` | 723 |  |
 | `cessna-cockpit.jpg` | 916 |  |
-| `cessna-river-coast.jpg` | 1030 |  |
-| `f16-afterburner-mountains.jpg` | 1163 |  |
+| `cessna-river-coast.jpg` | 1320 |  |
+| `f16-afterburner-mountains.jpg` | 1487 |  |
 | `f16-cockpit.jpg` | 1236 |  |
 | `f16-fox2.jpg` | 894 |  |
 | `f16-mig-kill.jpg` | 874 |  |
@@ -332,7 +332,7 @@ The 3D Cessna 172RG: fuselage, wings, tail, retractable gear, propeller, paint, 
 | `index.ts` | 583 | Procedural USAF F-16C Block 50 "Fighting Falcon" (serial 90-0772): exterior, cockpit, animation, afterburner plume, lights and crash break-up — built entirely in code. |
 | `livery.ts` | 493 | The F-16's paint, drawn on canvas: USAF "Hill Gray II" counter-shading — FS 36118 gunship grey over the spine and nose, FS 36270 on the sides, wings, stabilators and fin, FS 36375 underneath — with soft sprayed demarc… |
 | `materials.ts` | 248 | F-16 materials. |
-| `nozzle.ts` | 375 | F110-GE-129 exhaust: 16 external nozzle petals with the divergent flaps inside (one instanced mesh; the petals converge at military power and open wide in afterburner / at idle), the augmentor liner and flame holders … |
+| `nozzle.ts` | 378 | F110-GE-129 exhaust: 16 external nozzle petals with the divergent flaps inside (one instanced mesh; the petals converge at military power and open wide in afterburner / at idle), the augmentor liner and flame holders … |
 | `shape.ts` | 399 | PURE shape of the F-16C Block 50 (no three.js): the anchor points shared with the physics (`F16_AIRCRAFT.geometry`), the fuselage cross-sections (key-framed, monotone-cubic interpolated along the body, Catmull-Rom aro… |
 | `surfaces.ts` | 476 | F-16 lifting and control surfaces: cropped-delta wings (fixed box, leading-edge flap, flaperon), wingtip LAU-129 rails with AIM-9M missiles, all-moving stabilators, the fin with its rudder and base fairing, the split … |
 
@@ -599,7 +599,7 @@ The renderer and the atmosphere: sky, sun, shadows, haze (fog), clouds, lens fla
 | `atmosphere.ts` | 485 | The atmosphere: sky, sun light + soft shadows, sky-lit environment map, aerial-perspective fog on every material, cumulus clouds, cirrus, and the data the output pass needs for the lens flare and in-cloud whiteout. |
 | `atmosphereModel.ts` | 233 | Physically based clear-sky model — pure TypeScript, no three.js. |
 | `atmosphereState.ts` | 280 | Everything the renderer needs to light the scene for one sun direction and camera height, derived from the physical sky model (pure, no three.js): sun light colour/intensity, sky irradiance, ground radiance (env map l… |
-| `bloom.ts` | 313 | Cheap physically-motivated bloom (veiling glare of the lens/eye) for HDR highlights: sun glints on water and canopies, runway and town lights at dusk, the sun itself. |
+| `bloom.ts` | 317 | Cheap physically-motivated bloom (veiling glare of the lens/eye) for HDR highlights: sun glints on water and canopies, runway and town lights at dusk, the sun itself. |
 | `blueNoise.ts` | 104 | Blue-noise dither tile by void-and-cluster (Ulichney 1993), pure. |
 | `capabilities.ts` | 103 | Can this browser run the simulator? |
 | `cloudBudget.ts` | 173 | Frame-budget controller for the clouds (pure). |
@@ -613,10 +613,11 @@ The renderer and the atmosphere: sky, sun, shadows, haze (fog), clouds, lens fla
 | `fog.ts` | 482 | Aerial perspective for EVERY material: a global override of three.js' fog shader chunks with height-based, sun-aware atmospheric haze. |
 | `frameData.ts` | 58 | Per-frame hand-off from the atmosphere (sun, in-cloud whiteout) to the renderer's output pass, stored on scene.userData so the app only has to call renderer.render(scene, camera). |
 | `gpuTimer.ts` | 89 | GPU pass timing with EXT_disjoint_timer_query_webgl2 (when the browser exposes it). |
+| `hdrSafe.ts` | 34 | NaN/Inf containment for the HDR post stack. |
 | `jobQueue.ts` | 161 | Time-sliced background work for the renderer (pure; no DOM needed). |
 | `lensflare.ts` | 104 | Subtle sun lens flare, drawn in the HDR output pass (post.ts). |
 | `logDepthPatch.ts` | 95 | Logarithmic-depth support for custom ShaderMaterials. |
-| `metering.ts` | 201 | Eye adaptation / camera metering on the GPU: a gentle, view-dependent trim on top of the time-of-day exposure (atmosphereState.ts), like a camera's centre-weighted metering or an eye adapting when you look into the su… |
+| `metering.ts` | 208 | Eye adaptation / camera metering on the GPU: a gentle, view-dependent trim on top of the time-of-day exposure (atmosphereState.ts), like a camera's centre-weighted metering or an eye adapting when you look into the su… |
 | `noise.ts` | 59 | Small deterministic PRNG + value noise for procedural render textures and layouts (pure). |
 | `post.ts` | 377 | HDR → display output pass: one full-screen triangle that applies, in order, the volumetric clouds (depth-aware upsampling of the low-resolution cloud buffer, composited as scene·T + L; see volumetricClouds.ts), the le… |
 | `quality.ts` | 134 | Quality presets: what a player gets without touching any setting (pure; see tests/render/quality.test.ts). |
@@ -1018,8 +1019,9 @@ End-to-end tests: start the real game in a headless test browser and drive it wi
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `app.e2e.test.ts` | 223 | End-to-end: the real page in headless Chromium (GPU WebGL where there is a GPU), driven only through the keyboard and observed only through `window.sim` (plus the title, the viewport and the full-screen canvas). |
+| `hdrNan.e2e.test.ts` | 154 | End-to-end: a NaN/Inf in the HDR scene must never turn into black blocks on screen. |
 | `lookdev.e2e.test.ts` | 83 | End-to-end: the look-dev post stack (filmic curve, eye-adaptation metering, bloom chain, camera white balance) compiles, links and runs in a real browser at every time of day, with no GL errors or feedback-loop warnin… |
-| `robustness.e2e.test.ts` | 278 | End-to-end robustness of what a stranger downloads: the PRODUCTION build (vite build with the GitHub Pages sub-path --base, served by vite preview) in headless Chromium. |
+| `robustness.e2e.test.ts` | 295 | End-to-end robustness of what a stranger downloads: the PRODUCTION build (vite build with the GitHub Pages sub-path --base, served by vite preview) in headless Chromium. |
 | `sortie-range.sortie.ts` | 100 | Sortie e2e — the A-10 at the target range, flown ONLY by the keyboard QA pilot (scripts/qa-pilot.js) in headless Chrome for Testing: `?aircraft=a10&spawn=range` → a Maverick shot (T until LOCK, Z) on a live tank → a k… |
 | `sortie.vitest.config.ts` | 19 | Opt-in runner for the long keyboard-pilot sorties (not part of `npm test`: a flown sortie takes ~3 min of wall time and depends on every combat system being merged): npx vitest run -c tests/e2e/sortie.vitest.config.ts |
 | `towns.e2e.test.ts` | 69 | End-to-end: the building shaders (near archetypes with trees, awnings and water towers, the mid LOD with its dithered tree cross-fade, the shadow depth material) compile and draw in a real browser — the towns gallery … |
@@ -1173,6 +1175,7 @@ Tests for the renderer and atmosphere maths: sky, fog, clouds, shadows, budget c
 | `dynamicResolution.ramp.test.ts` | 86 | Dynamic resolution: the fast first ramp (`rampUpDelay`) from a conservative start, and the start-up `warmup` during which slow frames (streaming, shader compiles) are not judged. |
 | `dynamicResolution.test.ts` | 86 | Tests. |
 | `fog.test.ts` | 151 | Tests. |
+| `hdrSafe.test.ts` | 102 | NaN/Inf containment in the HDR post stack (src/render/hdrSafe.ts). |
 | `jobQueue.test.ts` | 157 | Time-sliced job queue (jobQueue.ts): generators advance until the per-step budget is spent, in FIFO order, and completion callbacks fire once. |
 | `lensflare.test.ts` | 42 | Tests. |
 | `logDepthPatch.test.ts` | 84 | Logarithmic depth for custom ShaderMaterials (src/render/logDepthPatch.ts) — what Firefox and Safari render with (no EXT_clip_control). |
