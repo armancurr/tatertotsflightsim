@@ -25,7 +25,8 @@ import { CONFIG, type Config, type TargetClassConfig, type WeaponsConfig } from 
 import type { CombatStats, GroundTarget, RangeInfo, TargetKind, WeaponsStatus } from '../combat/types';
 import { emptyWeaponsStatus } from '../combat/world';
 import type { Vec3 } from '../types';
-import { jetHeadingTape, jetHudOmitsGunCross } from './jetHud';
+import { jetHeadingTape, jetHudCompact, jetHudOmitsGunCross } from './jetHud';
+import { hudGlassToBox, type HudGlass } from './hudGlass';
 import {
   ammoLabel, bearingDeg, clampToRect, createScreenPt, formatKm, formatSlantRange, gunAmmoText, gunLineDir, lockBox, missileStoresText,
   pipperArcFraction, projectPoint, relativeBearingDeg, weaponsVisibility, type LockBox, type Rect, type WeaponsVisibility,
@@ -91,6 +92,11 @@ export interface WeaponsHudFrame {
   /** A short message and when it goes, s ('' = none). */
   message: string;
   messageUntil: number;
+  /**
+   * Cockpit view with a HUD combiner: the glass' projection (src/ui/hudGlass.ts). Everything is
+   * then laid out in the glass' HUD box and drawn clipped to the glass; not visible → nothing drawn.
+   */
+  glass?: HudGlass | null;
 }
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
@@ -101,7 +107,7 @@ export function createWeaponsHudFrame(): WeaponsHudFrame {
     ax: 0, ay: 0, az: 0, qx: 0, qy: 0, qz: 0, qw: 1, headingDeg: 0,
     weapons: null, status: emptyWeaponsStatus(), kills: 0, targets: [],
     classOf: (k) => CONFIG.combat.targets[k], range: null, rangeGroundY: 0, time: 0, seekerActive: false,
-    message: '', messageUntil: 0,
+    message: '', messageUntil: 0, glass: null,
   };
 }
 
@@ -136,6 +142,11 @@ export interface WeaponsHudModel {
   stores: { x: number; y: number; right: number; gun: string; gunShow: boolean; gunEmpty: boolean; msl: string; mslShow: boolean; kills: string };
   msg: { show: boolean; text: string; x: number; y: number };
   flashOn: boolean;
+  /** On the combiner glass: positions are HUD-box px, drawn through `xform` and clipped to `quad` (viewport px). */
+  glassOn: boolean;
+  xform: Float64Array;
+  quad: Float64Array;
+  glassBox: Rect;
   /** Text caches (a string is rebuilt only when its number changes). */
   cache: { rounds: number; label: string; gunName: string; msl: number; mslName: string; kills: number; rangeKey: number; lockKey: number };
 }
@@ -156,6 +167,10 @@ export function createWeaponsHudModel(cfg: Config = CONFIG): WeaponsHudModel {
     stores: { x: 0, y: 0, right: 0, gun: '', gunShow: false, gunEmpty: false, msl: '', mslShow: false, kills: 'KILLS 0' },
     msg: { show: false, text: '', x: 0, y: 0 },
     flashOn: true,
+    glassOn: false,
+    xform: new Float64Array([1, 0, 0, 1, 0, 0]),
+    quad: new Float64Array(8),
+    glassBox: { x: 0, y: 0, w: 0, h: 0 },
     cache: { rounds: NaN, label: '', gunName: '', msl: NaN, mslName: '', kills: 0, rangeKey: NaN, lockKey: NaN },
   };
 }
@@ -182,6 +197,11 @@ function rotate(out: Vec3, f: WeaponsHudFrame, x: number, y: number, z: number):
     out.z = z;
   }
   return out;
+}
+
+/** A projected point → HUD-box px on the glass (unchanged without one). */
+function toBox(gl: HudGlass | null, p: { x: number; y: number }): void {
+  if (gl) hudGlassToBox(gl, p, p.x, p.y);
 }
 
 function findTarget(f: WeaponsHudFrame, id: number | null): GroundTarget | null {
@@ -211,11 +231,27 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   m.stores.gunShow = false;
   m.stores.mslShow = false;
   m.msg.show = false;
+  m.glassOn = false;
   if (!m.show) return m;
+  // On the glass (cockpit): looking away from it hides the whole HUD.
+  const gl = !f.exterior && f.glass ? f.glass : null;
+  if (gl && !(gl.visible && size(gl.w) > 0 && size(gl.h) > 0)) {
+    m.show = false;
+    return m;
+  }
+  if (gl) {
+    m.glassOn = true;
+    m.xform.set(gl.m);
+    m.quad.set(gl.quad);
+    m.glassBox.x = 0;
+    m.glassBox.y = 0;
+    m.glassBox.w = gl.w;
+    m.glassBox.h = gl.h;
+  }
 
   const time = num(f.time);
   m.flashOn = Math.floor(time * hw.flashHz * 2) % 2 === 0;
-  const hb = f.hudBox && size(f.hudBox.w) > 0 && size(f.hudBox.h) > 0 && fin(f.hudBox.x) && fin(f.hudBox.y) ? f.hudBox : null;
+  const hb = gl ? m.glassBox : f.hudBox && size(f.hudBox.w) > 0 && size(f.hudBox.h) > 0 && fin(f.hudBox.x) && fin(f.hudBox.y) ? f.hudBox : null;
   m.font = clamp((hb ? hb.h : H * 0.5) * 0.036, 11, 17);
   m.lw = clamp(H * 0.0019, 1.3, 2.4);
   const d = m.display;
@@ -246,6 +282,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
     gunLineDir(dir, f.qx, f.qy, f.qz, f.qw, gun.boresightDownDeg);
     const R = hw.gunCrossRangeM;
     projectPoint(sp, ax + muz.x + dir.x * R, ay + muz.y + dir.y * R, az + muz.z + dir.z * R, f.view, f.proj, W, H);
+    toBox(gl, sp);
     m.gunCross.show = own && sp.onScreen;
     m.gunCross.x = sp.x;
     m.gunCross.y = sp.y;
@@ -256,6 +293,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   m.pipper.r = pr;
   if (gun && st.ccip && fin(st.ccip.x) && fin(st.ccip.y) && fin(st.ccip.z)) {
     projectPoint(sp, st.ccip.x, st.ccip.y, st.ccip.z, f.view, f.proj, W, H);
+    toBox(gl, sp);
     if (sp.inFront) {
       clampToRect(cl, sp.x, sp.y, d, pr + 2);
       m.pipper.show = true;
@@ -273,6 +311,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   if (msl && f.seekerActive) {
     gunLineDir(dir, f.qx, f.qy, f.qz, f.qw, 0);
     projectPoint(sp, ax + dir.x * 2000, ay + dir.y * 2000, az + dir.z * 2000, f.view, f.proj, W, H);
+    toBox(gl, sp);
     if (sp.onScreen) {
       m.seekerCircle.show = true;
       m.seekerCircle.x = sp.x;
@@ -289,6 +328,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
     const cls = f.classOf(lockTarget.kind);
     const p = lockTarget.position;
     projectPoint(sp, num(p.x), num(p.y) + num(cls?.height, 2) / 2, num(p.z), f.view, f.proj, W, H);
+    toBox(gl, sp);
     const depth = sp.inFront ? sp.depth : 1e4;
     const half = clamp((num(cls?.length, 7) / 2 / Math.max(1, depth)) * focal * 1.25, 9, 60);
     clampToRect(cl, sp.x, sp.y, d, half + 2);
@@ -327,6 +367,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       const cls = f.classOf(t.kind);
       projectPoint(sp, num(p.x), num(p.y) + num(cls?.height, 2) / 2, num(p.z), f.view, f.proj, W, H);
       if (!sp.onScreen) continue;
+      toBox(gl, sp);
       m.markers[2 * m.markerCount] = sp.x;
       m.markers[2 * m.markerCount + 1] = sp.y;
       m.markerCount++;
@@ -348,14 +389,16 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       }
       const rel = relativeBearingDeg(bearingDeg(ax, az, rg.x, rg.z), num(f.headingDeg));
       if (hb) {
-        const tape = jetHeadingTape(hb.w, hb.h, f.gearUp);
+        const compact = jetHudCompact(hb.w, hb.h, !!gl);
+        const tape = jetHeadingTape(hb.w, hb.h, f.gearUp, compact);
         rc.tapeShow = true;
-        rc.tapeUp = f.gearUp;
+        rc.tapeUp = f.gearUp && !compact;
         rc.tapeDir = rel > 20 ? 1 : rel < -20 ? -1 : 0;
         rc.tapeX = hb.x + hb.w / 2 + clamp(rel, -20, 20) * tape.ppd;
         rc.tapeY = hb.y + tape.y;
       }
       projectPoint(sp, rg.x, num(f.rangeGroundY), rg.z, f.view, f.proj, W, H);
+      toBox(gl, sp);
       rc.steerShow = sp.onScreen && sp.x >= d.x && sp.x <= d.x + d.w && sp.y >= d.y && sp.y <= d.y + d.h;
       rc.steerX = sp.x;
       rc.steerY = sp.y;
@@ -451,11 +494,18 @@ export function weaponsHudChanged(m: WeaponsHudModel, key: Float64Array): boolea
   put(m.cache.kills);
   put(m.msg.show ? m.msg.text.length + m.msg.text.charCodeAt(0) * 100 : -9);
   put(m.stores.x + m.stores.y * 1e4);
+  put(m.glassOn ? 1 : 0);
+  put(m.glassOn ? m.xform[4] : 0);
+  put(m.glassOn ? m.xform[5] : 0);
+  put(m.glassOn ? m.xform[0] * 1000 : 0);
+  put(m.glassOn ? m.xform[1] * 1000 : 0);
+  put(m.glassOn ? m.xform[2] * 1000 : 0);
+  put(m.glassOn ? m.xform[3] * 1000 + m.glassBox.w * 1e4 + m.glassBox.h * 1e7 : 0);
   return changed;
 }
 
 /** Length of the key array for weaponsHudChanged. */
-export const WEAPONS_HUD_KEY_LENGTH = 32;
+export const WEAPONS_HUD_KEY_LENGTH = 39;
 
 // ─── Drawing ─────────────────────────────────────────────────────────────────
 
@@ -488,6 +538,19 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
   };
 
   ctx.save();
+  if (m.glassOn) {
+    // On the combiner: clip to the glass (viewport px), then draw in its HUD box.
+    const q = m.quad;
+    ctx.beginPath();
+    ctx.moveTo(q[0], q[1]);
+    ctx.lineTo(q[2], q[3]);
+    ctx.lineTo(q[4], q[5]);
+    ctx.lineTo(q[6], q[7]);
+    ctx.closePath();
+    ctx.clip();
+    const x = m.xform;
+    ctx.transform(x[0], x[1], x[2], x[3], x[4], x[5]);
+  }
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalAlpha = 1;

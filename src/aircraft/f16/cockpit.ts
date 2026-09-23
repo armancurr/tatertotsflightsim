@@ -24,6 +24,20 @@ export interface CockpitBuild {
   panelFace: THREE.BufferGeometry;
 }
 
+/**
+ * The HUD combiner glass (F-16C wide-angle HUD): a flat pane leaning aft 16°, sized so that from
+ * the design eye it spans ~25° wide and from +5° above the boresight down to −15.5° (its bottom edge
+ * sits on the up-front controls, at the glareshield line). The mesh's local frame is the glass plane
+ * (x right, y up, z = 0), so the HUD overlay can project its 4 corners (src/ui/hudGlass.ts).
+ */
+export const HUD_COMBINER = { cx: 0, cy: 0.9345, cz: -5.0263, tilt: 0.28, w: 0.29, h: 0.2444 } as const;
+
+/** Local glass plane → model space (the combiner mesh's transform). */
+export function combinerMatrix(): THREE.Matrix4 {
+  const c = HUD_COMBINER;
+  return new THREE.Matrix4().compose(new THREE.Vector3(c.cx, c.cy, c.cz), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), c.tilt), new THREE.Vector3(1, 1, 1));
+}
+
 /** Screen canvas: left and right MFD pages (top half), the painted instrument panel (bottom half). */
 export const SCREEN_ATLAS = { width: 1024, height: 1024 } as const;
 
@@ -101,13 +115,9 @@ function buildInterior(): THREE.BufferGeometry {
   g.push(tint(hood, BLACK, 0.85, 0));
   // Instrument panel (slightly raked back) spanning the cockpit; its face is the painted panel quad.
   g.push(tint(box(0.9, 0.46, 0.04, V(0, 0.56, -5.13), -0.12, 0, 0), PANEL, 0.7, 0.1));
-  // HUD housing on the glareshield and the thin combiner frame (glass is separate).
+  // HUD housing on the glareshield and the thin combiner frame (the glass is separate).
   g.push(tint(box(0.2, 0.08, 0.2, V(0, 0.775, -5.17)), BLACK, 0.6, 0.2));
-  const hudTop = 1.0;
-  const hudBot = 0.84;
-  const hz = -5.03;
-  for (const s of [-1, 1]) g.push(tint(box(0.008, hudTop - hudBot, 0.016, V(s * 0.086, (hudTop + hudBot) / 2, hz), 0.28, 0, 0), BLACK, 0.5, 0.3));
-  g.push(tint(box(0.18, 0.012, 0.025, V(0, hudBot, hz - 0.03)), BLACK, 0.5, 0.3));
+  g.push(...combinerFrame());
   // MFD bezels (the screens and buttons are painted / separate quads).
   for (const s of [-1, 1]) g.push(tint(box(0.17, 0.17, 0.02, V(s * 0.205, 0.55, -5.1), -0.12, 0, 0), DARK, 0.6, 0.1));
   // Side consoles running from the panel back past the seat, and the cockpit sidewalls to the sills.
@@ -142,6 +152,23 @@ function buildInterior(): THREE.BufferGeometry {
   // Avionics shelf behind the seat.
   g.push(tint(box(0.62, 0.05, 1.0, V(0, 0.41, -3.25)), DARK, 0.8, 0));
   return merge(g);
+}
+
+/** Thin frame around the combiner glass (side rails and a top bar, in the glass plane) and its mount. */
+function combinerFrame(): THREE.BufferGeometry[] {
+  const c = HUD_COMBINER;
+  const M = combinerMatrix();
+  const FR = 0x1d1f21;
+  const parts: THREE.BufferGeometry[] = [];
+  const rail = 0.005;
+  const depth = 0.01;
+  const z = -depth / 2 - 0.001;
+  for (const s of [-1, 1]) parts.push(tint(box(rail, c.h + rail, depth, V(s * (c.w / 2 + rail / 2), 0, z)), FR, 0.45, 0.4));
+  parts.push(tint(box(c.w + 2 * rail, rail * 1.4, depth * 1.3, V(0, c.h / 2 + rail * 0.7, z)), FR, 0.45, 0.4));
+  // Bottom clamp where the glass enters the HUD body.
+  parts.push(tint(box(c.w + 2 * rail, 0.014, 0.03, V(0, -c.h / 2 - 0.004, -0.012)), FR, 0.55, 0.3));
+  for (const p of parts) p.applyMatrix4(M);
+  return parts;
 }
 
 function buildPilot(): { body: THREE.BufferGeometry; head: THREE.BufferGeometry } {
@@ -191,11 +218,8 @@ function buildPilot(): { body: THREE.BufferGeometry; head: THREE.BufferGeometry 
 export function buildCockpit(): CockpitBuild {
   const canopy = buildCanopy();
   const pilot = buildPilot();
-  // HUD combiner glass (two panes like the F-16's wide-angle HUD).
-  const hud = merge([
-    tint(quad(0.165, 0.15, V(0, 0.925, -5.03), 0.28, 0, 0, 1, 1), 0xffffff, 0.05, 0),
-    tint(quad(0.15, 0.05, V(0, 1.005, -5.008), 0.28, 0, 0, 1, 1), 0xffffff, 0.05, 0),
-  ]);
+  // HUD combiner glass in its own plane (the mesh is placed with combinerMatrix()).
+  const hud = tint(new THREE.PlaneGeometry(HUD_COMBINER.w, HUD_COMBINER.h), 0xffffff, 0.05, 0);
   // Screens (unlit): the two MFD faces, from the top half of the screen canvas.
   const screens = merge([
     quad(0.118, 0.118, V(-0.205, 0.551, -5.087), -0.12, 0, 0.5, 0.5, 1),

@@ -20,8 +20,10 @@ import { annunciationActive, annunciationList, crashText, describeTouchdown, sta
 import { createHelpOverlay } from './help';
 import { installHudStyle, removeHudStyle } from './hudStyle';
 import { topBarHeight } from './topBar';
-import { drawJetHud, createJetHudState, trackJetHud, type JetReadings } from './jetHud';
+import { drawJetHud, createJetHudState, trackJetHud, jetHudGeometryOnGlass, type JetReadings } from './jetHud';
+import { clipToGlass, createHudGlass, hudGlassKey, projectHudGlassObjects, HUD_GLASS_KEY_LENGTH } from './hudGlass';
 import type { HudStyle } from '../fleet/types';
+import type * as THREE from 'three';
 
 export interface Rect {
   x: number;
@@ -192,6 +194,21 @@ export interface HudInfo {
   landingLight?: boolean;
   /** True while the start-up loading veil covers the screen (the start hint waits for it). */
   veil?: boolean;
+  /**
+   * Jet, cockpit view: the camera, the aircraft's HUD combiner glass and attitude. The HUD is then
+   * drawn on the glass (conformal, clipped to it, moving with it as you look around) instead of in
+   * its screen-space box. Absent → the screen-space HUD.
+   */
+  combiner?: HudCombinerView | null;
+}
+
+export interface HudCombinerView {
+  camera: THREE.Camera;
+  combiner: THREE.Object3D;
+  /** Aircraft attitude (body → world). */
+  body: { x: number; y: number; z: number; w: number };
+  /** World velocity, m/s (flight-path marker). */
+  velocity: { x: number; y: number; z: number } | null;
 }
 
 export type PanelDrawerFn = (ctx: CanvasRenderingContext2D, w: number, h: number, r: InstrumentReadings) => void;
@@ -310,9 +327,14 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   const jetSlot = slot(jetEl);
   jetSlot.el.setAttribute('data-hud', 'jet');
   const jetState = createJetHudState();
-  const jetKey = new Float64Array(17).fill(NaN);
-  const jetNext = new Float64Array(17);
+  const JET_KEY = 18 + HUD_GLASS_KEY_LENGTH;
+  const jetKey = new Float64Array(JET_KEY).fill(NaN);
+  const jetNext = new Float64Array(JET_KEY);
   let jetDirty = true;
+  // Cockpit view with a combiner: the HUD on the glass (full-viewport canvas, clipped to the glass).
+  const glass = createHudGlass();
+  let onGlass = false;
+  let glassView: HudCombinerView | null = null;
   let menuOpen = false;
 
   // Message layer.
@@ -402,7 +424,11 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     leftEl.hidden = !L.clustersVisible;
     rightEl.hidden = !L.clustersVisible;
     compassEl.hidden = !L.compassVisible;
-    if (L.jet) {
+    if (L.jet && onGlass) {
+      place(jetEl, { x: 0, y: 0, w: vw, h: vh });
+      sizeSlot(jetSlot, 0, 0, vw, vh, dpr);
+      jetDirty = true;
+    } else if (L.jet) {
       place(jetEl, L.jet);
       sizeSlot(jetSlot, 0, 0, L.jet.w, L.jet.h, dpr);
       jetDirty = true;
@@ -506,6 +532,20 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     v[14] = Math.round((r.betaDeg ?? 0) * 10);
     v[15] = Math.round(jetState.maxG * 10);
     v[16] = r.engineStatus === 'RUNNING' ? 0 : 1;
+    v[17] = onGlass ? (glass.visible ? 1 : 2) : 0;
+    if (onGlass && glassView) {
+      projectHudGlassObjects(glass, glassView.camera, glassView.combiner, glassView.body, glassView.velocity, layout.width, layout.height);
+      v[17] = glass.visible ? 1 : 2;
+      hudGlassKey(glass, v, 18);
+      if (glass.visible) {
+        // The conformal symbols move with the world, not only with the readings.
+        v[0] = Math.round(glass.horizonOffset * 2);
+        v[1] = Math.round(glass.rotation * 1000);
+        v[14] = Math.round(glass.fpmX * 2) + 100000 * Math.round(glass.fpmY * 2);
+      }
+    } else {
+      for (let i = 18; i < JET_KEY; i++) v[i] = 0;
+    }
     let same = !jetDirty;
     for (let i = 0; i < v.length; i++) {
       if (jetKey[i] !== v[i] && !(Number.isNaN(jetKey[i]) && Number.isNaN(v[i]))) same = false;
@@ -514,7 +554,18 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     if (same) return;
     jetDirty = false;
     const c = begin(jetSlot);
-    if (c) drawJetHud(c, jetSlot.w, jetSlot.h, r, jetState, cfg);
+    if (!c) return;
+    if (!onGlass) {
+      drawJetHud(c, jetSlot.w, jetSlot.h, r, jetState, cfg);
+      return;
+    }
+    if (!glass.visible) return;
+    c.save();
+    clipToGlass(c, glass);
+    const m = glass.m;
+    c.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    drawJetHud(c, glass.w, glass.h, r, jetState, cfg, { geometry: jetHudGeometryOnGlass(glass, r), minFont: 11 });
+    c.restore();
   };
 
   const updateChip = (info: HudInfo) => {
@@ -539,8 +590,11 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
 
     // Camera mode drives the layout (cockpit view: the 3D panel shows the six-pack).
     const nextMode: HudMode = info.cameraMode === 'cockpit' ? (cfg.hud.cockpitGauges === 'compact' ? 'cockpitCompact' : 'cockpitHidden') : 'normal';
-    if (nextMode !== mode) {
+    glassView = style === 'jet' && info.cameraMode === 'cockpit' && info.combiner ? info.combiner : null;
+    const nextGlass = glassView !== null;
+    if (nextMode !== mode || nextGlass !== onGlass) {
       mode = nextMode;
+      onGlass = nextGlass;
       applyLayout();
     }
 

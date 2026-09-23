@@ -16,7 +16,7 @@ import { tint, merge } from '../materials';
 import type { AircraftVisualState } from '../types';
 import type { AircraftModelHandle, BreakupPart } from '../../fleet/types';
 import { createF16Anim, stepF16Anim } from './animate';
-import { buildCockpit, drawScreens, SCREEN_ATLAS } from './cockpit';
+import { buildCockpit, combinerMatrix, drawScreens, SCREEN_ATLAS } from './cockpit';
 import { buildFuselage } from './fuselage';
 import { buildGear } from './gear';
 import { box, ellipsoid, makeHinge, tube, V } from './geom';
@@ -172,6 +172,7 @@ export function createF16Model(): AircraftModelHandle {
   mesh(pit.screens, mats.screens, 'f16.cockpit.screens', cockpit, false);
   mesh(pit.panelFace, mats.panel, 'f16.cockpit.panel', cockpit, false).receiveShadow = true;
   const hudGlass = mesh(pit.hudGlass, mats.hud, 'f16.cockpit.hud', cockpit, false);
+  combinerMatrix().decompose(hudGlass.position, hudGlass.quaternion, hudGlass.scale);
   hudGlass.renderOrder = 2;
 
   const sb = surf.speedBrakes;

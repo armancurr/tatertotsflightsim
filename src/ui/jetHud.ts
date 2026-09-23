@@ -11,6 +11,7 @@
  */
 import { CONFIG, type Config } from '../config';
 import type { InstrumentReadings } from '../types';
+import type { HudGlass } from './hudGlass';
 
 /** Readings plus the jet extras from instruments.ts (optional so plain readings work too). */
 export type JetReadings = InstrumentReadings & { betaDeg?: number; flightPathDeg?: number; speedBrake?: boolean };
@@ -70,6 +71,41 @@ export function jetHudGeometry(r: JetReadings, w: number, h: number, cfg: Config
   };
 }
 
+const glassGeo: JetHudGeometry = { ppd: 1, bore: { x: 0, y: 0 }, rotation: 0, horizonOffset: 0, fpm: { x: 0, y: 0 } };
+
+/**
+ * The HUD geometry on the combiner glass (cockpit view), in the glass' HUD box px: the boresight
+ * and the px/deg from the projection, the horizon (ladder rotation + offset) on the world horizon,
+ * the flight-path marker on the velocity vector — each falling back to the readings when the
+ * projection has none (no horizon in view, too slow). Returns a shared object (no allocation).
+ */
+export function jetHudGeometryOnGlass(glass: HudGlass, r: JetReadings): JetHudGeometry {
+  const W = sz(glass.w);
+  const H = sz(glass.h);
+  const ppd = glass.ppd > 0 && Number.isFinite(glass.ppd) ? glass.ppd : 1;
+  const g = glassGeo;
+  g.ppd = ppd;
+  g.bore.x = fin(glass.boreX, W / 2);
+  g.bore.y = fin(glass.boreY, H / 3);
+  let roll = wrap180(fin(r.rollDeg));
+  if (roll === -180) roll = 180;
+  const pitch = clamp(fin(r.pitchDeg), -90, 90);
+  g.rotation = glass.horizonOk ? fin(glass.rotation, -roll * DEG) : -roll * DEG;
+  g.horizonOffset = glass.horizonOk ? clamp(fin(glass.horizonOffset, pitch * ppd), -1e5, 1e5) : pitch * ppd;
+  let fx: number;
+  let fy: number;
+  if (glass.fpmOk) {
+    fx = fin(glass.fpmX, g.bore.x);
+    fy = fin(glass.fpmY, g.bore.y);
+  } else {
+    fx = g.bore.x + clamp(fin(r.betaDeg), -45, 45) * ppd;
+    fy = g.bore.y + clamp(fin(r.aoaDeg), -30, 60) * ppd;
+  }
+  g.fpm.x = clamp(fx, W * 0.08, W * 0.92);
+  g.fpm.y = clamp(fy, H * 0.06, H * 0.94);
+  return g;
+}
+
 export interface Rung {
   deg: number;
   /** Offset below the boresight along the rolled vertical, px. */
@@ -123,12 +159,18 @@ export interface JetHeadingTape {
   dir: 1 | -1;
 }
 
-/** Where the heading tape sits in a w×h HUD box: bottom, or top with the gear down (shared with the weapons HUD's range caret). */
-export function jetHeadingTape(w: number, h: number, gearUp: boolean): JetHeadingTape {
+/** A small HUD box (a narrow combiner glass, like the A-10C's): compact layout, heading tape on top. */
+export function jetHudCompact(w: number, h: number, glass: boolean): boolean {
+  return glass && sz(h) < 190;
+}
+
+/** Where the heading tape sits in a w×h HUD box: bottom, or top with the gear down / on a compact glass (shared with the weapons HUD's range caret). */
+export function jetHeadingTape(w: number, h: number, gearUp: boolean, compact = false): JetHeadingTape {
   const W = sz(w);
   const H = sz(h);
-  const tw = W * 0.46;
-  return { y: gearUp ? H * 0.88 : H * 0.12, halfWidth: tw / 2, ppd: tw / 40, dir: gearUp ? -1 : 1 };
+  const tw = W * (compact ? 0.4 : 0.46);
+  const top = !gearUp || compact;
+  return { y: top ? (compact ? Math.max(H * 0.12, 24) : H * 0.12) : H * 0.88, halfWidth: tw / 2, ppd: tw / 40, dir: top ? 1 : -1 };
 }
 
 /**
@@ -164,20 +206,30 @@ const fmtThousands = (v: number): string => {
   return n < 0 ? `-${s}` : s;
 };
 
+export interface JetHudDrawOptions {
+  /** Geometry to draw with (the combiner glass' projection) instead of the screen-space one. */
+  geometry?: JetHudGeometry;
+  /** Smallest text, px (the glass HUD is small on screen: keep it readable). */
+  minFont?: number;
+}
+
 /**
  * Draw the whole HUD into a w×h area at the context's origin (CSS px). The caller clears the
  * canvas. `st` carries the max-g memory (see trackJetHud).
  */
-export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, r: JetReadings, st: JetHudState, cfg: Config = CONFIG): void {
+export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, r: JetReadings, st: JetHudState, cfg: Config = CONFIG, opts?: JetHudDrawOptions): void {
   const W = sz(w);
   const H = sz(h);
   if (!W || !H) return;
   const j = cfg.hud.jet;
   const green = j.color;
-  const g = jetHudGeometry(r, W, H, cfg);
-  const lw = Math.max(1.2, H * 0.0034);
-  const small = Math.max(9, H * 0.03);
-  const big = Math.max(11, H * 0.038);
+  const g = opts?.geometry ?? jetHudGeometry(r, W, H, cfg);
+  const minFont = Math.max(9, fin(opts?.minFont, 9));
+  const onGlass = !!opts?.geometry;
+  const compact = jetHudCompact(W, H, onGlass);
+  const lw = Math.max(opts?.geometry ? 1.4 : 1.2, H * 0.0034);
+  const small = Math.max(minFont, H * 0.03);
+  const big = Math.max(minFont + 2, H * 0.038);
 
   const strokeBoth = (build: () => void, width = lw) => {
     ctx.beginPath();
@@ -208,17 +260,18 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
 
   // ── Pitch ladder (rolled about the boresight, clipped to the middle of the HUD) ──
   // The ladder keeps clear of the heading tape (bottom with the gear up, top with it down).
-  const tapeTop = r.gear !== 'up';
+  const tapeTop = r.gear !== 'up' || compact;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(W * 0.2, tapeTop ? H * 0.19 : H * 0.03, W * 0.6, H * 0.77);
+  const clipTop = compact ? jetHeadingTape(W, H, true, true).y + small * 1.7 : tapeTop ? H * 0.19 : H * 0.03;
+  ctx.rect(W * 0.2, clipTop, W * 0.6, compact ? H * 0.96 - clipTop : H * 0.77);
   ctx.clip();
   ctx.translate(g.bore.x, g.bore.y);
   ctx.rotate(g.rotation);
   const rungs = ladderRungs(g, H);
   const half = W * 0.15;
   const gap = W * 0.06;
-  const tick = H * 0.018;
+  const tick = Math.max(H * 0.018, onGlass ? 3 : 0);
   // Horizon: one long line across the HUD.
   strokeBoth(() => {
     ctx.moveTo(-W * 0.9, g.horizonOffset);
@@ -251,7 +304,7 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
   ctx.restore();
 
   // ── Gun cross (boresight) and flight-path marker ──
-  const c = H * 0.02;
+  const c = Math.max(H * 0.02, onGlass ? small * 0.6 : 0);
   if (!jetHudOmitsGunCross(cfg)) {
     strokeBoth(() => {
       ctx.moveTo(g.bore.x - c, g.bore.y);
@@ -260,7 +313,7 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
       ctx.lineTo(g.bore.x, g.bore.y + c * 0.6);
     });
   }
-  const fr = H * 0.017;
+  const fr = Math.max(H * 0.017, onGlass ? small * 0.4 : 0);
   strokeBoth(() => {
     ctx.moveTo(g.fpm.x + fr, g.fpm.y);
     ctx.arc(g.fpm.x, g.fpm.y, fr, 0, Math.PI * 2);
@@ -273,32 +326,34 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
   });
 
   // ── Airspeed (left) and altitude (right) tapes with boxed readouts ──
-  const span = H * 0.2;
+  const span = compact ? big * 0.8 : H * 0.2;
+  // On the glass the tapes sit below the corner texts (the box is small); compact: readouts only.
+  const tapeY = compact ? H * 0.45 : onGlass ? Math.max(g.bore.y, big * 1.2 + small * 1.4 + span + 4) : g.bore.y;
   const tape = (x: number, value: number, unit: number, labelEvery: number, dir: 1 | -1, fmt: (v: number) => string, boxText: string) => {
     const pxPer = span / (unit * 4);
     const v0 = Math.floor((value - unit * 4) / unit) * unit;
-    strokeBoth(() => {
+    if (!compact) strokeBoth(() => {
       for (let v = v0; v <= value + unit * 4; v += unit) {
-        const y = g.bore.y - (v - value) * pxPer;
-        if (Math.abs(y - g.bore.y) > span) continue;
+        const y = tapeY - (v - value) * pxPer;
+        if (Math.abs(y - tapeY) > span) continue;
         const len = v % labelEvery === 0 ? H * 0.022 : H * 0.012;
         ctx.moveTo(x, y);
         ctx.lineTo(x - dir * len, y);
       }
     });
-    for (let v = Math.ceil((value - unit * 4) / labelEvery) * labelEvery; v <= value + unit * 4; v += labelEvery) {
-      const y = g.bore.y - (v - value) * pxPer;
-      if (Math.abs(y - g.bore.y) > span || Math.abs(y - g.bore.y) < big * 1.1) continue;
+    for (let v = Math.ceil((value - unit * 4) / labelEvery) * labelEvery; !compact && v <= value + unit * 4; v += labelEvery) {
+      const y = tapeY - (v - value) * pxPer;
+      if (Math.abs(y - tapeY) > span || Math.abs(y - tapeY) < big * 1.1) continue;
       text(fmt(v), x - dir * H * 0.03, y, small * 0.9, dir > 0 ? 'right' : 'left', 500);
     }
     // Box with the current value, pointing at the scale (wide enough for the digits: mono ≈ 0.62 em each).
     const bw = Math.max(big * 3.6, big * (0.62 * boxText.length + 1));
     const bh = big * 1.45;
-    const bx = dir > 0 ? Math.max(1, x - H * 0.03 - bw) : Math.min(W - bw - 1, x + H * 0.03);
+    const bx = compact ? (dir > 0 ? 2 : W - bw - 2) : dir > 0 ? Math.max(1, x - H * 0.03 - bw) : Math.min(W - bw - 1, x + H * 0.03);
     strokeBoth(() => {
-      ctx.rect(bx, g.bore.y - bh / 2, bw, bh);
+      ctx.rect(bx, tapeY - bh / 2, bw, bh);
     });
-    text(boxText, bx + bw / 2, g.bore.y, big, 'center', 700);
+    text(boxText, bx + bw / 2, tapeY, big, 'center', 700);
   };
   const ias = Math.max(0, fin(r.airspeedKt));
   const alt = fin(r.altitudeFt);
@@ -307,24 +362,25 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
 
   // ── Corner data ──
   const gl = fin(r.gLoad, 1);
-  text(`G ${gl.toFixed(1)}`, W * 0.03, H * 0.05, big, 'left', 700);
-  text(`MAX ${Math.max(st.maxG, gl).toFixed(1)}`, W * 0.03, H * 0.05 + big * 1.2, small, 'left');
-  const low = g.bore.y + span + big * 1.2;
-  text(`M ${Math.max(0, fin(r.mach)).toFixed(2)}`, W * 0.03, low, big, 'left', 700);
-  text(`AOA ${fin(r.aoaDeg).toFixed(1)}`, W * 0.03, low + big * 1.3, small, 'left');
+  const topY = onGlass ? big * 0.8 : H * 0.05;
+  text(`G ${gl.toFixed(1)}`, W * 0.03, topY, big, 'left', 700);
+  if (!compact) text(`MAX ${Math.max(st.maxG, gl).toFixed(1)}`, W * 0.03, topY + big * 1.2, small, 'left');
+  const low = tapeY + span + big * 1.2;
+  if (!compact) text(`M ${Math.max(0, fin(r.mach)).toFixed(2)}`, W * 0.03, low, big, 'left', 700);
+  if (!compact) text(`AOA ${fin(r.aoaDeg).toFixed(1)}`, W * 0.03, low + big * 1.3, small, 'left');
   const thr = clamp(fin(r.throttlePct), 0, 100);
-  text(`THR ${Math.round(thr)}%`, W * 0.97, H * 0.05, big, 'right', 700);
+  if (!compact) text(`THR ${Math.round(thr)}%`, W * 0.97, topY, big, 'right', 700);
   const ab = clamp(fin(r.afterburner), 0, 1);
   const eng = r.engineStatus === 'OFF' || r.engineStatus === 'FAILED' ? `ENG ${r.engineStatus}` : '';
-  if (ab > 0.02 || eng) text([ab > 0.02 ? 'AB' : '', eng].filter(Boolean).join('  '), W * 0.97, H * 0.05 + big * 1.2, small, 'right', 800);
+  if (ab > 0.02 || eng) text([ab > 0.02 ? 'AB' : '', eng].filter(Boolean).join('  '), W * 0.97, compact ? topY : topY + big * 1.2, small, 'right', 800);
   const agl = fin(r.altitudeAglFt);
-  if (agl < 5000) text(`R ${fmtThousands(Math.round(agl / 10) * 10)}`, W * 0.97, low, big, 'right', 700);
+  if (agl < 5000 && !compact) text(`R ${fmtThousands(Math.round(agl / 10) * 10)}`, W * 0.97, low, big, 'right', 700);
   const vs = Math.round(fin(r.verticalSpeedFpm) / 10) * 10;
-  text(`VS ${vs > 0 ? '+' : vs < 0 ? '−' : ''}${fmtThousands(Math.abs(vs))}`, W * 0.97, low + big * 1.3, small, 'right');
+  if (!compact) text(`VS ${vs > 0 ? '+' : vs < 0 ? '−' : ''}${fmtThousands(Math.abs(vs))}`, W * 0.97, compact ? low : low + big * 1.3, small, 'right');
 
   // ── Heading tape: bottom, or top with the gear down ──
   const gearUp = r.gear === 'up';
-  const htape = jetHeadingTape(W, H, gearUp);
+  const htape = jetHeadingTape(W, H, gearUp, compact);
   const tw = htape.halfWidth * 2;
   // Baseline: ticks and labels face the HUD's centre, the caret and the digital heading its edge.
   const ty = htape.y;
@@ -345,12 +401,12 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
   });
   for (const m of marks) {
     if (!m.major || Math.abs(m.x) > tw / 2 - small) continue;
-    text(m.label, W / 2 + m.x, ty + tdir * H * 0.042, small);
+    text(m.label, W / 2 + m.x, ty + tdir * Math.max(H * 0.042, compact ? small * 1.05 : 0), small);
   }
-  text(String(Math.round(wrap360(fin(r.headingDeg))) % 360).padStart(3, '0'), W / 2, ty - tdir * H * 0.058, small, 'center', 700);
+  if (!compact) text(String(Math.round(wrap360(fin(r.headingDeg))) % 360).padStart(3, '0'), W / 2, ty - tdir * H * 0.058, small, 'center', 700);
 
   // ── Configuration cues, under the vertical speed ──
-  let cy = low + big * 2.5;
+  let cy = compact ? low + small * 1.3 : low + big * 2.5;
   if (r.gear !== 'up') {
     text(r.gear === 'down' ? 'GEAR DN' : 'GEAR ⇅', W * 0.97, cy, small, 'right', 700);
     cy += big * 1.2;
