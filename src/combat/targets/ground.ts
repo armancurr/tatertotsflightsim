@@ -17,6 +17,14 @@ export interface RangeGround {
   obstacle(x: number, z: number): number;
   /** 0 = free, 1 = road (may be crossed, never parked on), 2 = keep out (farm yard, town). */
   keepOut?(x: number, z: number): number;
+  /** The roads near the site (centre lines), when known: the column drives the farm lane. */
+  roads?: readonly RangeRoad[];
+}
+
+export interface RangeRoad {
+  kind: string;
+  width: number;
+  points: readonly { x: number; z: number }[];
 }
 
 export type RangeConfig = typeof CONFIG.combat.range;

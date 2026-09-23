@@ -69,7 +69,7 @@ const mod: SystemModule = {
       runtime.install(plan);
       const counts: Partial<Record<TargetKind, number>> = {};
       for (const v of plan.vehicles) counts[v.kind] = (counts[v.kind] ?? 0) + 1;
-      renderer = createTargetsRenderer(counts);
+      renderer = createTargetsRenderer(counts, { berms: plan.berms, ground: (x, z) => env.groundHeight(x, z) });
       ctx.scene.add(renderer.group);
     };
 
@@ -94,8 +94,11 @@ const mod: SystemModule = {
       look(x: number | null, y = 0, z = 0, tx = 0, ty = 0, tz = 0, fov = 40) {
         debugCam = x === null ? null : { x, y, z, tx, ty, tz, fov };
       },
-      stats: () => ({ ...runtime.stats(), draws: renderer?.activeMeshes() ?? 0, counts: renderer?.counts() ?? {} }),
+      stats: () => ({ ...runtime.stats(), draws: renderer?.activeMeshes() ?? 0, counts: renderer?.counts() ?? {}, convoy: runtime.convoy ? { phase: runtime.convoy.phase(), dir: runtime.convoy.dir() } : null }),
+      /** The march column's units (s, lat, speed, mode) for QA. */
+      convoy: () => runtime.convoy?.units.map((u) => ({ slot: u.slot, kind: u.kind, alive: u.alive, mode: u.mode, s: +u.s.toFixed(1), lat: +u.lat.toFixed(1), speed: +u.speed.toFixed(2), x: u.x, z: u.z })) ?? [],
       plan: () => plan,
+      meshes: () => renderer?.group.children.map((c) => ({ name: c.name, visible: c.visible, count: (c as { count?: number }).count ?? null })) ?? [],
     };
     let debugInstalled = false;
     const installDebug = () => {
@@ -126,7 +129,7 @@ const mod: SystemModule = {
           f.camera.updateProjectionMatrix();
           f.camera.updateMatrixWorld();
         }
-        renderer.update(f.camera, runtime.views);
+        renderer.update(f.camera, runtime.views, ctx.atmosphere.sunDirection, f.time);
       },
       onReset() {
         runtime.reset();

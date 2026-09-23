@@ -16,6 +16,8 @@ import type { PlannedVehicle, RangePlan } from './plan';
 import { newVehicleView, ringOf, type VehicleView } from './renderer';
 import { mulberry32 } from './rng';
 import { planToss, tossPose, type TurretToss } from './toss';
+import { createConvoyDriver, type ConvoyDriver, type StaticHull } from './convoy';
+import { makePath } from './path';
 
 export interface RangeRuntimeGround {
   height(x: number, z: number): number;
@@ -42,11 +44,20 @@ export interface RangeVehicle {
   wreck: Wreck | null;
   /** Next damaged-smoke puff time. */
   nextSmoke: number;
+  /** Index of its unit in the convoy driver (−1: parked). */
+  unit: number;
+  /** Turret traverse: where it is heading (rad, hull frame) and when it picks the next bearing. */
+  turretGoal: number;
+  nextScan: number;
+  /** Metres since the last dust puff. */
+  dustAcc: number;
 }
 
 export interface RangeRuntime {
   readonly vehicles: RangeVehicle[];
   readonly views: VehicleView[];
+  /** The march column's driver (null when the plan has no track). */
+  readonly convoy: ConvoyDriver | null;
   install(plan: RangePlan): void;
   /** Advance by dt (0 while paused). */
   update(dt: number): void;
@@ -84,6 +95,7 @@ export function createRangeRuntime(world: CombatWorld, ground: RangeRuntimeGroun
     view.roll = Math.atan(-(n.x * -fz + n.z * fx) / ny);
     const settle = v.wreck ? Math.min(1, (clock - v.wreck.t0) / 1.5) * (t.kind === 'truck' ? W.truckSettle : W.settle) : 0;
     view.y = t.position.y - settle;
+    view.odo = v.unit >= 0 && convoy ? convoy.units[v.unit].odo : 0;
   };
 
   const place = (v: RangeVehicle) => {
@@ -102,9 +114,54 @@ export function createRangeRuntime(world: CombatWorld, ground: RangeRuntimeGroun
     view.camo = p.camo;
     // turrets: platoon and AAA point toward the airport side; the column's are traversed alternately
     view.turretYaw = p.group === 'convoy' ? (p.slot % 2 ? 1 : -1) * (0.15 + 0.5 * p.seed) : (p.seed - 0.5) * 0.5;
+    v.turretGoal = view.turretYaw;
+    v.nextScan = 2 + 6 * p.seed;
+    v.dustAcc = 0;
     v.wreck = null;
     v.nextSmoke = 0;
     pose(v);
+  };
+
+  /** Convoy vehicles: the driver's pose → the combat target (ground height, velocity). */
+  const follow = (v: RangeVehicle, dt: number) => {
+    if (!convoy || v.unit < 0) return;
+    const u = convoy.units[v.unit];
+    const t = v.target;
+    if (!t.alive) {
+      t.velocity.x = t.velocity.y = t.velocity.z = 0;
+      return;
+    }
+    const y = ground.height(u.x, u.z);
+    if (dt > 0) {
+      t.velocity.x = (u.x - t.position.x) / dt;
+      t.velocity.y = (y - t.position.y) / dt;
+      t.velocity.z = (u.z - t.position.z) / dt;
+    }
+    t.position.x = u.x;
+    t.position.y = y;
+    t.position.z = u.z;
+    t.headingDeg = u.headingDeg;
+  };
+
+  /** Turrets traverse between scan bearings (faster and wider in contact); the dead stay put. */
+  const slewTurret = (v: RangeVehicle, dt: number) => {
+    if (!v.target.alive || v.view.turretFree || v.target.kind === 'truck') return;
+    const T = cfg.range.turret;
+    const contact = convoy?.phase() === 'contact' && v.unit >= 0;
+    if (clock >= v.nextScan) {
+      const r = v.plan.seed * 7.31 + clock * 0.137;
+      const n = r - Math.floor(r);
+      const g = v.plan.group;
+      const side = v.plan.slot % 2 ? 1 : -1;
+      if (g === 'convoy') v.turretGoal = contact ? side * (0.9 + 0.9 * n) : side * (0.2 + 0.9 * n);
+      else if (g === 'aaa') v.turretGoal = (n - 0.5) * 3.2;
+      else if (g === 'platoon') v.turretGoal = (n - 0.5) * 0.7;
+      else v.turretGoal = (n - 0.5) * 1.6;
+      v.nextScan = clock + T.scanS[0] + (T.scanS[1] - T.scanS[0]) * n * (contact ? 0.5 : 1);
+    }
+    const d = v.turretGoal - v.view.turretYaw;
+    const step = T.slewDeg * DEG * dt * (contact ? 1.6 : 1);
+    v.view.turretYaw += Math.abs(d) <= step ? d : Math.sign(d) * step;
   };
 
   const killFx = (w: Wreck) => {
@@ -125,6 +182,10 @@ export function createRangeRuntime(world: CombatWorld, ground: RangeRuntimeGroun
   const onDestroyed = (e: Extract<CombatEvent, { type: 'destroyed' }>) => {
     const v = vehicles.find((q) => q.target.id === e.targetId);
     if (!v || v.wreck) return;
+    if (convoy && v.unit >= 0) {
+      convoy.kill(v.unit);
+      convoy.alarm();
+    }
     const rnd = mulberry32((v.target.id * 7919) ^ (resets * 104729) ^ 0x51ed);
     const t = v.target;
     const w: Wreck = {
@@ -163,9 +224,58 @@ export function createRangeRuntime(world: CombatWorld, ground: RangeRuntimeGroun
     }
   };
 
+  /** Under fire: a convoy vehicle hit, or a blast / rounds landing close to the column. */
+  const nearConvoy = (p: Vec3, r: number) => {
+    for (const v of vehicles) if (v.unit >= 0 && v.target.alive && Math.hypot(v.target.position.x - p.x, v.target.position.z - p.z) < r) return true;
+    return false;
+  };
   const unsubscribe = world.on((e) => {
     if (e.type === 'destroyed') onDestroyed(e);
+    else if (convoy && e.type === 'hit') {
+      const v = vehicles.find((q) => q.target.id === e.targetId);
+      if (v && v.unit >= 0) convoy.alarm();
+    } else if (convoy && e.type === 'detonation' && nearConvoy(e.position, 120)) convoy.alarm();
+    else if (convoy && e.type === 'impact' && e.surface !== 'target' && nearConvoy(e.point, 35)) convoy.alarm();
   });
+
+  /** Dust thrown up behind a moving vehicle: a low, slow, lingering tan cloud (reads from the air). */
+  const dustPuff = (sim: FxSim, v: RangeVehicle, speed: number) => {
+    const t = tpl;
+    Object.assign(t, newParticleInitDefaults);
+    const cls = cfg.targets[v.target.kind];
+    const h = v.target.headingDeg * DEG;
+    const fx = Math.sin(h);
+    const fz = -Math.cos(h);
+    const back = cls.length * 0.5 + 0.8;
+    const side = sim.rnd() - 0.5;
+    t.x = v.target.position.x - fx * back + -fz * side * cls.width;
+    t.y = v.target.position.y + 0.6;
+    t.z = v.target.position.z - fz * back + fx * side * cls.width;
+    t.vx = -fx * speed * 0.25 + (sim.rnd() - 0.5) * 1.2;
+    t.vy = 0.5 + 0.7 * sim.rnd();
+    t.vz = -fz * speed * 0.25 + (sim.rnd() - 0.5) * 1.2;
+    t.life = 6 + 4 * sim.rnd();
+    t.size0 = 1.8;
+    t.size1 = 7 + 4 * sim.rnd();
+    t.growTau = 2.2;
+    t.drag = 0.9;
+    t.buoyancy = 0.25;
+    t.buoyTau = 5;
+    t.alpha = 0.32;
+    t.fadeIn = 0.15;
+    t.fadeOut = 0.75;
+    const c = cfg.range.convoy.dustColor;
+    const sh = 0.85 + 0.3 * sim.rnd();
+    t.r = c[0] * sh;
+    t.g = c[1] * sh;
+    t.b = c[2] * sh;
+    t.lighten = 0.4;
+    t.turbulence = 1.1;
+    t.groundY = v.target.position.y;
+    t.tile = Math.floor(sim.rnd() * 4);
+    t.rot = sim.rnd() * 6.28;
+    sim.smoke.emit(t);
+  };
 
   const smokePuff = (sim: FxSim, x: number, y: number, z: number, g: number, dark: number) => {
     const t = tpl;
@@ -198,23 +308,67 @@ export function createRangeRuntime(world: CombatWorld, ground: RangeRuntimeGroun
     sim.smoke.emit(t);
   };
 
+  let convoy: ConvoyDriver | null = null;
+
   return {
     vehicles,
     views,
+    get convoy() {
+      return convoy;
+    },
     install(plan) {
       for (const p of plan.vehicles) {
         const target = world.addTarget({ kind: p.kind, position: { x: p.x, y: ground.height(p.x, p.z), z: p.z }, headingDeg: p.headingDeg, group: p.group });
-        const v: RangeVehicle = { plan: p, target, view: newVehicleView(p.kind as TargetKind), wreck: null, nextSmoke: 0 };
-        place(v);
+        const v: RangeVehicle = { plan: p, target, view: newVehicleView(p.kind as TargetKind), wreck: null, nextSmoke: 0, unit: -1, turretGoal: 0, nextScan: 0, dustAcc: 0 };
         vehicles.push(v);
         views.push(v.view);
       }
+      // the march column drives the track (the farm lane, or a loop)
+      const tr = plan.track;
+      const col = vehicles.filter((v) => v.plan.group === 'convoy').sort((a, b) => a.plan.slot - b.plan.slot);
+      if (tr && tr.points.length > 2 && col.length > 0) {
+        const path = makePath(tr.points, tr.kind !== 'lane');
+        const statics: StaticHull[] = vehicles
+          .filter((v) => v.plan.group !== 'convoy')
+          .map((v) => ({ x: v.plan.x, z: v.plan.z, headingDeg: v.plan.headingDeg, halfL: cfg.targets[v.plan.kind].length / 2, halfW: cfg.targets[v.plan.kind].width / 2 }));
+        convoy = createConvoyDriver(
+          { path, scatterL: tr.scatterL, scatterR: tr.scatterR, ends: tr.kind === 'lane' && tr.ends ? tr.ends : null },
+          col.map((v) => ({ kind: v.plan.kind, slot: v.plan.slot, s: v.plan.s })),
+          statics,
+          cfg.range.convoy,
+          cfg.targets,
+          Math.round(plan.site.x * 3 + plan.site.z * 5),
+        );
+        col.forEach((v, i) => (v.unit = i));
+      }
+      for (const v of vehicles) place(v);
     },
     update(dt) {
       if (!(dt > 0)) return;
       clock += dt;
       const sim = fx();
+      if (convoy) {
+        // revived by someone else (world.reviveAll): the whole column starts again
+        if (vehicles.some((v) => v.unit >= 0 && v.target.alive && !convoy!.units[v.unit].alive)) {
+          convoy.reset();
+          for (const v of vehicles) if (v.unit >= 0) place(v);
+        }
+        convoy.update(dt);
+      }
       for (const v of vehicles) {
+        follow(v, dt);
+        slewTurret(v, dt);
+        if (sim && v.unit >= 0 && v.target.alive) {
+          const u = convoy!.units[v.unit];
+          if (u.speed > 1.2) {
+            v.dustAcc += u.speed * dt;
+            const every = 1 / cfg.range.convoy.dustPerM;
+            if (v.dustAcc >= every) {
+              v.dustAcc -= every;
+              dustPuff(sim, v, u.speed);
+            }
+          }
+        }
         const t = v.target;
         const w = v.wreck;
         if (!t.alive && !w) {
@@ -259,6 +413,7 @@ export function createRangeRuntime(world: CombatWorld, ground: RangeRuntimeGroun
     reset() {
       resets++;
       world.reviveAll();
+      convoy?.reset();
       for (const v of vehicles) {
         if (v.wreck) killFx(v.wreck);
         place(v);

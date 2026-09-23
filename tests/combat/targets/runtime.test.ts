@@ -95,7 +95,9 @@ describe('range runtime: wrecks', () => {
           expect(v.target.alive && v.target.health === v.target.maxHealth).toBe(true);
           expect(v.wreck).toBeNull();
           expect(v.view.turretFree).toBe(false);
-          expect(v.target.position.x).toBe(v.plan.x);
+          // parked vehicles exactly where planned; the column has just moved off from its start
+          if (v.plan.group === 'convoy') expect(Math.hypot(v.target.position.x - v.plan.x, v.target.position.z - v.plan.z)).toBeLessThan(0.05);
+          else expect(v.target.position.x).toBe(v.plan.x);
         }
       }),
       { numRuns: 60 },

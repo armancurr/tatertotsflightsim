@@ -1854,7 +1854,32 @@ export const CONFIG = {
         regroupS: 55,
         /** Wrecks on the track are bypassed this far to the side, m. */
         bypass: 7,
+        /** Closest a follower may close up on the vehicle ahead (centre to centre), m. */
+        minGap: 13,
+        /** Pivot turns at the ends of a lane (deg/s): tracked hulls neutral-steer, wheeled ones shuffle round slower. */
+        turnRateDeg: [24, 14] as [number, number],
+        /** Pause (s) at each end of the lane before and after turning round. */
+        endPauseS: 4,
+        /** Speed while pulling off the road to scatter, m/s, and the angle off the road, deg. */
+        scatterSpeed: 4.5,
+        scatterAngleDeg: 42,
+        /** Dust kicked up behind a moving vehicle: puffs per metre driven, and the colour (linear, HDR-calibrated). */
+        dustPerM: 0.22,
+        dustColor: [0.2, 0.17, 0.12] as [number, number, number],
       },
+      /**
+       * The column drives the real farm lane through the range (read from the road network): the
+       * longest stretch of a lane of these kinds within `radius` m of the site that stays off farm
+       * yards and water, ≥ minLength m (it may pass under a hedgerow's canopy for ≤ maxCanopy m); the
+       * column turns round at each end where every vehicle has a clear circle of `turnClear` m.
+       */
+      route: { kinds: ['drive', 'lane', 'access'] as string[], radius: 800, minLength: 650, turnClear: 4.6, endMargin: 14, maxCanopy: 40 },
+      /** Soft contact shadows / ambient occlusion under every vehicle (multiplied onto the ground), and their sun-cast shadow. */
+      shadow: { strength: 0.8, castMax: 5.5, farFade: [2500, 9000] as [number, number], lift: 0.0017, pull: 0.0016 },
+      /** Earth berms and revetments (fresh-dug earth, linear albedo). */
+      berm: { color: [0.105, 0.078, 0.05] as [number, number, number], grass: [0.05, 0.062, 0.028] as [number, number, number] },
+      /** Turrets traverse (deg/s) between scan bearings every scanS s. The ZSU's radar dish spins (rev/s). */
+      turret: { slewDeg: 16, scanS: [4, 10] as [number, number], radarRevS: 0.55 },
       /** Tank platoon dug in behind berms, facing the airport; AAA site (ZSU-23-4s in revetments); logistics park. */
       platoon: { count: 4, spacing: 42 },
       aaa: { count: 2, spacing: 85 },

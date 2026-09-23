@@ -10,6 +10,9 @@ import * as THREE from 'three';
 import { CONFIG } from '../../config';
 import type { GroundKind as TargetKind } from '../types';
 import { buildClassModel, TARGET_KINDS, type ClassModel, type Lod } from './models';
+import { createShadowRenderer, newShadowShape, shadowShape } from './shadows';
+import { buildBermGeometry } from './berms';
+import type { Berm } from './plan';
 
 export interface VehicleView {
   kind: TargetKind;
@@ -33,12 +36,14 @@ export interface VehicleView {
   turretQuat: THREE.Quaternion;
   /** No turret at all (not drawn). */
   turretGone: boolean;
+  /** Metres driven (the wheels and tracks turn with it). */
+  odo: number;
 }
 
 export function newVehicleView(kind: TargetKind): VehicleView {
   return {
     kind, visible: true, x: 0, y: 0, z: 0, headingDeg: 0, pitch: 0, roll: 0, turretYaw: 0, char: 0, seed: 0, camo: 0,
-    turretFree: false, turretPos: new THREE.Vector3(), turretQuat: new THREE.Quaternion(), turretGone: false,
+    turretFree: false, turretPos: new THREE.Vector3(), turretQuat: new THREE.Quaternion(), turretGone: false, odo: 0,
   };
 }
 
@@ -59,13 +64,26 @@ export function selectLod(dist: number, prev: Lod, lod: readonly [number, number
 
 const SHADER_VERT_PARS = /* glsl */ `
 attribute vec4 aState;
+attribute vec4 aPart;
 varying vec4 vState;
+varying vec4 vPart;
 varying vec3 vObj;
 uniform float uLift;
 uniform float uPull;
+uniform float uTime;
+uniform float uDishRate;
+// the ZSU's radar dish spins about its mast (a vertical axis at z = aPart.z) while the vehicle lives
+vec2 tgDish(vec2 xz) {
+  float a = (uTime * uDishRate + aState.y) * 6.2831853 * (1.0 - step(0.001, aState.x));
+  float c = cos(a);
+  float s = sin(a);
+  vec2 p = vec2(xz.x, xz.y - aPart.z);
+  return vec2(c * p.x - s * p.y, aPart.z + s * p.x + c * p.y);
+}
 `;
 const SHADER_FRAG_PARS = /* glsl */ `
 varying vec4 vState;
+varying vec4 vPart;
 varying vec3 vObj;
 float tgHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float tgNoise(vec3 x) {
@@ -98,6 +116,20 @@ const SHADER_COLOR = /* glsl */ `
     burnt = mix(burnt, vec3(0.06, 0.058, 0.055), smoothstep(0.78, 0.9, tgNoise(vObj * 3.3 + 9.0)) * 0.6);
     base = mix(base, burnt, clamp(c * (0.75 + 0.5 * n), 0.0, 1.0));
   }
+  // running gear: wheel hubs/spokes turn and track links run with the odometer (vState.w, m)
+  if (vPart.x > 0.5 && vPart.x < 1.5) {
+    vec2 d = vec2(vObj.y - vPart.y, vObj.z - vPart.z);
+    float rr = length(d) / max(vPart.w, 0.01);
+    float a = atan(d.x, d.y) - vState.w / max(vPart.w, 0.05);
+    float spokes = smoothstep(0.45, 0.85, cos(a * 5.0)) * step(0.3, rr) * step(rr, 0.8);
+    float mud = smoothstep(0.6, 0.95, cos(a * 3.0 + 1.0)) * step(0.84, rr);
+    base *= 1.0 - 0.55 * spokes - 0.3 * mud;
+  } else if (vPart.x > 1.5 && vPart.x < 2.5) {
+    float u = (vObj.z + (vObj.y > vPart.y ? 1.0 : -1.0) * vState.w) / 0.3;
+    float fw = fwidth(u);
+    float link = smoothstep(0.62, 0.8, abs(fract(u) - 0.5) * 2.0) * clamp(1.5 - fw * 3.0, 0.0, 1.0);
+    base *= 1.0 - 0.5 * link;
+  }
   diffuseColor.rgb = base;
 }
 `;
@@ -108,9 +140,12 @@ export function createVehicleMaterial(): THREE.MeshStandardMaterial {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uLift = { value: cfg.lodLift };
     shader.uniforms.uPull = { value: cfg.depthPull };
+    shader.uniforms.uTime = timeUniform;
+    shader.uniforms.uDishRate = { value: cfg.turret.radarRevS };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${SHADER_VERT_PARS}`)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvState = aState;\nvObj = position;')
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nif (aPart.x > 2.5) objectNormal.xz = tgDish(objectNormal.xz + vec2(0.0, aPart.z)) - vec2(0.0, aPart.z);')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvState = aState;\nvPart = aPart;\nvObj = position;\nif (aPart.x > 2.5) transformed.xz = tgDish(transformed.xz);')
       .replace(
         '#include <project_vertex>',
         `#include <project_vertex>
@@ -126,9 +161,12 @@ export function createVehicleMaterial(): THREE.MeshStandardMaterial {
       .replace('#include <color_fragment>', `#include <color_fragment>\n${SHADER_COLOR}`)
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.97, vState.x);\nmetalnessFactor *= 1.0 - vState.x;');
   };
-  mat.customProgramCacheKey = () => 'targets-vehicle-v1';
+  mat.customProgramCacheKey = () => 'targets-vehicle-v2';
   return mat;
 }
+
+/** Shared clock for the vehicle shader (radar dish), s. */
+const timeUniform = { value: 0 };
 
 interface Slot {
   mesh: THREE.InstancedMesh;
@@ -143,9 +181,16 @@ interface Slot {
   maxZ: number;
 }
 
+export interface TargetsRendererOptions {
+  /** Earth berms and revetments to draw (static, draped over `ground`). */
+  berms?: readonly Berm[];
+  ground?: (x: number, z: number) => number;
+}
+
 export interface TargetsRenderer {
   readonly group: THREE.Group;
-  update(camera: THREE.Camera, views: readonly VehicleView[]): void;
+  /** Refill the instances from the views; `sun` = unit direction to the sun (contact shadows), `time` s (radar dish). */
+  update(camera: THREE.Camera, views: readonly VehicleView[], sun?: { x: number; y: number; z: number }, time?: number): void;
   /** Meshes with instances this frame (≈ draw calls before frustum culling). */
   activeMeshes(): number;
   /** Instances drawn per class/part/lod (tests). */
@@ -155,10 +200,34 @@ export interface TargetsRenderer {
 
 const DEG = Math.PI / 180;
 
-export function createTargetsRenderer(capacity: Partial<Record<TargetKind, number>>): TargetsRenderer {
+export function createTargetsRenderer(capacity: Partial<Record<TargetKind, number>>, opts: TargetsRendererOptions = {}): TargetsRenderer {
   const group = new THREE.Group();
   group.name = 'targets';
   const material = createVehicleMaterial();
+  const rc = CONFIG.combat.range;
+  let total = 0;
+  for (const k of TARGET_KINDS) total += capacity[k] ?? 0;
+  // contact shadows: one instanced draw for every vehicle
+  const shadows = createShadowRenderer(total);
+  group.add(shadows.mesh);
+  const shape = newShadowShape();
+  const DEFAULT_SUN = { x: 0.35, y: 0.8, z: -0.45 };
+  // earth berms and revetments: one static draw (the vehicle material: lift, pull, fog, dust)
+  let bermMesh: THREE.InstancedMesh | null = null;
+  if (opts.berms && opts.berms.length > 0 && opts.ground) {
+    const geo = buildBermGeometry(opts.berms, opts.ground);
+    geo.setAttribute('aState', new THREE.InstancedBufferAttribute(new Float32Array([0, 0.5, 0, 0]), 4));
+    bermMesh = new THREE.InstancedMesh(geo, material, 1);
+    bermMesh.setMatrixAt(0, new THREE.Matrix4());
+    bermMesh.name = 'targets.berms';
+    bermMesh.castShadow = true;
+    bermMesh.receiveShadow = true;
+    bermMesh.frustumCulled = true;
+    geo.computeBoundingSphere();
+    bermMesh.boundingSphere = geo.boundingSphere!.clone();
+    bermMesh.boundingSphere.radius += 10;
+    group.add(bermMesh);
+  }
   const models = new Map<string, ClassModel>();
   const slots = new Map<string, Slot>();
   const key = (kind: TargetKind, part: 'hull' | 'turret', lod: Lod) => `${kind}.${part}.${lod}`;
@@ -207,7 +276,7 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
     a[i * 4] = v.char;
     a[i * 4 + 1] = v.seed;
     a[i * 4 + 2] = v.camo;
-    a[i * 4 + 3] = 0;
+    a[i * 4 + 3] = v.odo % 10000;
     const x = m.elements[12];
     const y = m.elements[13];
     const z = m.elements[14];
@@ -227,9 +296,11 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
 
   return {
     group,
-    update(camera, views) {
+    update(camera, views, sun = DEFAULT_SUN, time = 0) {
       camera.getWorldPosition(camPos);
+      timeUniform.value = time;
       for (const s of slots.values()) s.count = 0;
+      shadows.begin();
       for (const v of views) {
         if (!v.visible) continue;
         const dist = Math.hypot(v.x - camPos.x, v.y - camPos.y, v.z - camPos.z);
@@ -241,6 +312,9 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
         Q.setFromEuler(E);
         P.set(v.x, v.y, v.z);
         M.compose(P, Q, S);
+        const cls = CONFIG.combat.targets[v.kind];
+        shadowShape(cls.length, cls.width, cls.height, v.headingDeg, sun, rc.shadow.castMax, shape);
+        shadows.add(M, shape, rc.shadow.strength, v.char);
         put(hull, M, v);
         const model = models.get(`${v.kind}.${lod}`)!;
         const tur = slots.get(key(v.kind, 'turret', lod));
@@ -254,6 +328,7 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
         }
         put(tur, M, v);
       }
+      shadows.end();
       for (const s of slots.values()) {
         s.mesh.count = s.count;
         s.mesh.visible = s.count > 0;
@@ -267,6 +342,8 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
     activeMeshes() {
       let n = 0;
       for (const s of slots.values()) if (s.count > 0) n++;
+      if (shadows.mesh.count > 0) n++;
+      if (bermMesh) n++;
       return n;
     },
     counts() {
@@ -279,6 +356,8 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
         s.mesh.geometry.dispose();
         s.mesh.dispose();
       }
+      shadows.dispose();
+      if (bermMesh) bermMesh.geometry.dispose();
       material.dispose();
       group.removeFromParent();
     },
