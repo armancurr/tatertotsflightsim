@@ -759,7 +759,7 @@ export const CONFIG = {
       maxMoving: 420,
       maxParked: 1400,
       /** Moving vehicles per km per direction by road kind (farm tracks: tractors only). */
-      density: { highway: 7, road: 4.5, access: 3, lane: 1.6, street: 3.2, drive: 0 },
+      density: { highway: 9, road: 5, access: 3, lane: 1.6, street: 3.2, drive: 0 },
       /** Village/hamlet streets (no sidewalks) carry this fraction of the street density. */
       villageStreetFactor: 0.45,
       /** Tractors driving on farm tracks near the camera (at most). */

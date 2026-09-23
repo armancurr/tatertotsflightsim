@@ -401,8 +401,8 @@ interface BodyProfile {
   roof: Key[];
   /** Inset of the roof edge from the body side. */
   tumble: number;
-  /** Painted upper body (cargo box, sleeper) over [z0, z1] up to `top`. */
-  upper?: { z0: number; z1: number; top: Key[] };
+  /** Painted upper body (cargo box, sleeper, a bus roof above its windows) over [z0, z1] from `base` (default the belt) up to `top`. */
+  upper?: { z0: number; z1: number; top: Key[]; base?: number };
   /** Plan rounding length at the front / rear. */
   roundF: number;
   roundR: number;
@@ -574,7 +574,7 @@ function body(b: Builder, P: BodyProfile, detail: number): void {
     const uRing = (zf: number): V3[] => {
       const hwB = halfW(zf) - 0.02;
       const hwT = hwB - P.tumble * 0.5;
-      const base = belt(zf) - 0.01;
+      const base = P.upper!.base ?? belt(zf) - 0.01;
       const t = Math.max(base + 0.05, top(zf));
       const z = Z(zf);
       return [
@@ -753,13 +753,14 @@ function pickupBed(b: Builder, detail: number): void {
   const zOff = s.frontOverhang + s.wheelbase / 2;
   const z0 = 3.8 - zOff;
   const z1 = 5.72 - zOff;
-  const hw = s.width / 2 - 0.1;
-  // the open bed: a dark floor just below the rails, inner walls
+  const hw = s.width / 2 - 0.12;
+  // the open bed seen from above: a dark liner inside the painted rails
+  const y = 1.3;
   b.solid(0x1c1d1f, 0.85);
-  b.quad([-hw, 1.265, z0], [hw, 1.265, z0], [hw, 1.265, z1], [-hw, 1.265, z1], [0, 1, 0]);
+  b.quad([-hw + 0.02, y, z0], [hw - 0.02, y, z0], [hw - 0.02, y, z1], [-hw + 0.02, y, z1], [0, 1, 0]);
   if (!detail) {
     b.solid(0x0c0c0d, 0.9);
-    b.quad([-hw + 0.06, 1.268, z0 + 0.05], [hw - 0.06, 1.268, z0 + 0.05], [hw - 0.06, 1.268, z1 - 0.05], [-hw + 0.06, 1.268, z1 - 0.05], [0, 1, 0]);
+    b.quad([-hw + 0.1, y + 0.003, z0 + 0.08], [hw - 0.1, y + 0.003, z0 + 0.08], [hw - 0.1, y + 0.003, z1 - 0.08], [-hw + 0.1, y + 0.003, z1 - 0.08], [0, 1, 0]);
   }
 }
 
@@ -943,7 +944,7 @@ function bus(b: Builder, detail: number): void {
       gh: [0.06, L - 0.06],
       roof: [[0.06, 1.2], [0.15, 2.5], [L - 0.15, 2.5], [L - 0.06, 1.25]],
       tumble: 0.02,
-      upper: { z0: 0.06, z1: L - 0.06, top: [[0.06, 2.5], [0.4, s.height], [L - 0.4, s.height], [L - 0.06, 2.5]] },
+      upper: { z0: 0.06, z1: L - 0.06, top: [[0.06, 2.55], [0.4, s.height], [L - 0.4, s.height], [L - 0.06, 2.55]], base: 2.45 },
       roundF: 0.25,
       roundR: 0.2,
       headY: [0.7, 0.86],

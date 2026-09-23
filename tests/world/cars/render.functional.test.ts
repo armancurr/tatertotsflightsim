@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { createCars } from '../../../src/world/cars';
+import { createCars, TrafficSim } from '../../../src/world/cars';
 import { RoadSurface } from '../../../src/world/roads/surface';
 import type { Roads } from '../../../src/world/roads';
 import { laneData, HEIGHT } from './fixtures';
@@ -46,10 +46,12 @@ describe('traffic renderer (functional, headless)', () => {
     const shadows = cars.group.getObjectByName('car-shadows') as THREE.InstancedMesh;
     const glows = cars.group.children.find((o) => (o as THREE.Points).isPoints) as THREE.Points;
     const m = new THREE.Matrix4();
+    const pose = TrafficSim.newPose();
     const dt = 1 / 15;
     let maxCalls = 0;
     let sawGlows = false;
     let checks = 0;
+    let oriented = 0;
     for (let f = 0; f < 600 / dt; f++) {
       const t = f * dt;
       const [x, z] = at(t);
@@ -77,6 +79,18 @@ describe('traffic renderer (functional, headless)', () => {
         if (i < sim.cap) expect(sim.alive[i]).toBe(1);
       }
       expect(visible).toBe(st.near);
+      // the model's front (−Z) points along the vehicle's travel
+      for (let i = 0; sim && i < sim.cap; i++) {
+        if (!sim.alive[i] || !batch.getVisibleAt(i)) continue;
+        batch.getMatrixAt(i, m);
+        sim.pose(i, 0, pose);
+        const fx = -m.elements[8];
+        const fz = -m.elements[10];
+        expect((fx * pose.hx + fz * pose.hz) / Math.hypot(fx, fz)).toBeGreaterThan(0.95);
+        // and its right (+X) is to the right of travel
+        expect(m.elements[0] * -pose.hz + m.elements[2] * pose.hx).toBeGreaterThan(0.9);
+        oriented++;
+      }
       expect(far.count).toBe(st.far);
       expect(st.near + st.far).toBe(st.drawn);
       for (let k = 0; k < far.count; k++) {
@@ -86,6 +100,7 @@ describe('traffic renderer (functional, headless)', () => {
       expect(shadows.count).toBeLessThanOrEqual(shadows.instanceMatrix.count);
     }
     expect(checks).toBeGreaterThan(100);
+    expect(oriented).toBeGreaterThan(20);
     expect(maxCalls).toBeLessThanOrEqual(8);
     expect(sawGlows).toBe(true);
     // leave the land: nothing left drawn, the pool is empty

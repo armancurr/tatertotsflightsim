@@ -48,8 +48,11 @@ export const PARK_BAND = 2.3;
 export const PARK_KERB = 0.22;
 /** Two connectors whose centre paths come closer than this conflict, m. */
 export const CONFLICT_DIST = 2.7;
-/** A U-turn at a junction starts this far before the stop line, m. */
+/** …and this close for a long vehicle (bus, truck) or a turn-back, whose body sweeps wide, m. */
+export const WIDE_DIST = 5.2;
+/** A U-turn at a junction starts this far before the stop line, m; at a dead end this far before the end. */
 export const UTURN_BACK = 12;
+export const DEAD_END_BACK = 9;
 /** Samples per connector arc-length table. */
 export const CONN_SAMPLES = 16;
 
@@ -127,8 +130,10 @@ export interface Connector {
   prio: number;
   /** Approach control: 0 none (priority road), 1 yield, 2 stop sign. */
   stop: number;
-  /** Other connectors of the node that may not be used at the same time. */
+  /** Other connectors of the node (or its cluster) that may not be used at the same time. */
   conflicts: number[];
+  /** The connectors a long vehicle's (or a turn-back's) swept body reaches on this one (⊇ conflicts). */
+  wide: number[];
   /** Road kind ids of the in / out piece. */
   kindIn: number;
   kindOut: number;
@@ -244,6 +249,7 @@ export class LaneGraph {
       this.pnz[i] = data.pts[i * PT + 4];
       this.pv[i] = data.pts[i * PT + 5];
     }
+    yield;
     this.pStart = new Int32Array(P);
     this.pCount = new Int32Array(P);
     this.pKind = new Uint8Array(P);
@@ -263,6 +269,7 @@ export class LaneGraph {
     this.laneAcross = new Float32Array(P * 2);
     this.laneMaxW = new Float32Array(P * 2);
     for (let p = 0; p < P; p++) {
+      if (p % 1000 === 999) yield;
       const I = p * PIECE_I;
       const F = p * PIECE_F;
       this.pRoad[p] = data.pieceI[I];
@@ -373,12 +380,15 @@ export class LaneGraph {
               const q = code >> 1;
               if (this.pRoad[q] === this.pRoad[p]) continue;
               endDir(q, code & 1, d2);
+              // box edge: past the crossing road's edge — and, at a shallow angle, far enough back that this
+              // road's own width clears it too
               const sin = Math.abs(d1.x * d2.z - d1.z * d2.x);
-              ah = Math.max(ah, this.pWidth[q] / 2 / Math.max(0.35, sin));
+              const cos = Math.abs(d1.x * d2.x + d1.z * d2.z);
+              ah = Math.max(ah, (this.pWidth[q] / 2 + (this.pWidth[p] / 2) * cos) / Math.max(0.2, sin));
               if (this.pFlags[q] & FLAG.sidewalk) town = true;
             }
           }
-          if (ah > 0) clear = Math.max(0.5, ah + (town ? 4 : 1.2) - off);
+          if (ah > 0) clear = Math.max(0.5, ah + (town ? 5 : 2) - off);
         }
         if (e === 1) this.pClearE[p] = clear;
         else this.pClearS[p] = clear;
@@ -437,7 +447,7 @@ export class LaneGraph {
         this.laneUturn[inLane] = u.id;
       }
       this.junctionRules(n, ends, conns);
-      if (n % 100 === 99) yield;
+      if (n % 40 === 39) yield;
     }
     // dead ends
     for (let l = 0; l < L; l++) {
@@ -587,9 +597,14 @@ export class LaneGraph {
   // ─── construction helpers ───────────────────────────────────────────────────
 
   private buildConnector(id: number, node: number, inLane: number, outLane: number, uturn: boolean): Connector {
-    let inU = uturn && node < 0 ? this.laneLen[inLane] : this.laneExitU[inLane];
-    let outU = uturn && node < 0 ? 0 : this.laneEntryU[outLane];
-    if (uturn && node >= 0 && outLane === (inLane ^ 1)) {
+    let inU = this.laneExitU[inLane];
+    let outU = this.laneEntryU[outLane];
+    if (uturn && node < 0) {
+      // a dead end: turn round a little before it (the loop must not reach whatever the street ends against)
+      const back = Math.min(DEAD_END_BACK, Math.max(0, this.laneLen[inLane] - this.laneEntryU[inLane] - 1));
+      inU = this.laneLen[inLane] - back;
+      outU = back;
+    } else if (uturn && outLane === (inLane ^ 1)) {
       // turn round on the own road, clear of the junction (the loop reaches ~6 m ahead of its start)
       const back = Math.min(UTURN_BACK, Math.max(0, this.laneExitU[inLane] - this.laneEntryU[inLane] - 1));
       inU = this.laneExitU[inLane] - back;
@@ -678,6 +693,7 @@ export class LaneGraph {
       prio: 0,
       stop: 0,
       conflicts: [],
+      wide: [],
       kindIn: this.pKind[inLane >> 1],
       kindOut: this.pKind[outLane >> 1],
     };
@@ -698,7 +714,7 @@ export class LaneGraph {
     const q: LanePoint = { x: 0, z: 0, hx: 0, hz: 0 };
     const byNode = new Map<number, number[]>();
     for (const c of conns) {
-      if (c.id % 3000 === 2999) yield;
+      if (c.id % 1500 === 1499) yield;
       const a = new Float64Array((S + 3) * 2);
       for (let i = 0; i <= S; i++) {
         this.connPoint(c, (c.len * i) / S, q);
@@ -725,36 +741,41 @@ export class LaneGraph {
       (cell.get(k) ?? cell.set(k, []).get(k)!).push(n);
     }
     const D2 = CONFLICT_DIST * CONFLICT_DIST;
+    const W2 = WIDE_DIST * WIDE_DIST;
     const test = (i: number, j: number) => {
       const a = conns[i];
       const b = conns[j];
       if (a.inLane === b.inLane) return;
       // one after the other in the same flow (through a short lane between two boxes)
       if (a.outLane === b.inLane || b.outLane === a.inLane) return;
-      let hit = a.outLane === b.outLane;
-      if (!hit) {
+      let near = Infinity;
+      if (a.outLane === b.outLane) near = 0;
+      else {
         const A = pts[i];
         const B = pts[j];
         const na = a.len > 0 ? S + 3 : 1;
         const nb = b.len > 0 ? S + 3 : 1;
-        for (let x = 0; x < na && !hit; x++)
+        for (let x = 0; x < na && near >= D2; x++)
           for (let y = 0; y < nb; y++) {
             const ex = A[x * 2] - B[y * 2];
             const ez = A[x * 2 + 1] - B[y * 2 + 1];
-            if (ex * ex + ez * ez < D2) {
-              hit = true;
-              break;
-            }
+            const d = ex * ex + ez * ez;
+            if (d < near) near = d;
+            if (near < D2) break;
           }
       }
-      if (hit) {
+      if (near < D2) {
         a.conflicts.push(b.id);
         b.conflicts.push(a.id);
+      }
+      if (near < W2) {
+        a.wide.push(b.id);
+        b.wide.push(a.id);
       }
     };
     let done = 0;
     for (const [n, list] of byNode) {
-      if (++done % 120 === 0) yield;
+      if (++done % 50 === 0) yield;
       const ci = Math.floor(this.nodeX[n] / CLUSTER);
       const cj = Math.floor(this.nodeZ[n] / CLUSTER);
       for (let dj = -1; dj <= 1; dj++)

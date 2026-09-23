@@ -81,8 +81,8 @@ export interface VehiclePose {
 /** Vehicle mix per road kind (weights per VT index). */
 const MIX: readonly (readonly number[])[] = [
   [26, 8, 26, 14, 6, 6, 12, 2, 0], // highway
-  [28, 10, 28, 18, 6, 5, 3, 2, 0], // road
-  [30, 10, 28, 16, 8, 5, 1, 2, 0], // access
+  [28, 10, 28, 18, 6, 5, 0, 2, 0], // road
+  [30, 10, 28, 16, 8, 5, 0, 2, 0], // access
   [25, 10, 30, 30, 5, 0, 0, 0, 0], // lane
   [33, 15, 30, 12, 5, 2, 0, 3, 0], // street
   [0, 0, 0, 0, 0, 0, 0, 0, 1], // drive
@@ -142,6 +142,9 @@ export class TrafficSim {
   private readonly freeList: Int32Array;
   private freeTop: number;
   private readonly occ: Int32Array;
+  /** Connectors swept by a long vehicle's (or a turn-back's) held connector. */
+  private readonly occWide: Int32Array;
+  private readonly holdWide: Uint8Array;
   private readonly holdsInto: Int32Array;
   private readonly hint: Int32Array;
   // per-step lists
@@ -210,6 +213,8 @@ export class TrafficSim {
     for (let i = 0; i < N; i++) this.freeList[i] = N - 1 - i;
     this.freeTop = N;
     this.occ = new Int32Array(graph.connectors.length);
+    this.occWide = new Int32Array(graph.connectors.length);
+    this.holdWide = new Uint8Array(N * HOLDS);
     this.holdsInto = new Int32Array(graph.pieceCount);
     this.laneCnt = new Int32Array(graph.laneCount);
     this.laneOff = new Int32Array(graph.laneCount);
@@ -393,26 +398,46 @@ export class TrafficSim {
     return out;
   }
 
+  /** A long vehicle, or any vehicle turning back, sweeps a wide area through connector c. */
+  private sweepsWide(i: number, c: Connector): boolean {
+    return c.turn === 2 || (c.turn !== 0 && SPECS[this.type[i]].length > 7);
+  }
+
   private addHold(i: number, k: number): void {
     if (this.holdsConn(i, k)) return;
     const b = i * HOLDS;
     const m = this.nHold[i]++;
+    const c = this.g.connectors[k];
     this.holds[b + m] = k;
     this.holdOdo[b + m] = Infinity;
     this.occ[k]++;
-    const po = this.g.connectors[k].outLane >> 1;
+    const wide = this.sweepsWide(i, c);
+    this.holdWide[b + m] = wide ? 1 : 0;
+    if (wide) for (const j of c.wide) this.occWide[j]++;
+    const po = c.outLane >> 1;
     if (this.g.pSingle[po]) this.holdsInto[po]++;
   }
 
   private dropHold(i: number, m: number): void {
     const b = i * HOLDS;
     const k = this.holds[b + m];
+    const c = this.g.connectors[k];
     this.occ[k]--;
-    const po = this.g.connectors[k].outLane >> 1;
+    if (this.holdWide[b + m]) for (const j of c.wide) this.occWide[j]--;
+    const po = c.outLane >> 1;
     if (this.g.pSingle[po]) this.holdsInto[po]--;
     const n = --this.nHold[i];
     this.holds[b + m] = this.holds[b + n];
     this.holdOdo[b + m] = this.holdOdo[b + n];
+    this.holdWide[b + m] = this.holdWide[b + n];
+  }
+
+  /** Wide sweeps over connector k by vehicles other than i. */
+  private occWideOthers(k: number, i: number): number {
+    let own = 0;
+    const b = i * HOLDS;
+    for (let m = 0; m < this.nHold[i]; m++) if (this.holdWide[b + m] && this.g.connectors[this.holds[b + m]].wide.includes(k)) own++;
+    return this.occWide[k] - own;
   }
 
   private dropAllHolds(i: number): void {
@@ -496,7 +521,16 @@ export class TrafficSim {
       return j;
     }
     const k = this.next[i];
-    if (k < 0 || !this.holdsConn(i, k)) return -1;
+    if (k < 0) {
+      // leaving at the lane end (map edge, no route): whoever turns off this lane ahead is still ahead
+      const t = this.siblingAhead(this.lane[i], -1, i);
+      if (t < 0) return -1;
+      const cc = g.connectors[this.conn[t]];
+      this.lg = cc.inU - this.u[i] + this.sw - (len + SPECS[this.type[t]].length) / 2;
+      this.lv = this.v[t];
+      return t;
+    }
+    if (!this.holdsConn(i, k)) return -1;
     const c = g.connectors[k];
     const dIn = c.inU - this.u[i];
     const t = this.siblingAhead(this.lane[i], -1, i);
@@ -565,6 +599,9 @@ export class TrafficSim {
         const dLine = c.inU - u - len / 2;
         const front = this.ahead[i] < 0;
         if (front && !this.holdsConn(i, k)) this.request(i, c, dLine, dt);
+        // don't block the box: at the line, a granted vehicle that could not clear it any more gives the grant back
+        // (never on a lane too short to stop on: it is part of a chain through the junction)
+        else if (front && dLine < 3 && g.laneExitU[l] - g.laneEntryU[l] >= len + 3 && !this.roomBeyond(i, c)) this.ungrant(i);
         if (!this.holdsConn(i, this.next[i])) {
           // the stop line is a stationary obstacle until the junction is granted
           if (front && dLine < gap) {
@@ -581,8 +618,10 @@ export class TrafficSim {
   /** Can vehicle i use connector c now (conflicts, priority, farm tracks)? `first`: the connector at its own stop line. */
   private free(i: number, c: Connector): boolean {
     const g = this.g;
-    const conf = c.conflicts;
+    // a long vehicle (or a turn-back) needs its whole swept area clear; everyone keeps out of such sweeps
+    const conf = this.sweepsWide(i, c) ? c.wide : c.conflicts;
     for (let k = 0; k < conf.length; k++) if (this.occOthers(conf[k], i) > 0) return false;
+    if (this.occWide[c.id] > 0 && this.occWideOthers(c.id, i) > 0) return false;
     if (c.stop > 0) {
       for (let k = 0; k < conf.length; k++) {
         const cj = g.connectors[conf[k]];
@@ -599,6 +638,27 @@ export class TrafficSim {
       if (this.laneCnt[po * 2] + this.laneCnt[po * 2 + 1] - self + this.holdsInto[po] > 0) return false;
     }
     return true;
+  }
+
+  /** Is there room for vehicle i beyond its (chain of) connectors starting with c? */
+  private roomBeyond(i: number, c: Connector): boolean {
+    const g = this.g;
+    let last = c;
+    const p1 = this.plan1[i];
+    if (p1 >= 0 && this.holdsConn(i, p1) && g.connectors[p1].inLane === c.outLane) {
+      last = g.connectors[p1];
+      const p2 = this.plan2[i];
+      if (p2 >= 0 && this.holdsConn(i, p2) && g.connectors[p2].inLane === last.outLane) last = g.connectors[p2];
+    }
+    const o = this.laneTail(last.outLane);
+    if (o < 0 || o === i) return true;
+    return this.u[o] - SPECS[this.type[o]].length / 2 - last.outU >= SPECS[this.type[i]].length + 1;
+  }
+
+  /** Gives back the holds of junctions not entered yet (the ones still waiting for this vehicle's body). */
+  private ungrant(i: number): void {
+    const b = i * HOLDS;
+    for (let m = this.nHold[i] - 1; m >= 0; m--) if (this.holdOdo[b + m] === Infinity) this.dropHold(i, m);
   }
 
   /** Asks for the right of way through connector c (see the header), chaining through lanes too short to stop on. */
@@ -769,8 +829,8 @@ export class TrafficSim {
     const road = g.pRoad[l >> 1];
     let sum = 0;
     for (let k = 0; k < n; k++) sum += this.routeWeight(g.connectors[g.laneConn[s0 + k]], t, W, road);
-    // nowhere to go: turn round (a semi cannot — it leaves at the lane end)
-    const fallback = t === VT.semi ? -1 : g.laneUturn[l];
+    // nowhere to go: turn round (a long vehicle cannot — it leaves at the lane end)
+    const fallback = SPECS[t].length > 7 ? -1 : g.laneUturn[l];
     if (sum <= 0) return fallback;
     let x = hash2i(this.serial[i], this.decisions[i]++, this.seed ^ 0x51f3) * sum;
     for (let k = 0; k < n; k++) {
@@ -781,14 +841,31 @@ export class TrafficSim {
     return fallback;
   }
 
+  /** May a vehicle of type t be spawned on lane l (a road it may use, and a way on or off it)? */
+  private admissible(t: number, l: number): boolean {
+    const g = this.g;
+    const kind = g.pKind[l >> 1];
+    if (t === VT.semi && kind !== KIND.highway) return false;
+    if (t === VT.bus && kind === KIND.street && g.pWidth[l >> 1] < 8) return false;
+    // a long vehicle cannot turn round: it needs an exit it may take (or the map edge)
+    if (SPECS[t].length > 7 && !g.laneDespawn[l]) {
+      const n = g.laneConnCount[l];
+      const s0 = g.laneConnStart[l];
+      let ok = false;
+      for (let k = 0; k < n && !ok; k++) if (this.routeWeight(g.connectors[g.laneConn[s0 + k]], t, SPECS[t].width, g.pRoad[l >> 1]) > 0) ok = true;
+      if (!ok) return false;
+    }
+    return true;
+  }
+
   private routeWeight(c: Connector, t: number, W: number, road: number): number {
     const g = this.g;
     const po = c.outLane >> 1;
     const kind = g.pKind[po];
     if ((t === VT.tractor) !== (kind === KIND.drive)) return 0;
     if (W > g.laneMaxW[c.outLane] + 1e-6) return 0;
-    // semis keep to highways and roads, buses to roads and wide streets (their swept path is wide)
-    if (t === VT.semi && kind >= KIND.lane) return 0;
+    // semis keep to highways, buses to roads and wide streets (their swept path is wide)
+    if (t === VT.semi && kind !== KIND.highway) return 0;
     if (t === VT.bus && kind === KIND.street && g.pWidth[po] < 8) return 0;
     let w = ROUTE_W[kind] * (g.pRoad[po] === road ? 3 : 1);
     if (c.turn === -1) w *= 0.8;
@@ -932,7 +1009,7 @@ export class TrafficSim {
           break;
         }
       }
-      if (SPECS[t].width > g.laneMaxW[l]) t = VT.sedan;
+      if (SPECS[t].width > g.laneMaxW[l] || !this.admissible(t, l)) t = VT.sedan;
     }
     const sp = SPECS[t];
     if (sp.width > g.laneMaxW[l] + 1e-6) return -1;
@@ -953,6 +1030,17 @@ export class TrafficSim {
       }
     }
     for (let k = 0; k < this.newL.length; k++) if (this.newL[k] === l && Math.abs(this.newU[k] - u) < clear + 22) return -1;
+    // vehicles in the junction boxes at either end of the lane count as on it
+    for (let k = 0; k < this.nTC; k++) {
+      const ck = this.touchedC[k];
+      const c = g.connectors[ck];
+      if (c.inLane !== l && c.outLane !== l) continue;
+      for (let a = this.connOff[ck]; a < this.connOff[ck] + this.connCnt[ck]; a++) {
+        const j = this.corder[a];
+        const ue = c.inLane === l ? c.inU + this.w[j] : c.outU - (c.len - this.w[j]);
+        if (Math.abs(ue - u) < clear + (sp.length + SPECS[this.type[j]].length) / 2 + 10) return -1;
+      }
+    }
     // cars in the junction boxes at either end
     const i = this.alloc();
     if (i < 0) return -1;

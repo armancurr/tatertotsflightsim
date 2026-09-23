@@ -781,7 +781,24 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
     },
     stats() {
       const drawCalls = (nNear > 0 ? 1 : 0) + (nFar > 0 ? 1 : 0) + (nShadow > 0 ? 1 : 0) + (glows.visible ? 1 : 0);
+      // where the nearest tractor is (QA photos)
+      let tractorX = NaN;
+      let tractorZ = NaN;
+      if (sim) {
+        let best = Infinity;
+        for (let i = 0; i < sim.cap; i++) {
+          if (!sim.alive[i] || sim.type[i] !== VT.tractor) continue;
+          const d = Math.hypot(sim.cx[i] - cam.x, sim.cz[i] - cam.z);
+          if (d < best) {
+            best = d;
+            tractorX = Math.round(sim.cx[i]);
+            tractorZ = Math.round(sim.cz[i]);
+          }
+        }
+      }
       return {
+        tractorX,
+        tractorZ,
         ready: !!sim,
         moving: sim?.count ?? 0,
         parked: parking?.count ?? 0,

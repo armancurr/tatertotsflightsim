@@ -99,6 +99,30 @@ describe('lane graph of the real road network', { timeout: 60_000 }, () => {
     }
   });
 
+  it('right-hand traffic: every lane (but a farm track\'s) lies right of its direction of travel', () => {
+    const q = pt();
+    let left = 0;
+    for (let l = 0; l < g.laneCount; l++) {
+      const p = l >> 1;
+      if (g.pKind[p] === KIND.drive) continue;
+      const u = g.laneLen[l] / 2;
+      g.lanePoint(l, u, q);
+      const s = g.laneS(l, u);
+      const k = g.segmentAt(p, s);
+      const t = (s - g.ps[k]) / (g.ps[k + 1] - g.ps[k]);
+      const ox = q.x - (g.px[k] + (g.px[k + 1] - g.px[k]) * t);
+      const oz = q.z - (g.pz[k] + (g.pz[k + 1] - g.pz[k]) * t);
+      // right of travel (hx, hz) with x east, z south: (−hz, hx)
+      const side = ox * -q.hz + oz * q.hx;
+      // shifted street lanes may straddle the centreline; the other lane is always further left
+      const other = pt();
+      g.lanePoint(l ^ 1, g.laneLen[l] - u, other);
+      const rel = (q.x - other.x) * -q.hz + (q.z - other.z) * q.hx;
+      if (rel <= 0 || (g.pKind[p] !== KIND.street && side <= 0)) left++;
+    }
+    expect(left).toBe(0);
+  });
+
   it('allowed speeds: finite, ≤ the limit, lower in tight curves', () => {
     for (let l = 0; l < g.laneCount; l += 7) {
       for (const f of [0, 0.37, 0.8, 1]) {
