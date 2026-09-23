@@ -6,7 +6,7 @@ import { toRunwayCoords } from '../../../src/world/runway';
 import { CONFIG } from '../../../src/config';
 import {
   buildCircuit, createCircuitState, stepCircuit, circuitPose, newAirPose, keepClear, crossingTrack, crossingPose, airlinerTrack, airlinerPose, contrailPoint,
-  buildHeliRoute, heliPose, createScheduler, runwayOccupiedByPlayer, CROSS_HALF, GEAR_HEIGHT, type LegName, type PlayerRef, type CircuitState,
+  buildHeliRoute, heliPose, createScheduler, runwayOccupiedByPlayer, reanchorCircuit, CROSS_HALF, GEAR_HEIGHT, type LegName, type PlayerRef, type CircuitState,
 } from '../../../src/world/traffic/air';
 import { samplePath, newPathSample } from '../../../src/world/traffic/path';
 
@@ -306,5 +306,50 @@ describe('crossing GA, helicopter, airliners', () => {
       ),
       { numRuns: 500 },
     );
+  });
+});
+
+describe('circuit re-anchoring (reset / teleport onto the runway)', () => {
+  it('clears the runway and the hold-short line when the player appears on the runway, then keeps clear', () => {
+    const st = createCircuitState(layout);
+    // run until somebody is using the runway
+    let guard = 0;
+    while (!st.aircraft.some((a) => a.leg === 'to' || a.leg === 'tng' || a.leg === 'full' || a.leg === 'hold') && guard++ < 100000) stepCircuit(st, 0.1, null);
+    expect(guard).toBeLessThan(100000);
+    const player: PlayerRef = { x: rw.threshold.x + rw.dir.x * 45, y: E + 1.2, z: rw.threshold.z + rw.dir.z * 45, agl: 0 };
+    reanchorCircuit(st, player);
+    for (const a of st.aircraft) expect(['to', 'tng', 'full', 'hold']).not.toContain(a.leg);
+    const p = newAirPose();
+    run(st, 900, player, 0.1, (s) => {
+      for (const a of s.aircraft) {
+        circuitPose(s, a, p);
+        expect(Math.hypot(p.x - player.x, p.y - player.y, p.z - player.z)).toBeGreaterThan(R_CLEAR);
+        for (const k of ['x', 'y', 'z'] as const) expect(Number.isFinite(p[k])).toBe(true);
+      }
+    });
+  }, 60_000);
+
+  it('leaves the circuit alone when the player is far from the field, or flying over it', () => {
+    const st = createCircuitState(layout);
+    let guard = 0;
+    while (!st.aircraft.some((a) => a.leg === 'tng' || a.leg === 'to') && guard++ < 100000) stepCircuit(st, 0.1, null);
+    const before = st.aircraft.map((a) => [a.leg, a.t]);
+    reanchorCircuit(st, { x: 20000, y: 1500, z: -20000, agl: 1200 });
+    reanchorCircuit(st, null);
+    reanchorCircuit(st, { x: 1000, y: E + 457, z: 1500, agl: 457 }); // airborne 1 km east of the runway
+    expect(st.aircraft.map((a) => [a.leg, a.t])).toEqual(before);
+  });
+
+  it('re-anchored aircraft are spread out on the downwind (no two on top of each other)', () => {
+    const st = createCircuitState(layout);
+    for (const a of st.aircraft) {
+      a.leg = 'hold';
+      a.t = 0;
+    }
+    const player: PlayerRef = { x: rw.threshold.x, y: E + 1.2, z: rw.threshold.z, agl: 0 };
+    reanchorCircuit(st, player);
+    const poses = st.aircraft.map((a) => circuitPose(st, a, newAirPose()));
+    for (let i = 0; i < poses.length; i++)
+      for (let j = i + 1; j < poses.length; j++) expect(Math.hypot(poses[i].x - poses[j].x, poses[i].y - poses[j].y, poses[i].z - poses[j].z)).toBeGreaterThan(400);
   });
 });

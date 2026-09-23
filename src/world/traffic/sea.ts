@@ -19,6 +19,7 @@ import { CONFIG, type Config } from '../../config';
 import type { WorldLayout } from '../layout';
 import { createPath, samplePath, filletPath, smoothLoop, smoothLine, newPathSample, arcAtTime, type Path, type PathSample, type Waypoint } from './path';
 import { h01, hRange, KT, clamp, smooth, wrap180 } from './rng';
+import { drain, type Job } from './jobs';
 
 export type VesselKind = 'sail' | 'motor' | 'fish' | 'launch' | 'ferry' | 'container' | 'tanker';
 
@@ -266,11 +267,24 @@ export interface SeaRoute {
   sea: number;
   /** Ferry schedule (mode 'ferry'). */
   ferry?: { vmax: number; accel: number; dwell: number; transit: number; period: number };
+  /** Ferry: the terminals' pier roots on the shore (pier heading = out over the water) and pier length. */
+  terminals?: FerryTerminal[];
+}
+
+export interface FerryTerminal {
+  /** Where the pier leaves the shore. */
+  x: number;
+  z: number;
+  /** Heading of the pier from the shore out over the water, deg. */
+  heading: number;
+  pierLen: number;
 }
 
 export interface SeaPlan {
   marina: MarinaLayout;
   routes: SeaRoute[];
+  /** Ferry terminals of the valid ferry routes. */
+  terminals: FerryTerminal[];
   /** Routes that failed validation (their ids) — expected to be empty for the default world. */
   rejected: string[];
   windFromDeg: number;
@@ -343,24 +357,33 @@ export function sailingTriangle(cx: number, cz: number, size: number, windFromDe
  * sides must be on water deeper than the kind's minimum. Returns the shallowest depth found.
  */
 export function routeMinDepth(route: SeaRoute, water: WaterWorld, step = 20): number {
+  return drain(routeMinDepthJob(route, water, step));
+}
+
+/** Samples of the depth scan between yields (5 hull points × 2 lookups each per sample). */
+const DEPTH_SAMPLES_PER_STEP = 200;
+
+/** Time-sliced `routeMinDepth` (yields every DEPTH_SAMPLES_PER_STEP samples). */
+export function* routeMinDepthJob(route: SeaRoute, water: WaterWorld, step = 20): Job<number> {
   const dims = VESSEL_DIMS[route.kind];
   const L = (dims.length * route.scale) / 2;
   const B = (dims.beam * route.scale) / 2 + 1;
   const smp = newPathSample();
   const m = Math.max(4, Math.ceil(route.path.length / step));
+  const pts = [
+    [0, 0],
+    [L, 0],
+    [-L, 0],
+    [0, B],
+    [0, -B],
+  ];
   let lo = Infinity;
   for (let i = 0; i <= m; i++) {
+    if (i > 0 && i % DEPTH_SAMPLES_PER_STEP === 0) yield;
     samplePath(route.path, (i / m) * route.path.length, smp);
     const hr = (smp.heading * Math.PI) / 180;
     const fx = Math.sin(hr);
     const fz = -Math.cos(hr);
-    const pts = [
-      [0, 0],
-      [L, 0],
-      [-L, 0],
-      [0, B],
-      [0, -B],
-    ];
     for (const [a, c] of pts) {
       const x = smp.x + fx * a - fz * c;
       const z = smp.z + fz * a + fx * c;
@@ -374,13 +397,20 @@ export function routeMinDepth(route: SeaRoute, water: WaterWorld, step = 20): nu
 }
 
 export function validateRoute(route: SeaRoute, water: WaterWorld, marina: MarinaLayout | null): boolean {
+  return drain(validateRouteJob(route, water, marina));
+}
+
+/** Time-sliced `validateRoute`. */
+export function* validateRouteJob(route: SeaRoute, water: WaterWorld, marina: MarinaLayout | null): Job<boolean> {
   const need = MIN_DEPTH[route.kind];
   // ferry berths are dredged: check depth only away from the terminals
-  if (routeMinDepth(route, water) < (route.mode === 'ferry' ? 1 : need)) return false;
+  const depth = yield* routeMinDepthJob(route, water, route.path.length > 50000 ? 60 : 20);
+  if (depth < (route.mode === 'ferry' ? 1 : need)) return false;
   if (marina && route.kind !== 'launch') {
     const smp = newPathSample();
     const m = Math.ceil(route.path.length / 25);
     for (let i = 0; i <= m; i++) {
+      if (i > 0 && i % 1500 === 0) yield;
       samplePath(route.path, (i / m) * route.path.length, smp);
       if (marinaStructureDistance(marina, smp.x, smp.z) < 120) return false;
     }
@@ -390,13 +420,20 @@ export function validateRoute(route: SeaRoute, water: WaterWorld, marina: Marina
 
 /** The plan's route definitions (unvalidated). Deterministic from config + layout. */
 export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Config = CONFIG): SeaRoute[] {
+  return drain(defineRoutesJob(layout, marina, cfg));
+}
+
+/** Time-sliced `defineRoutes` (yields after each route). */
+export function* defineRoutesJob(layout: WorldLayout, marina: MarinaLayout, cfg: Config = CONFIG): Job<SeaRoute[]> {
   const tc = cfg.world.traffic;
   const seed = tc.seed;
   const wind = tc.windFromDeg;
   const routes: SeaRoute[] = [];
   const coastZ = layout.coast.zAt;
   const loop = (id: string, kind: VesselKind, pts: (XZ & { y?: number; v?: number })[], level: number, speed: number | ((h: number, x: number, z: number) => number), opts: Partial<SeaRoute> = {}) => {
-    const path = createPath(pts.map((p) => ({ x: p.x, y: level, z: p.z, v: 1 })), true, 5);
+    // ships on their 190 km offshore loops: a coarser table (their turns are 1.2–1.6 km radius)
+    const spacing = kind === 'container' || kind === 'tanker' ? 20 : 5;
+    const path = createPath(pts.map((p) => ({ x: p.x, y: level, z: p.z, v: 1 })), true, spacing);
     setSpeeds(path, typeof speed === 'number' ? () => speed : speed);
     routes.push({ id, kind, mode: 'loop', path, level, phase: h01(seed, 8100, routes.length) * path.length, scale: 1, variant: routes.length, sea: 1, ...opts });
   };
@@ -416,6 +453,7 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
     const tri = sailingTriangle(s.x, Math.max(s.z, coastZ(s.x) + 1200), s.a, wind, h01(seed, 8200, i) < 0.5);
     const scale = hRange(seed, 8201, i, 0.85, 1.15);
     loop(`sail-${i}`, 'sail', filletLoop(tri, 60), 0, sailSpeed(12 * scale), { scale });
+    yield;
   }
 
   // ── Motor yachts: long loops along the coast at planing speed ──
@@ -427,6 +465,7 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
   for (let i = 0; i < Math.min(tc.sea.motorYachts, motorLoops.length); i++) {
     const scale = hRange(seed, 8300, i, 0.85, 1.25);
     loop(`motor-${i}`, 'motor', smoothLoop(motorLoops[i], 24), 0, kt(hRange(seed, 8301, i, 17, 24)), { scale });
+    yield;
   }
 
   // ── Fishing boats: two trawling slow circles, one steaming to the grounds ──
@@ -439,6 +478,7 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
   for (let i = 0; i < Math.min(tc.sea.fishingBoats, fishing.length); i++) {
     const f = fishing[i];
     loop(`fish-${i}`, 'fish', smoothLoop(f.pts, 20), 0, f.v, { scale: hRange(seed, 8400, i, 0.85, 1.1) });
+    yield;
   }
 
   // ── Harbour launch: in through the entrance, round the basin, out and round a buoy ──
@@ -453,6 +493,7 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
       return kt(4 + 14 * smooth(380, 620, w));
     });
   }
+  yield;
 
   // ── Bay ferry: double-ended, W ↔ E across the bay mouth ──
   {
@@ -473,8 +514,13 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
     routes.push({
       id: 'ferry-0', kind: 'ferry', mode: 'ferry', path, level: 0, phase: tc.sea.ferry.dwell * 0.6, scale: 1, variant: 0, sea: 0.8,
       ferry: { vmax, accel, dwell: tc.sea.ferry.dwell, transit, period },
+      terminals: [
+        { x: shoreW, z: zc, heading: 90, pierLen: pier },
+        { x: shoreE, z: zc, heading: 270, pierLen: pier },
+      ],
     });
   }
+  yield;
 
   // ── Container ship and tanker on nested offshore loops (never cross) ──
   {
@@ -482,10 +528,12 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
     loop('container-0', 'container', c, 0, kt(17), { sea: 0.4 });
     const r = routes[routes.length - 1];
     r.phase = arcToX(r.path, -2500, 15000);
+    yield;
     const t = filletLoop([{ x: 50000, z: 14000 }, { x: -50000, z: 14000 }, { x: -50000, z: 18400 }, { x: 50000, z: 18400 }], 1600);
     loop('tanker-0', 'tanker', t, 0, kt(12), { sea: 0.35 });
     const r2 = routes[routes.length - 1];
     r2.phase = arcToX(r2.path, 7000, 14000);
+    yield;
   }
 
   // ── Tater Lake ──
@@ -503,6 +551,7 @@ export function defineRoutes(layout: WorldLayout, marina: MarinaLayout, cfg: Con
         const d = defs[i];
         const speed = d.kind === 'sail' ? sailSpeed(12 * d.scale) : kt(14);
         loop(`lake-${i}`, d.kind, smoothLoop(d.pts, 12), lk.level, speed, { scale: d.scale, sea: 0.35 });
+        yield;
       }
     }
   }
@@ -564,15 +613,24 @@ export function trapezoidDist(D: number, vmax: number, a: number, tau: number): 
 }
 
 export function createSeaPlan(layout: WorldLayout, water: WaterWorld | null, cfg: Config = CONFIG): SeaPlan {
+  return drain(seaPlanJob(layout, water, cfg));
+}
+
+/** Time-sliced `createSeaPlan`: small steps (≤ ~2,000 water lookups each), for building across frames. */
+export function* seaPlanJob(layout: WorldLayout, water: WaterWorld | null, cfg: Config = CONFIG): Job<SeaPlan> {
   const marina = createMarina(layout, cfg);
-  const all = defineRoutes(layout, marina, cfg);
+  yield;
+  const all = yield* defineRoutesJob(layout, marina, cfg);
   const routes: SeaRoute[] = [];
   const rejected: string[] = [];
   for (const r of all) {
-    if (!water || validateRoute(r, water, marina)) routes.push(r);
+    const ok = !water || (yield* validateRouteJob(r, water, marina));
+    if (ok) routes.push(r);
     else rejected.push(r.id);
+    yield;
   }
-  return { marina, routes, rejected, windFromDeg: cfg.world.traffic.windFromDeg, windKt: cfg.world.traffic.windKt };
+  const terminals = routes.flatMap((r) => r.terminals ?? []);
+  return { marina, routes, rejected, terminals, windFromDeg: cfg.world.traffic.windFromDeg, windKt: cfg.world.traffic.windKt };
 }
 
 // ─── Poses ───────────────────────────────────────────────────────────────────
@@ -731,13 +789,16 @@ export function vesselTrack(r: SeaRoute, t: number, out: { x: number; z: number;
   out.travelled = st.travelled;
 }
 
-/** Wake parameters per vessel kind: max age (s), full-strength speed (m/s), Kelvin arm strength. */
-export const WAKE_KIND: Record<VesselKind, { maxAge: number; fullSpeed: number; kelvin: number; spray: boolean }> = {
-  sail: { maxAge: 30, fullSpeed: 3.6, kelvin: 0.45, spray: false },
-  motor: { maxAge: 55, fullSpeed: 10, kelvin: 0.9, spray: true },
-  fish: { maxAge: 55, fullSpeed: 4.5, kelvin: 0.7, spray: false },
-  launch: { maxAge: 38, fullSpeed: 8, kelvin: 0.85, spray: true },
-  ferry: { maxAge: 95, fullSpeed: 6, kelvin: 0.85, spray: false },
-  container: { maxAge: 150, fullSpeed: 8, kelvin: 0.7, spray: false },
-  tanker: { maxAge: 150, fullSpeed: 6, kelvin: 0.6, spray: false },
+/**
+ * Wake parameters per vessel kind: max age (s), full-strength speed (m/s), Kelvin arm strength,
+ * stern foam opacity (a displacement yacht leaves a faint slick, a planing hull a white trail), bow spray.
+ */
+export const WAKE_KIND: Record<VesselKind, { maxAge: number; fullSpeed: number; kelvin: number; foam: number; spray: boolean }> = {
+  sail: { maxAge: 26, fullSpeed: 3.6, kelvin: 0.16, foam: 0.2, spray: false },
+  motor: { maxAge: 55, fullSpeed: 10, kelvin: 0.55, foam: 1, spray: true },
+  fish: { maxAge: 50, fullSpeed: 4.5, kelvin: 0.3, foam: 0.5, spray: false },
+  launch: { maxAge: 38, fullSpeed: 8, kelvin: 0.5, foam: 0.9, spray: true },
+  ferry: { maxAge: 95, fullSpeed: 6, kelvin: 0.4, foam: 0.75, spray: false },
+  container: { maxAge: 150, fullSpeed: 8, kelvin: 0.3, foam: 0.6, spray: false },
+  tanker: { maxAge: 150, fullSpeed: 6, kelvin: 0.25, foam: 0.5, spray: false },
 };
