@@ -1659,7 +1659,11 @@ function makeF16(): AircraftConfig {
       pFactor: 0,
       /** Two 60° petals beside the nozzle. */
       cdSpeedBrake: 0.06,
-      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.0, inducedGain: 0.7 },
+      /**
+       * Wave drag: CD0 × 2.4 at M 1.1 easing to × 2.2 at M 2 (≈ 0.041, NASA TP-1538 order). Was × 2.0 at M 2,
+       * which let the jet reach M 2.38 at 40,000 ft in steady flight (real: M ≈ 2.0; audit in f16-accuracy.test.ts).
+       */
+      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.2, inducedGain: 0.7 },
     },
 
     engine: {
