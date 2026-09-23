@@ -79,6 +79,18 @@ export function liftCoefficient(
 }
 
 /**
+ * Transonic/supersonic zero-lift drag factor (1 for aircraft without a transonic config): 1 up to
+ * machCrit, a smooth rise to peakFactor at machPeak, then easing toward factorAtMach2 at Mach 2 and
+ * holding there. Continuous in Mach.
+ */
+export function machDragFactor(mach: number, cfg: Config = CONFIG): number {
+  const t = cfg.aircraft.aero.transonic;
+  if (!t || !(mach > t.machCrit)) return 1;
+  if (mach <= t.machPeak) return 1 + (t.peakFactor - 1) * smoothstep(t.machCrit, t.machPeak, mach);
+  return t.peakFactor + (t.factorAtMach2 - t.peakFactor) * smoothstep(t.machPeak, 2, mach);
+}
+
+/**
  * Drag coefficient: parasite (cd0 + gear + flaps) + induced CL²/(π·e·AR) +
  * sideslip cdBeta·β², blended past the stall toward flatPlateDrag·sin²α.
  * Induced drag is held at its stall-peak value past the stall so total drag
@@ -86,17 +98,18 @@ export function liftCoefficient(
  */
 export function dragCoefficient(
   alphaRad: number, betaRad: number, flapsDeg: number, gearPos: number, cfg: Config = CONFIG,
-  breakWidthDeg: number = cfg.aircraft.aero.stallBreakWidthDeg,
+  breakWidthDeg: number = cfg.aircraft.aero.stallBreakWidthDeg, mach = 0,
 ): number {
   const ac = cfg.aircraft;
   const a = ac.aero;
   const f = flapFraction(flapsDeg, cfg);
-  const parasite = a.cd0 + a.cdGear * clamp(gearPos, 0, 1) + a.cdFlapsFull * f + a.cdBeta * betaRad * betaRad;
+  const tr = a.transonic;
+  const parasite = a.cd0 * machDragFactor(mach, cfg) + a.cdGear * clamp(gearPos, 0, 1) + a.cdFlapsFull * f + a.cdBeta * betaRad * betaRad;
   const aS = stallAlphaRad(flapsDeg, cfg);
   const aN = negativeStallAlphaRad(cfg);
   const aspect = (ac.wingSpan * ac.wingSpan) / ac.wingArea;
   const clAtt = attachedLift(clamp(alphaRad, aN, aS), a.cl0 + a.clFlapsFull * f, a.clAlpha, aS, aN, a.stallRoundingDeg * DEG);
-  const induced = (clAtt * clAtt) / (Math.PI * ac.oswald * aspect);
+  const induced = ((clAtt * clAtt) / (Math.PI * ac.oswald * aspect)) * (tr && mach > 1 ? 1 + tr.inducedGain * (mach - 1) : 1);
   const b = postStallBlend(alphaRad, aS, aN, breakWidthDeg * DEG);
   if (b <= 0) return parasite + induced;
   const s = Math.sin(alphaRad);
@@ -223,6 +236,14 @@ export interface SurfaceInputs {
   elevatorTrim: number;
 }
 
+/** Optional inputs of computeAero beyond the classic ones (defaults: Mach 0, speed brake in). */
+export interface AeroExtras {
+  /** Flight Mach number (drives the transonic drag rise of jets). */
+  mach?: number;
+  /** Speed brake extension 0..1. */
+  speedBrake?: number;
+}
+
 export interface AeroResult {
   /** Aerodynamic + thrust force in the BODY frame, N. */
   fx: number;
@@ -267,6 +288,7 @@ export function computeAero(
   thrust: number,
   cfg: Config = CONFIG,
   wingHeightM = Infinity,
+  extras: AeroExtras = {},
 ): AeroResult {
   const ac = cfg.aircraft;
   const a = ac.aero;
@@ -295,7 +317,13 @@ export function computeAero(
   const dCN = a.bodyCrossflowCn * sinA * Math.abs(sinA) * sf;
   const CL = CL0 * (1 + a.groundEffectLift * ge) + dCN * Math.cos(alpha);
   const aspect = (b * b) / S;
-  const CD = dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg) - ge * ((CL0 * CL0) / (Math.PI * ac.oswald * aspect)) + dCN * Math.abs(sinA);
+  const mach = extras.mach ?? 0;
+  const sb = extras.speedBrake ?? 0;
+  const CD =
+    dragCoefficient(alpha, beta, flapsDeg, gearPos, cfg, a.stallBreakWidthDeg, mach) -
+    ge * ((CL0 * CL0) / (Math.PI * ac.oswald * aspect)) +
+    dCN * Math.abs(sinA) +
+    a.cdSpeedBrake * clamp(sb, 0, 1);
   const f = flapFraction(flapsDeg, cfg);
 
   // Propeller slipstream adds dynamic pressure over the tail (momentum theory Δp = T/A).
@@ -374,8 +402,8 @@ export function computeAero(
     Nwing;
 
   const t = torqueFromLMN(Lroll, Mpitch, Nyaw);
-  // Thrust acts at the prop hub: τ = hub × (0, 0, −T).
-  const hub = ac.geometry.propHub;
+  // Thrust acts at the prop hub (a jet: its thrust point): τ = hub × (0, 0, −T).
+  const hub = ac.engine.jet ? ac.engine.jet.thrustPoint : ac.geometry.propHub;
   const tx = t.x - hub.y * thrust;
   const ty = t.y + hub.x * thrust;
 

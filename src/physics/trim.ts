@@ -7,7 +7,8 @@
 import { CONFIG, KT_TO_MS, type Config } from '../config';
 import { airDensity } from './atmosphere';
 import { computeAero, liftCoefficient } from './aero';
-import { powerTarget, propThrust, throttleForPower } from './engine';
+import { enginePowerTarget, engineThrottleForPower, engineThrust } from './engine';
+import { speedOfSound } from './atmosphere';
 import { quatFromEuler, worldToBody } from './frames';
 
 const DEG = Math.PI / 180;
@@ -75,12 +76,13 @@ export function solveTrim(req: TrimRequest, cfg: Config = CONFIG): TrimResult {
   const W = ac.mass * cfg.sim.gravity;
   const qbar = 0.5 * rho * V * V;
   const scaleM = qbar * ac.wingArea * ac.meanChord;
+  const mach = V / speedOfSound(req.altitudeM);
 
   const residual = (x: number[]): number[] => {
     const [alpha, power, trim] = x;
     const vb = { x: 0, y: -V * Math.sin(alpha), z: -V * Math.cos(alpha) };
-    const thrust = propThrust(power, V * Math.cos(alpha), rho, cfg);
-    const a = computeAero(vb, ZERO, rho, flapsDeg, gearPos, { elevator: 0, aileron: 0, rudder: 0, elevatorTrim: trim }, thrust, cfg);
+    const thrust = engineThrust(power, V * Math.cos(alpha), rho, mach, cfg);
+    const a = computeAero(vb, ZERO, rho, flapsDeg, gearPos, { elevator: 0, aileron: 0, rudder: 0, elevatorTrim: trim }, thrust, cfg, Infinity, { mach });
     const q = quatFromEuler(0, (gamma + alpha) / DEG, 0);
     const g = worldToBody(q, { x: 0, y: -W, z: 0 });
     return [(a.fy + g.y) / W, (a.fz + g.z) / W, a.tx / scaleM];
@@ -121,18 +123,18 @@ export function solveTrim(req: TrimRequest, cfg: Config = CONFIG): TrimResult {
 
   const [alpha, powerRaw, trimRaw] = x;
   const norm = Math.abs(r[0]) + Math.abs(r[1]) + Math.abs(r[2]);
-  const throttleRaw = throttleForPower(powerRaw, rho, cfg);
+  const throttleRaw = engineThrottleForPower(powerRaw, rho, cfg);
   const throttle = Math.max(0, Math.min(1, throttleRaw));
   const elevatorTrim = Math.max(-1, Math.min(1, trimRaw));
   // Never hand back more power than the engine can make here (an infeasible request is flagged instead).
-  const power = Math.max(0, Math.min(powerRaw, powerTarget(1, rho, cfg)));
+  const power = Math.max(0, Math.min(powerRaw, enginePowerTarget(1, rho, cfg)));
   return {
     alpha,
     pitchDeg: (gamma + alpha) / DEG,
     tas: V,
     density: rho,
     power,
-    thrust: propThrust(power, V * Math.cos(alpha), rho, cfg),
+    thrust: engineThrust(power, V * Math.cos(alpha), rho, mach, cfg),
     throttle,
     elevatorTrim,
     flapsDeg,

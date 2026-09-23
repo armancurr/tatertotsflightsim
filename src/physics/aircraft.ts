@@ -1,11 +1,11 @@
 /**
- * Cessna 172RG flight model: state creation, the fixed-step 6-DOF integrator
- * and the flight-phase state machine (ground → airborne → landed / crashed).
- * Pure and deterministic: step() never mutates its inputs and never touches
- * the renderer or the DOM.
+ * The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state
+ * machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config
+ * passed to step() selects the airframe, the engine type (piston / jet) and fly-by-wire.
+ * Pure and deterministic: step() never mutates its inputs and never touches the renderer or the DOM.
  *
- * ─── Calibration results (1100 kg, ISA, no wind; measured with the fixed 1/120 s step) ───
- * Checked by tests/physics/realism.test.ts, stall.test.ts, attitude.test.ts.
+ * ─── Calibration: Cessna 172RG (1100 kg, ISA, no wind; fixed 1/120 s step) ───
+ * Checked by tests/physics/realism.test.ts, stall.test.ts, spin.test.ts, attitude.test.ts, turn-entry.test.ts.
  *
  *   Quantity                                   Measured                              C172RG POH / target
  *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
@@ -20,14 +20,53 @@
  *   Top speed, full power, sea level, gear up  138 KTAS                              < 160 kt
  *   Idle glide 70 KIAS, gear up / gear down    9.6 : 1 / 8.6 : 1                     8–10 : 1
  *   Hands-off trimmed cruise, 110 KIAS         4° bank upset → 1.7° in 60 s (→ 0.3° in 180 s), |Δalt| < 3 m
- *   Max roll rate, full aileron, 90 KIAS       44 °/s                                30–90 °/s
+ *   Max roll rate, full aileron, 90 KIAS       55 °/s                                30–90 °/s
+ *   Aileron-only roll-in to 30°, 90 KIAS       heading follows the bank from 0.1 s, 0.0° wrong-way   ≤ 1° adverse (keyboard)
+ *     (cnAileron −0.006 → +0.001 Frise/differential ailerons, cnP −0.03 → −0.01; was 5.4° wrong-way, 1.0 s)
  *   Approach 72 KIAS, flaps 20, 3° glide       throttle 0.51, trim −0.53, pitch −4.3° (holds hands-off)
  *   Approach + simple flare                    "smooth" −175 fpm, 60 KIAS, mains first, 582 m past threshold
  *   Braking rollout from 55 kt, full flaps     163 m                                 < 500 m
- *   Coordinated full-aft stall at idle         breaks straight (bank ≤ 1°), nose +21° → −9°, ~40 m lost
- *   Full-aft stall with full rudder            wing drops → spin/spiral (≤ 270 °/s roll)
+ *   Coordinated full-aft stall at idle         breaks straight (bank ≤ 1°), nose +19° → −4°   straight, nose drops
+ *   Skidding turn stall (inside rudder, top    inside wing drops past 60° (snaps toward the rudder)  base-to-final
+ *     aileron, tightening pull)                                                         stall-spin
+ *   Full aft + full rudder at the stall, idle  autorotating (p, r > 60 °/s) 0.7 s after the stall   incipient 1–3 s
+ *   Developed spin (held pro-spin)             177 °/s (2.0 s/turn), nose −44°, α 44°, 71 KIAS,     150–250 °/s, 40–70° down,
+ *                                              ~8,100 fpm = ~270 ft/turn, 'stalled' throughout      50–75 KIAS, 200–350 ft/turn
+ *   PARE recovery from the developed spin      rotation stops in ~0.4 turn (1.2 s)   ≤ 1–1.5 turns
+ *   Spiral dive (70° bank, cruise power)       IAS builds past 110 KIAS, wing unstalled  (spin: IAS stays < 75)
  *   Full aft yoke at 110 / 125 KIAS            3.6 g / 4.4 g; > 6.5 g or > 1.3·Vne = structural failure
- *   step() cost (M2 Max, node)                 ~1.1 µs airborne, ~2.7 µs on the ground   ≪ 0.1 ms
+ *
+ * ─── Calibration: F-16C Block 50 (12,000 kg clean, full fuel; F110-GE-129; ISA) ───
+ * Checked by tests/physics/jet.test.ts, f16-aero.test.ts, fbw.test.ts, f16-missions.test.ts, turn-entry.test.ts.
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Thrust SL static, mil / max AB / idle      76.3 / 129 / 3.5 kN                   76 / 129 kN
+ *   Spool idle → 95 % mil                      4.2 s (33 % of mil after 1 s)         4–5 s
+ *   Afterburner light-off → full               1.0 s (only with the core ≥ 92 %)     ~1 s
+ *   CLα, CLmax                                 3.5 / rad; 1.63 @ 32° α (vortex lift) ~3.5; ~1.6 @ 30–35°
+ *   CD0 subsonic → transonic peak → M 2        0.0185 → 0.044 @ M 1.1 → 0.037        roughly doubles M 0.95–1.1
+ *   Max L/D (clean)                            10.9 @ 250 KIAS                       ~10–11
+ *   Top speed, max AB: sea level / 40,000 ft   M 1.18 (766 KIAS) / M 2.05            M 1.2 / M 2.0
+ *   Top speed, military power: SL / 40,000 ft  M 0.98 / M 1.05                       ~M 1.0 (no supercruise)
+ *   AB take-off (12 t): rotate / lift-off      155 KIAS / ~183 KIAS, 487 m           rotate 150–160 kt, 450–700 m
+ *   Held full aft stick on the take-off roll   rotation-rate limited, pitch ≤ 12° on the wheels (tail-strike protection)
+ *   Mil take-off                               ~175 KIAS, 775 m                      ~900 m
+ *   Climb at 350 KIAS from 2,000 ft            17,000 fpm mil / 31,000 fpm max AB
+ *   AB climb → level at 10,000 ft              580 KIAS within 60 s of lift-off      > 500 kt
+ *   FBW pitch: full aft / forward, 480 KIAS    8.9 g (8.5 g after 0.6 s, no overshoot) / −3.05 g    +9 / −3 g
+ *   FBW AoA limiter (full aft, slowing)        parks at 25.0° (gear down: 16°), never 'stalled', no departure
+ *   9 g turn, 10,000 ft, 480 KIAS, max AB      7.4 s ≥ 8.5 g, heading +164° in 8 s, 480 → 414 KIAS
+ *   FBW roll, full stick, 350 KIAS             300 °/s within 0.6 s, |β| < 2.5°      ≈ 300 °/s
+ *   Aileron-only roll-in (350 / 180 KIAS)      no wrong-way yaw (< 0.2°), heading follows within 0.5 s
+ *   Full roll at the AoA limit, 200 KIAS       |β| < 10°, α ≤ 27° (roll cut by α and β: no roll-coupling departure)
+ *   Neutral stick                              1.00 g, attitude held (Δpitch 0.001°, Δalt 0.2 ft in 20 s); banks ≤ 45° held level
+ *   Speed brake at 300 KIAS, idle              +3.3 kt/s deceleration (≈ 0.17 g)
+ *   Approach, 3° glide, gear + flaperons       150 KIAS at α 11.9°, pitch 8.9°       ~140–150 kt at 11–13° α
+ *   Landing (flare, idle)                      ~144 KIAS, −374 fpm, 12.7° pitch, rollout 1,050 m (brakes + speed brake)   800–1,200 m
+ *   Structural limits                          > 13.5 g / < −6 g, > 865 KIAS (800 × 1.08) = failure
+ *
+ *   step() cost (M2 Max, node): C172 ~1.6 µs, C172 spinning (strips) ~4 µs, F-16 with FBW ~5 µs   ≪ 0.1 ms
  */
 import { CONFIG, MS_TO_FPM, MS_TO_KT, type Config } from '../config';
 import type {
@@ -39,9 +78,11 @@ import { runwayFrame, fromRunwayCoords, toRunwayCoords } from '../world/runway';
 import {
   airDataFromBodyVelocity, bodyToWorld, eulerFromQuat, pqrFromOmega, quatFromEuler, worldToBody,
 } from './frames';
-import { airDensity } from './atmosphere';
+import { airDensity, speedOfSound } from './atmosphere';
 import { computeAero, stallAlphaRad } from './aero';
-import { powerTarget, propThrust, steadyEngine, stepEngine } from './engine';
+import { enginePowerTarget, steadyEngineAny, stepEngine } from './engine';
+import { stepJetEngine } from './jet';
+import { applyFbw } from './fbw';
 import { groundContacts } from './ground';
 import { FLAT_ENV } from './flatEnv';
 import { solveTrim, type TrimRequest } from './trim';
@@ -84,6 +125,7 @@ function sanitize(c: Controls, cfg: Config): Controls {
     brake: num(c.brake, 0, 1),
     parkingBrake: !!c.parkingBrake,
     engineOn: c.engineOn !== false,
+    speedBrake: c.speedBrake === true,
   };
 }
 
@@ -94,6 +136,12 @@ export function simStateLabel(state: AircraftState): SimStateLabel {
   if (state.phase === 'crashed') return 'crashed';
   if (state.phase === 'airborne' && state.stalled) return 'stalled';
   return state.phase;
+}
+
+/** Flight Mach number: true airspeed over the ISA speed of sound at the aircraft's altitude. */
+export function machNumber(state: AircraftState): number {
+  const m = state.derived.tas / speedOfSound(state.position.y);
+  return Number.isFinite(m) ? m : 0;
 }
 
 /** Touchdown rating by vertical speed (fpm; the magnitude is used). Beyond hardFpm the gear collapses. */
@@ -181,8 +229,7 @@ export function createInitialState(env: Environment = FLAT_ENV, cfg: Config = CO
   const position = { x: cgXZ.x, y, z: cgXZ.z };
   const orientation = quatFromEuler(heading, theta / DEG, 0);
   const rho = airDensity(y);
-  const engine: EngineState = { ...steadyEngine(powerTarget(0, rho, cfg), rho, 0, 0, cfg), rpm: ac.engine.idleRpm };
-  engine.thrust = propThrust(engine.power, 0, rho, cfg);
+  const engine: EngineState = { ...steadyEngineAny(enginePowerTarget(0, rho, cfg), rho, 0, 0, 0, cfg), rpm: ac.engine.idleRpm };
 
   return {
     time: 0,
@@ -235,7 +282,7 @@ export function createTrimmedState(
   const velocity = { x: Math.sin(h) * vh + wind.x, y: tr.tas * Math.sin(gamma) + wind.y, z: -Math.cos(h) * vh + wind.z };
   const orientation = quatFromEuler(heading, tr.pitchDeg, 0);
   const ias = tr.tas * Math.sqrt(tr.density / cfg.sim.seaLevelDensity) * MS_TO_KT;
-  const engine = steadyEngine(tr.power, tr.density, tr.tas * Math.cos(tr.alpha), ias, cfg);
+  const engine = steadyEngineAny(tr.power, tr.density, tr.tas * Math.cos(tr.alpha), ias, tr.tas / speedOfSound(req.altitudeM), cfg);
   const state: AircraftState = {
     time: 0,
     position,
@@ -308,7 +355,7 @@ function crashedState(
     velocity: { x: 0, y: 0, z: 0 },
     orientation: { ...s.orientation },
     angularVelocity: { x: 0, y: 0, z: 0 },
-    engine: { running: false, starting: false, startTimer: 0, failed: true, power: 0, rpm: 0, thrust: 0 },
+    engine: { running: false, starting: false, startTimer: 0, failed: true, power: 0, rpm: 0, thrust: 0, afterburner: 0 },
     phase: 'crashed',
     stalled: false,
     crash,
@@ -328,7 +375,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
     return s;
   }
   const ac = cfg.aircraft;
-  const c = sanitize(raw, cfg);
+  const pilot = sanitize(raw, cfg);
+  // Fly-by-wire: the pilot's stick/pedals become surface commands (the nosewheel still follows the pedals).
+  const c = ac.fbw ? applyFbw(state, pilot, cfg) : pilot;
   const g = cfg.sim.gravity;
   const m = ac.mass;
   const pos = state.position;
@@ -342,28 +391,34 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   const rho = airDensity(pos.y);
   const ad = airDataFromBodyVelocity(vb);
   const iasKt = ad.V * Math.sqrt(rho / cfg.sim.seaLevelDensity) * MS_TO_KT;
+  const mach = ad.V / speedOfSound(pos.y);
 
   // ── Systems: flaps, gear (squat switch), engine ──
   const notches = ac.flaps.notchesDeg;
-  const flapsDeg = moveToward(state.flapsDeg, notches[c.flapsNotch], ac.flaps.rateDegPerSec * dt);
+  // Flaperons (F-16) droop automatically with the gear handle down, below their placard speed.
+  const autoFlaps = ac.flaps.autoWithGearDeg > 0 && c.gearDown && iasKt < ac.flaps.autoRetractKt ? ac.flaps.autoWithGearDeg : 0;
+  const flapsDeg = moveToward(state.flapsDeg, Math.max(notches[c.flapsNotch], autoFlaps), ac.flaps.rateDegPerSec * dt);
   // Squat switch + interlock: the gear only starts up once the aircraft has been continuously airborne
   // for gear.retractDelay s, so a handle raised during the takeoff roll or a skipped bounce can't
   // fold the gear under a settling aircraft (play-test bug #2).
   const weightOnWheels = state.onGround || state.airborneTime < ac.gear.retractDelay;
   const gearTarget = c.gearDown || (ac.gear.squatSwitch && weightOnWheels && state.gearPos >= 0.999) ? 1 : 0;
   const gearPos = moveToward(state.gearPos, gearTarget, dt / ac.gear.transitTime);
-  const engine = stepEngine(state.engine, c, dt, rho, Math.max(0, ad.u), iasKt, cfg);
+  const engine =
+    ac.engine.type === 'jet'
+      ? stepJetEngine(state.engine, c, dt, rho, mach, iasKt, cfg)
+      : stepEngine(state.engine, c, dt, rho, Math.max(0, ad.u), iasKt, cfg);
 
   // ── Airframe forces (body) ──
   // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
   const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
-  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight);
+  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0 });
   const fAir = bodyToWorld(q, { x: aero.fx, y: aero.fy, z: aero.fz });
 
   // ── Ground, structure, water, obstacles ──
   const omegaWorld = bodyToWorld(q, w);
   const gr = groundContacts(
-    { position: pos, velocity: vel, orientation: q, omegaWorld, gearPos, brake: c.brake, parkingBrake: c.parkingBrake, rudder: c.rudder, engineRunning: engine.running },
+    { position: pos, velocity: vel, orientation: q, omegaWorld, gearPos, brake: c.brake, parkingBrake: c.parkingBrake, rudder: pilot.rudder, engineRunning: engine.running },
     env,
     cfg,
   );

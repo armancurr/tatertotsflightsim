@@ -169,7 +169,8 @@ describe('realism (C172RG POH calibration)', () => {
     for (let i = 0; i < 2000; i++) s = step(s, controls, DT); // warm up
     const n = 20000;
     const t0 = performance.now();
-    for (let i = 0; i < n; i++) s = step(s, { ...controls, aileron: Math.sin(i * 0.001) * 0.1 }, DT);
+    // A gentle wobble: bank ±20° (bank-held, so the aircraft stays in normal flight while we time it).
+    for (let i = 0; i < n; i++) s = step(s, { ...controls, aileron: bankHold(s, 20 * Math.sin(i * 0.001)) }, DT);
     const perStepMs = (performance.now() - t0) / n;
     // Ground contact is the expensive case: rolling on the runway.
     let g = createInitialState();
