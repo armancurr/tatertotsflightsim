@@ -399,3 +399,25 @@ describe('speed brake (jets)', () => {
     expect(s.controls.speedBrake).toBe(false);
   });
 });
+
+describe('weapons keys', () => {
+  const frame = (held: string[], pressed: string[] = []) => {
+    const f = emptyInputFrame();
+    return { ...f, held: new Set(held), pressed: pressed.map((code) => ({ code, shift: false })) };
+  };
+  it('the gun trigger follows the fire key while it is held (Q or Enter)', () => {
+    let s = createControlState();
+    for (const code of CONFIG.controls.keys.fireGun) {
+      s = updateControls(s, frame([code]), 1 / 60).state;
+      expect(s.controls.trigger).toBe(true);
+      s = updateControls(s, frame([]), 1 / 60).state;
+      expect(s.controls.trigger).toBe(false);
+    }
+  });
+  it('Z launches a missile and T locks / cycles the target (edge-triggered actions)', () => {
+    const s = createControlState();
+    expect(updateControls(s, frame(['KeyZ'], ['KeyZ']), 1 / 60).actions).toEqual(['fireMissile']);
+    expect(updateControls(s, frame(['KeyT'], ['KeyT']), 1 / 60).actions).toEqual(['lockTarget']);
+    expect(updateControls(s, frame(['KeyZ']), 1 / 60).actions).toEqual([]);
+  });
+});

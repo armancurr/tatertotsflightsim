@@ -67,6 +67,11 @@ export interface SimSystem {
   ready?(camera: THREE.PerspectiveCamera): Promise<void>;
   /** Instrument readings (one system provides them: the HUD). */
   readings?(state: AircraftState, controls: Controls, dt: number): InstrumentReadings | null;
+  /**
+   * Adjust the pilot's controls just before the physics steps (chained in system order), e.g. the
+   * weapons system sets `gunFiring` so the physics applies the gun's recoil. Return a new object.
+   */
+  adjustControls?(controls: Controls, state: AircraftState, dt: number): Controls;
   /** Camera shake intensity 0..1 (the max over systems is used). */
   cameraShake?(state: AircraftState): number;
   update?(f: SystemFrame): void;

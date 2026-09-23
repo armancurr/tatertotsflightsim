@@ -46,6 +46,21 @@ describe('systems layer', () => {
     err.mockRestore();
   });
 
+  it('chains adjustControls in order without mutating the input; a throwing hook is skipped', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const s = await createSystems(ctx, [
+      mod('a', 1, { adjustControls: (c: { throttle: number }) => ({ ...c, throttle: c.throttle + 0.25 }) }),
+      mod('b', 2, { adjustControls: () => { throw new Error('z'); } }),
+      mod('w', 3, { adjustControls: (c: { trigger?: boolean }) => ({ ...c, gunFiring: !!c.trigger }) }),
+    ], new Set());
+    const input = { throttle: 0.5, trigger: true } as never;
+    const out = s.adjustControls(input, {} as never, 1 / 60) as unknown as { throttle: number; gunFiring: boolean };
+    expect(out.throttle).toBe(0.75);
+    expect(out.gunFiring).toBe(true);
+    expect((input as { throttle: number }).throttle).toBe(0.5);
+    err.mockRestore();
+  });
+
   it('uses the first readings provider and the max camera shake', async () => {
     const s = await createSystems(ctx, [
       mod('x', 1, { cameraShake: () => 0.2 }),

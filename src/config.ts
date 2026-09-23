@@ -120,6 +120,97 @@ export interface FbwConfig {
   liftoffBlendS: number;
 }
 
+// ─── Weapons (owned by src/combat; the physics reads gun.recoilN / gun.muzzle) ─────────────────
+// Positions are in the BODY frame (origin = CG, +X right, +Y up, −Z nose), metres, and the 3D
+// model must put the matching parts exactly there (the gun muzzle, one missile per station).
+
+/** An internal rotary cannon (A-10: GAU-8/A Avenger; F-16: M61A1 Vulcan). */
+export interface GunConfig {
+  name: string;
+  caliberMm: number;
+  barrels: number;
+  /** Rounds per second at full barrel speed. */
+  rateRps: number;
+  /** Trigger → first round (the barrels spin up), and full rate → stopped, s. */
+  spinUpS: number;
+  spinDownS: number;
+  /** Rounds loaded at a reset. */
+  rounds: number;
+  /** Muzzle velocity, m/s (added to the aircraft's velocity). */
+  muzzleVelocity: number;
+  projectileMassKg: number;
+  /** Quadratic drag of the projectile: a = −dragK · |v| · v (1/m, at sea level; scaled by density ratio). */
+  dragK: number;
+  /** Dispersion: 80 % of rounds land within this cone radius, milliradians. */
+  dispersionMrad: number;
+  /** Average recoil force while firing, N (acts along body +Z at the muzzle). */
+  recoilN: number;
+  /** Muzzle position (the firing barrel), body frame. */
+  muzzle: { x: number; y: number; z: number };
+  /** Gun line depression below the body −Z axis, deg (+ = points below the fuselage datum). */
+  boresightDownDeg: number;
+  /** Every n-th round is drawn as a tracer. */
+  tracerEvery: number;
+  /** Rounds are dropped after this time of flight, s. */
+  maxFlightS: number;
+  /** Damage units per direct hit before armour (see CONFIG.combat.targets), and HEI splash radius, m. */
+  damage: number;
+  splashRadiusM: number;
+}
+
+/** Air-to-ground guided missiles (AGM-65 Maverick): rail-launched, lock before launch, fire-and-forget. */
+export interface MissileConfig {
+  name: string;
+  /** One missile per station, fired in this order. */
+  stations: { x: number; y: number; z: number }[];
+  massKg: number;
+  diameterM: number;
+  lengthM: number;
+  /** Rocket motor: boost thrust for boostS, then sustain thrust for sustainS, N / s. */
+  boostThrustN: number;
+  boostS: number;
+  sustainThrustN: number;
+  sustainS: number;
+  /** Axial drag coefficient (reference area = π·d²/4). */
+  cd: number;
+  /** Proportional-navigation constant and lateral acceleration limit, g. */
+  navConstant: number;
+  maxG: number;
+  /** Seeker: lock cone around the boresight to acquire, gimbal limit once locked, deg. */
+  acquireConeDeg: number;
+  gimbalLimitDeg: number;
+  /** Seconds the seeker needs on a target before LOCK, and the max / min lock ranges, m. */
+  lockTimeS: number;
+  maxRangeM: number;
+  minRangeM: number;
+  /** Proximity fuze radius, m; warhead damage and blast radius (m). */
+  fuzeRadiusM: number;
+  damage: number;
+  blastRadiusM: number;
+  /** Self-destruct after this time of flight, s. */
+  maxFlightS: number;
+}
+
+/** What an aircraft carries. `null` = none (the Cessna carries nothing). */
+export interface WeaponsConfig {
+  gun: GunConfig | null;
+  missiles: MissileConfig | null;
+}
+
+/** A ground vehicle class: size (m), toughness (damage units) and armour by aspect (damage multipliers). */
+export interface TargetClassConfig {
+  name: string;
+  /** Hull box: full length (z), width (x), height (y), m. */
+  length: number;
+  width: number;
+  height: number;
+  health: number;
+  /** Damage multipliers for hits on the front, sides, rear and top (1 = no armour). */
+  armor: { front: number; side: number; rear: number; top: number };
+  /** Road speed when moving, m/s. */
+  speed: number;
+}
+
 
 export const CONFIG = {
   // ─── Simulation core ───────────────────────────────────────────────────────
@@ -594,6 +685,10 @@ export const CONFIG = {
       parkingBrake: ['KeyB'],
       /** Speed brake (jets). */
       speedBrake: ['KeyX'],
+      /** Gun trigger (hold) · launch a missile · lock / next target (armed aircraft: A-10, F-16). */
+      fireGun: ['KeyQ', 'Enter'],
+      fireMissile: ['KeyZ'],
+      lockTarget: ['KeyT'],
       trimNoseDown: ['BracketLeft'],
       trimNoseUp: ['BracketRight'],
       engine: ['KeyE'],
@@ -1417,6 +1512,33 @@ export const CONFIG = {
       furrowWidth: 2.6,
     },
   },
+
+  // ─── Weapons carried (owned by src/combat; per aircraft — see A10_WEAPONS / F16_WEAPONS) ─────
+  /** The Cessna carries nothing. */
+  weapons: { gun: null, missiles: null } as WeaponsConfig,
+
+  // ─── Combat world: targets, damage, effects budgets (owned by src/combat) ───────────────────
+  combat: {
+    /**
+     * The target range: vehicles are placed on open, flat ground (not water, towns or forest)
+     * between minDistance and maxDistance from the runway centre, preferring the bearing
+     * `bearingDeg` (north of the airport: straight ahead after a runway-36 take-off).
+     */
+    range: { bearingDeg: 350, minDistance: 5500, maxDistance: 9000, radius: 900 },
+    /** Vehicle classes (real sizes). Armour multipliers are for the 30 mm API round. */
+    targets: {
+      tank: { name: 'T-72B', length: 6.95, width: 3.59, height: 2.23, health: 100, armor: { front: 0.05, side: 0.35, rear: 0.6, top: 0.8 }, speed: 8 } as TargetClassConfig,
+      ifv: { name: 'BMP-2', length: 6.72, width: 3.15, height: 2.45, health: 60, armor: { front: 0.5, side: 0.9, rear: 1, top: 1 }, speed: 9 } as TargetClassConfig,
+      apc: { name: 'BTR-80', length: 7.65, width: 2.9, height: 2.41, health: 50, armor: { front: 0.7, side: 1, rear: 1, top: 1 }, speed: 11 } as TargetClassConfig,
+      truck: { name: 'Ural-4320', length: 7.37, width: 2.55, height: 2.87, health: 25, armor: { front: 1, side: 1, rear: 1, top: 1 }, speed: 12 } as TargetClassConfig,
+      aaa: { name: 'ZSU-23-4 Shilka', length: 6.54, width: 3.13, height: 2.25, health: 45, armor: { front: 0.8, side: 1, rear: 1, top: 1 }, speed: 7 } as TargetClassConfig,
+    },
+    /** Destroyed vehicles come back after a reset (R) or after this long, s (0 = only on reset). */
+    respawnS: 0,
+    /** Live projectile pool (rounds in flight) and impact effects per frame, max. */
+    maxRounds: 1500,
+    maxImpactFxPerFrame: 24,
+  },
 };
 
 export type Config = typeof CONFIG;
@@ -1755,3 +1877,165 @@ function makeF16(): AircraftConfig {
 }
 
 export const F16_AIRCRAFT: AircraftConfig = makeF16();
+
+/**
+ * Fairchild Republic A-10C Thunderbolt II ("Warthog"): straight-wing, twin TF34-GE-100A
+ * turbofans (40.3 kN each, no afterburner), built around the 30 mm GAU-8/A Avenger.
+ *
+ * GEOMETRY IS FIXED (orchestrator contract, real dimensions: 16.26 m long, 17.53 m span, 4.47 m
+ * tall, 47.0 m² wing, 5.40 m wheelbase, 5.25 m track): the 3D model and the physics contact points
+ * both read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch the ground at
+ * y = −1.95 with the struts extended. The nose gear is offset 0.30 m right of the centreline (the
+ * gun's firing barrel sits on the centreline). Twin fins at x = ±2.87 on the tailplane tips.
+ * Engine pods on the upper rear fuselage, centred at x = ±1.55, y = +1.1, z = +3.1 … +6.4.
+ *
+ * FLIGHT MODEL: placeholder (F-16 aero with the A-10 geometry) until src/physics calibrates it.
+ */
+function makeA10(): AircraftConfig {
+  const f16 = structuredClone(F16_AIRCRAFT);
+  return {
+    ...f16,
+    name: 'A-10C Thunderbolt II',
+    registration: '80-0281',
+    wingArea: 47.01,
+    wingSpan: 17.53,
+    meanChord: 2.73,
+    engine: {
+      ...f16.engine,
+      jet: {
+        ...f16.engine.jet!,
+        /** 2 × TF34-GE-100A, 9,065 lbf each; no afterburner (maxThrustN = milThrustN). */
+        milThrustN: 80600,
+        maxThrustN: 80600,
+        idleThrustN: 4000,
+        /** Both nozzles combined; the nacelles are canted so the thrust line passes just above the CG. */
+        thrustPoint: { x: 0, y: 0.35, z: 6.4 },
+      },
+      staticThrustN: 80600,
+    },
+    geometry: {
+      ...f16.geometry,
+      length: 16.26,
+      height: 4.47,
+      noseWheel: { x: 0.3, y: -1.95, z: -4.85 },
+      leftMainWheel: { x: -2.62, y: -1.95, z: 0.55 },
+      rightMainWheel: { x: 2.62, y: -1.95, z: 0.55 },
+      mainWheelRadius: 0.46,
+      noseWheelRadius: 0.3,
+      strutTravel: 0.25,
+      propHub: { x: 0, y: 1.1, z: 3.1 },
+      propRadius: 0.62,
+      spinnerTip: { x: 0, y: -0.55, z: -7.25 },
+      pilotEye: { x: 0, y: 1.1, z: -4.3 },
+      wingRootLeadingEdge: { x: 0, y: -0.6, z: -0.75 },
+      wingRootChord: 3.05,
+      wingTipChord: 1.9,
+      wingTaperStart: 0.35,
+      dihedralDeg: 5,
+      horizontalTail: { x: 0, y: 0.45, z: 8.2, span: 5.74, chord: 1.85 },
+      verticalTailTop: { x: 0, y: 2.52, z: 8.6 },
+      structuralPoints: [
+        { name: 'noseTip', x: 0, y: -0.35, z: -6.95 },
+        { name: 'chin', x: 0, y: -1.0, z: -3.6 },
+        { name: 'bellyMid', x: 0, y: -1.05, z: 0.5 },
+        { name: 'leftWingtip', x: -8.76, y: 0.05, z: 0.9 },
+        { name: 'rightWingtip', x: 8.76, y: 0.05, z: 0.9 },
+        { name: 'leftEngine', x: -1.55, y: 1.75, z: 4.6 },
+        { name: 'rightEngine', x: 1.55, y: 1.75, z: 4.6 },
+        { name: 'leftFinTop', x: -2.87, y: 2.52, z: 8.8 },
+        { name: 'rightFinTop', x: 2.87, y: 2.52, z: 8.8 },
+        { name: 'leftFinRoot', x: -2.87, y: -0.35, z: 8.6 },
+        { name: 'rightFinRoot', x: 2.87, y: -0.35, z: 8.6 },
+        { name: 'tailcone', x: 0, y: -0.25, z: 9.3 },
+        { name: 'cabinRoof', x: 0, y: 1.6, z: -4.0 },
+      ],
+    },
+    limits: { ...f16.limits, vsoKt: 100, vs1Kt: 115, vrKt: 120, vxKt: 180, vyKt: 210, vaKt: 300, vnoKt: 400, vneKt: 450, gLimitPos: 7.33, gLimitNeg: -3, structuralFailureG: 11, structuralFailureNegG: -5 },
+  };
+}
+
+export const A10_AIRCRAFT: AircraftConfig = makeA10();
+
+/** A-10C: GAU-8/A Avenger (1,150 rounds, PGU-13/14 combat mix) + 4 × AGM-65D Maverick on two LAU-88s (stations 3 and 9). */
+export const A10_WEAPONS: WeaponsConfig = {
+  gun: {
+    name: 'GAU-8/A Avenger',
+    caliberMm: 30,
+    barrels: 7,
+    /** 3,900 rounds/min. */
+    rateRps: 65,
+    spinUpS: 0.55,
+    spinDownS: 0.7,
+    rounds: 1150,
+    muzzleVelocity: 1010,
+    projectileMassKg: 0.425,
+    /** ½ρ·Cd·A/m with Cd ≈ 0.3: ~700 m/s left at 1,220 m, ~1.5 s time of flight. */
+    dragK: 3.0e-4,
+    /** "80 % of rounds inside a 40 ft circle at 4,000 ft". */
+    dispersionMrad: 5,
+    /** ~10,000 lbf — about one engine's thrust. */
+    recoilN: 45000,
+    muzzle: { x: 0, y: -0.55, z: -7.25 },
+    boresightDownDeg: 2,
+    tracerEvery: 4,
+    maxFlightS: 6,
+    damage: 10,
+    splashRadiusM: 3,
+  },
+  missiles: {
+    name: 'AGM-65D Maverick',
+    /** LAU-88 outboard/inboard rails under stations 3 and 9; fired left, right, left, right. */
+    stations: [
+      { x: -4.62, y: -1.35, z: 0.35 },
+      { x: 4.62, y: -1.35, z: 0.35 },
+      { x: -3.98, y: -1.35, z: 0.35 },
+      { x: 3.98, y: -1.35, z: 0.35 },
+    ],
+    massKg: 220,
+    diameterM: 0.305,
+    lengthM: 2.49,
+    boostThrustN: 26000,
+    boostS: 1.5,
+    sustainThrustN: 4000,
+    sustainS: 3.5,
+    cd: 0.35,
+    navConstant: 4,
+    maxG: 15,
+    acquireConeDeg: 8,
+    gimbalLimitDeg: 60,
+    lockTimeS: 0.8,
+    maxRangeM: 9000,
+    minRangeM: 500,
+    fuzeRadiusM: 2.5,
+    damage: 400,
+    blastRadiusM: 18,
+    maxFlightS: 60,
+  },
+};
+
+/** F-16C: M61A1 Vulcan, 511 rounds of 20 mm in the left strake. No air-to-ground missiles (yet). */
+export const F16_WEAPONS: WeaponsConfig = {
+  gun: {
+    name: 'M61A1 Vulcan',
+    caliberMm: 20,
+    barrels: 6,
+    /** 6,000 rounds/min. */
+    rateRps: 100,
+    spinUpS: 0.3,
+    spinDownS: 0.5,
+    rounds: 511,
+    muzzleVelocity: 1030,
+    projectileMassKg: 0.1,
+    dragK: 5.8e-4,
+    dispersionMrad: 8,
+    recoilN: 18000,
+    /** Port in the left strake root, beside the cockpit (GUN_MUZZLE in src/aircraft/f16). */
+    muzzle: { x: -0.605, y: 0.03, z: -4.12 },
+    boresightDownDeg: 0,
+    tracerEvery: 5,
+    maxFlightS: 5,
+    damage: 3,
+    splashRadiusM: 1.5,
+  },
+  missiles: null,
+};

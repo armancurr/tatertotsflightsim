@@ -15,6 +15,7 @@ export interface Systems {
   ready(camera: THREE.PerspectiveCamera, timeoutMs: number): Promise<void>;
   readings(state: AircraftState, controls: Controls, dt: number): InstrumentReadings | null;
   cameraShake(state: AircraftState): number | null;
+  adjustControls(controls: Controls, state: AircraftState, dt: number): Controls;
   update(f: SystemFrame): void;
   onAction(a: SimAction): void;
   onReset(which: 'runway' | 'approach' | 'teleport'): void;
@@ -79,6 +80,17 @@ export async function createSystems(ctx: SystemContext, modules: SystemModule[] 
         if (Number.isFinite(x)) v = v === null ? x : Math.max(v, x);
       }
       return v;
+    },
+    adjustControls(controls, state, dt) {
+      let c = controls;
+      for (const s of list) {
+        if (!s.sys.adjustControls) continue;
+        safe(s.name, () => {
+          const next = s.sys.adjustControls!(c, state, dt);
+          if (next) c = next;
+        });
+      }
+      return c;
     },
     update(f) {
       for (const s of list) {

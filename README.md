@@ -108,7 +108,10 @@ eye on the angle of attack when you pull hard.
 | Flaps down / up, one notch at a time (0-10-20-30°) | <kbd>F</kbd> / <kbd>V</kbd> |
 | Landing gear up / down | <kbd>G</kbd> |
 | Wheel brakes (hold) / parking brake | <kbd>Space</kbd> / <kbd>B</kbd> |
-| Speed brake (F-16) | <kbd>X</kbd> |
+| Speed brake (F-16, A-10) | <kbd>X</kbd> |
+| Fire the gun (hold) | <kbd>Q</kbd>, <kbd>Enter</kbd> |
+| Lock a target / next target (Maverick) | <kbd>T</kbd> |
+| Launch a Maverick missile | <kbd>Z</kbd> |
 | Elevator trim: nose down / nose up | <kbd>[</kbd> / <kbd>]</kbd> |
 | Engine start / stop | <kbd>E</kbd> |
 | Landing light | <kbd>L</kbd> |
@@ -133,7 +136,8 @@ Add these to the address, for example `http://127.0.0.1:8092/?aircraft=f16&cam=c
 
 | Option | What it does |
 | --- | --- |
-| `aircraft=c172rg` or `aircraft=f16` | Choose the aircraft |
+| `aircraft=c172rg`, `aircraft=f16` or `aircraft=a10` | Choose the aircraft |
+| `spawn=range` | Start 4 km short of the target range at 1,500 ft, pointing at it |
 | `spawn=x,z,aglFt,headingDeg,speedKt` | Start airborne anywhere. `x` is metres east and `z` metres south of the runway centre |
 | `cam=cockpit`, `chase`, `external` or `orbit` | Starting camera |
 | `tod=0` to `3` | Time of day: morning, midday, golden hour, dawn |

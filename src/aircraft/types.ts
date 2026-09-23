@@ -47,6 +47,12 @@ export interface AircraftVisualState {
   afterburner?: number;
   /** 0..1 speed-brake deployment (jets). */
   speedBrake?: number;
+  /** Gun barrel speed 0..1 (the GAU-8's seven barrels spin up before the first round). */
+  gunSpin?: number;
+  /** Rounds are leaving the gun this frame (muzzle flash, gun gas). */
+  gunFiring?: boolean;
+  /** Per missile station (CONFIG.weapons.missiles.stations order): a missile still hangs there. */
+  stores?: boolean[];
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */
