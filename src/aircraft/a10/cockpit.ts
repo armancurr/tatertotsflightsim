@@ -309,7 +309,7 @@ function drawPanel(ctx: CanvasRenderingContext2D, w: number, h: number): void {
       for (const [bx, by] of [[off, 0.093], [off, -0.093], [0.093, off], [-0.093, off]]) rect(s * 0.215 + bx, -0.02 + by, 0.016, 0.012, '#6a6f74');
     }
   }
-  // UFC: scratchpad window and keypad.
+  // UFC: entry display window and keypad.
   rect(0, 0.15, 0.24, 0.12, '#1a1d1f');
   rect(0, 0.19, 0.16, 0.025, '#030603');
   label('UFC  STEER 3  N31 43.2', 0, 0.19, 9, '#58ec7a');
