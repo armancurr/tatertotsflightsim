@@ -1001,6 +1001,49 @@ export const CONFIG = {
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
     },
+    /** Road traffic: moving cars, trucks, buses and tractors, parked cars (owned by src/world/cars; system cars.ts). */
+    cars: {
+      /** Every choice (spawns, vehicle types, colours, routes) is a hash of this seed + counters; the clock pauses with the sim. */
+      seed: 5309,
+      /** Fixed simulation step, s (poses are extrapolated between steps). */
+      step: 1 / 20,
+      /** Moving traffic lives within this distance of the camera (m); it is released beyond despawnRadius. */
+      radius: 2600,
+      despawnRadius: 2900,
+      /** New cars appear at least this far from the camera (m) once the first fill is done (or behind it). */
+      spawnHideDistance: 700,
+      /** Pool sizes: moving vehicles (a semi counts once) and parked cars. */
+      maxMoving: 420,
+      maxParked: 1400,
+      /** Moving vehicles per km per direction by road kind (farm tracks: tractors only). */
+      density: { highway: 9, road: 5, access: 3, lane: 1.6, street: 3.2, drive: 0 },
+      /** Village/hamlet streets (no sidewalks) carry this fraction of the street density. */
+      villageStreetFactor: 0.45,
+      /** Tractors driving on farm tracks near the camera (at most). */
+      tractors: 5,
+      /** Parked cars: fraction of kerb slots taken, slot pitch (m), kept clear of junction boxes (m); drawn within parkedRadius (m). */
+      parkedFill: 0.42,
+      parkedPitch: 6.4,
+      parkedJunctionClear: 7,
+      parkedRadius: 1100,
+      /** Detailed models within nearDistance (m); simple ones beyond, moving cars to farDistance, parked to parkedRadius. */
+      nearDistance: 300,
+      farDistance: 2600,
+      /** Contact shadows (AO + a soft sun shadow) within this distance, m. */
+      shadowDistance: 1400,
+      /** Intelligent-driver model: desired time gap (s), jam gap (m), comfortable accel / decel (m/s²), emergency decel. */
+      idm: { timeHeadway: 1.5, minGap: 2.2, accel: 1.8, decel: 2.4, maxDecel: 8 },
+      /** Comfortable lateral acceleration in curves and turns, m/s²; slowest turn speed, m/s. */
+      lateralAccel: 2.3,
+      minTurnSpeed: 2.8,
+      /** Drivers' desired speed as a fraction of the limit (uniform in this range). */
+      speedFactor: [0.93, 1.08] as [number, number],
+      /** Headlights/tail lights come on below this sun elevation (deg), fully by lightsFullDeg. */
+      lightsOnDeg: 14,
+      lightsFullDeg: 4,
+      /** A vehicle stopped this long (s) out of sight is released (gridlock safety valve). */
+      stuckTimeout: 60,
+    },
   },
 
   // ─── Sky, sun, fog, lighting (owned by src/render) ───────────────────────────
