@@ -6,6 +6,8 @@
  *   dist    camera distance (default 22), az / el orbit angles (deg)
  *   lights=1  lamps on, brake=1, ind=1 (left indicator)
  *   spin    wheel spin (odometer m)
+ *   only=m  just model m (near LOD) at the origin, facing `yaw` (deg, default 0 = −z); tx/tz aim
+ *   paint=0xRRGGBB, finish=0..2  its paint
  * window.__ready, window.__renderer.
  */
 import * as THREE from 'three';
@@ -66,15 +68,17 @@ async function main() {
   const m4 = new THREE.Matrix4();
   let x = -40;
   const spacing = [3.2, 3.2, 3.4, 3.6, 3.6, 4, 4.4, 4.4, 4, 4.4];
+  const only = q.has('only') ? num('only', 0) : -1;
   for (let m = 0; m < N; m++) {
-    for (const lod of [0, 1]) {
+    if (only >= 0 && m !== only) continue;
+    for (const lod of only >= 0 ? [0] : [0, 1]) {
       const inst = batch.addInstance(ids[m * 2 + lod]);
-      m4.makeRotationY(-Math.PI / 2 + 0.35);
-      m4.setPosition(x, 0, lod ? -14 : 0);
+      m4.makeRotationY(only >= 0 ? (num('yaw', 0) * Math.PI) / 180 : -Math.PI / 2 + 0.35);
+      m4.setPosition(only >= 0 ? 0 : x, 0, only >= 0 ? 0 : lod ? -14 : 0);
       batch.setMatrixAt(inst, m4);
       const paint = m === 9 ? paintFor(VT.semi, 0.05) : paintFor(m, (m * 0.137 + 0.61) % 1);
-      col.setHex(paintRGB(paint));
-      data.set([col.r, col.g, col.b, paintFinish(paint)], inst * 8);
+      col.setHex(q.has('paint') ? Number(q.get('paint')) : paintRGB(paint));
+      data.set([col.r, col.g, col.b, q.has('finish') ? num('finish', 2) : paintFinish(paint)], inst * 8);
       let flags = 0;
       if (q.get('lights') === '1') flags |= FLAG_HEAD;
       if (q.get('brake') === '1') flags |= FLAG_BRAKE;
@@ -88,9 +92,11 @@ async function main() {
   const az = (num('az', 200) * Math.PI) / 180;
   const el = (num('el', 14) * Math.PI) / 180;
   const d = num('dist', 60);
-  const tx = num('tx', -2);
-  camera.position.set(tx + Math.sin(az) * Math.cos(el) * d, 1.2 + Math.sin(el) * d, -4 + Math.cos(az) * Math.cos(el) * d);
-  camera.lookAt(tx, 1.0, -4);
+  const tx = num('tx', only >= 0 ? 0 : -2);
+  const tz = num('tz', only >= 0 ? 0 : -4);
+  const ty = num('ty', 1.0);
+  camera.position.set(tx + Math.sin(az) * Math.cos(el) * d, ty + 0.2 + Math.sin(el) * d, tz + Math.cos(az) * Math.cos(el) * d);
+  camera.lookAt(tx, ty, tz);
   const focus = new THREE.Vector3(0, 0, 0);
   let last = performance.now();
   let t = 0;

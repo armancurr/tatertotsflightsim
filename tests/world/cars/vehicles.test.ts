@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { buildVehicleGeometry, LAMP } from '../../../src/world/cars/vehicles';
+import fc from 'fast-check';
+import { buildVehicleGeometry, buildBodyGeometry, carBodyProfile, LAMP } from '../../../src/world/cars/vehicles';
 import { SPECS, SEMI, MODEL_COUNT, MODEL_TRAILER, TRAILER_WHEELBASE, VT } from '../../../src/world/cars/specs';
 
 const models = Array.from({ length: MODEL_COUNT }, (_, m) => m);
@@ -21,10 +22,10 @@ describe('vehicle models', () => {
     }
   });
 
-  it('are realistic low-poly: 400–1,500 triangles near, ≤ 300 far', () => {
+  it('stay cheap: 400–2,000 triangles near (≤ 2,200 for the big trucks), ≤ 300 far', () => {
     near.forEach((g, m) => {
       expect(tris(g), `model ${m}`).toBeGreaterThanOrEqual(400);
-      expect(tris(g), `model ${m}`).toBeLessThanOrEqual(1500);
+      expect(tris(g), `model ${m}`).toBeLessThanOrEqual(m === VT.semi || m === VT.bus || m === VT.box ? 2200 : 2000);
     });
     far.forEach((g, m) => expect(tris(g), `model ${m}`).toBeLessThanOrEqual(300));
   });
@@ -109,6 +110,123 @@ describe('vehicle models', () => {
       expect(paint, `paint ${m}`).toBeGreaterThan(12);
       if (m !== MODEL_TRAILER) expect(glass, `glass ${m}`).toBeGreaterThan(8);
     });
+  });
+});
+
+/** Fraction of triangles whose winding agrees with their (averaged) vertex normals. */
+function windingAgreement(g: THREE.BufferGeometry): number {
+  const p = g.getAttribute('position');
+  const n = g.getAttribute('normal');
+  const idx = g.index!;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  let ok = 0;
+  let total = 0;
+  for (let t = 0; t < idx.count; t += 3) {
+    const i0 = idx.getX(t);
+    const i1 = idx.getX(t + 1);
+    const i2 = idx.getX(t + 2);
+    a.fromBufferAttribute(p, i0);
+    b.fromBufferAttribute(p, i1).sub(a);
+    c.fromBufferAttribute(p, i2).sub(a);
+    const gn = b.cross(c);
+    if (gn.lengthSq() < 1e-12) continue;
+    const vx = n.getX(i0) + n.getX(i1) + n.getX(i2);
+    const vy = n.getY(i0) + n.getY(i1) + n.getY(i2);
+    const vz = n.getZ(i0) + n.getZ(i1) + n.getZ(i2);
+    total++;
+    if (gn.x * vx + gn.y * vy + gn.z * vz > 0) ok++;
+  }
+  return ok / Math.max(1, total);
+}
+
+describe('sculpted bodies', () => {
+  it('every near model faces outward (winding agrees with the shading normals)', () => {
+    for (const m of models) expect(windingAgreement(buildVehicleGeometry(m, 0)), `model ${m}`).toBeGreaterThan(0.985);
+  });
+
+  it('cars have glass above the belt (windows, windscreen), black pillars/seals and a painted roof on top', () => {
+    for (const m of [VT.sedan, VT.hatch, VT.suv, VT.pickup, VT.van]) {
+      const g = buildVehicleGeometry(m, 0);
+      const P = carBodyProfile(m);
+      const a = g.getAttribute('aMat');
+      const p = g.getAttribute('position');
+      const c = g.getAttribute('color');
+      let glassHigh = 0;
+      let gloss = 0;
+      let roofPaint = 0;
+      const roofY = Math.max(...P.roof.map((k) => k[1]));
+      for (let i = 0; i < a.count; i++) {
+        const isGlass = a.getX(i) < 0.5 && a.getY(i) < 0.1 && c.getX(i) < 0.02 && a.getW(i) === 0;
+        if (isGlass && p.getY(i) > 0.85) glassHigh++;
+        if (a.getX(i) < 0.5 && a.getY(i) > 0.15 && a.getY(i) < 0.3 && c.getX(i) < 0.01) gloss++;
+        if (a.getX(i) > 0.5 && p.getY(i) > roofY - 0.02 && Math.abs(p.getX(i)) < 0.3) roofPaint++;
+      }
+      expect(glassHigh, `glass ${m}`).toBeGreaterThan(40);
+      expect(gloss, `black trim ${m}`).toBeGreaterThan(8);
+      expect(roofPaint, `roof ${m}`).toBeGreaterThan(4);
+    }
+  });
+
+  it('the pick-up bed is a recessed tub with a dark liner', () => {
+    const g = buildVehicleGeometry(VT.pickup, 0);
+    const P = carBodyProfile(VT.pickup);
+    const zOff = SPECS[VT.pickup].frontOverhang + SPECS[VT.pickup].wheelbase / 2;
+    const a = g.getAttribute('aMat');
+    const p = g.getAttribute('position');
+    let floor = 0;
+    for (let i = 0; i < a.count; i++) {
+      const zf = p.getZ(i) + zOff;
+      if (zf > P.bed![0] + 0.2 && zf < P.bed![1] - 0.2 && Math.abs(p.getX(i)) < 0.5 && a.getX(i) < 0.5 && Math.abs(p.getY(i) - P.bed![2]) < 0.02) floor++;
+    }
+    expect(floor).toBeGreaterThan(4);
+  });
+
+  it('fuzz: any plausible car profile builds a finite, outward, in-bounds body', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 4 }),
+        fc.double({ min: 0.85, max: 1.2, noNaN: true }),
+        fc.double({ min: 0.9, max: 1.12, noNaN: true }),
+        fc.double({ min: 0.9, max: 1.1, noNaN: true }),
+        fc.integer({ min: 0, max: 1 }),
+        (t, sl, sw, sh, detail) => {
+          const P0 = carBodyProfile(t);
+          const k = (keys: [number, number][], fy = sh) => keys.map(([z, y]) => [z * sl, y * fy] as [number, number]);
+          const P = {
+            ...P0,
+            L: P0.L * sl,
+            W: P0.W * sw,
+            wb: P0.wb * sl,
+            fo: P0.fo * sl,
+            belt: k(P0.belt),
+            roof: k(P0.roof),
+            gh: [P0.gh[0] * sl, P0.gh[1] * sl] as [number, number],
+            windows: P0.windows.map(([a, b]) => [a * sl, b * sl] as [number, number]),
+            ws: P0.ws * sl,
+            bl: P0.bl * sl,
+            bed: P0.bed ? ([P0.bed[0] * sl, P0.bed[1] * sl, P0.bed[2] * sh] as [number, number, number]) : undefined,
+            doors: P0.doors?.map((z) => z * sl),
+          };
+          const { geometry: g } = buildBodyGeometry(P, detail);
+          const pos = g.getAttribute('position');
+          const nrm = g.getAttribute('normal');
+          for (let i = 0; i < pos.count; i++) {
+            expect(Number.isFinite(pos.getX(i) + pos.getY(i) + pos.getZ(i))).toBe(true);
+            expect(Math.hypot(nrm.getX(i), nrm.getY(i), nrm.getZ(i))).toBeCloseTo(1, 3);
+          }
+          g.computeBoundingBox();
+          const bb = g.boundingBox!;
+          expect(bb.min.y).toBeGreaterThanOrEqual(-0.02);
+          expect(bb.max.z - bb.min.z).toBeLessThan(P.L * 1.05);
+          expect(bb.max.x - bb.min.x).toBeLessThan(P.W + 0.4);
+          expect(windingAgreement(g)).toBeGreaterThan(0.97);
+          expect(g.index!.count / 3).toBeLessThan(detail ? 300 : 2100);
+        },
+      ),
+      { numRuns: 40 },
+    );
   });
 });
 

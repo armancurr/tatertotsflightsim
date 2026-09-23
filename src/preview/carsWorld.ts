@@ -119,6 +119,22 @@ async function main() {
   const fps = { fps: 60, avg: 60, min: 60, onePercentLow: 60, longFrames: 0, frames: 0 };
   const frameMs: number[] = [];
   const settle = num('t', 3);
+  // QA: world positions of the drawn near vehicles ([x, y, z, heading°] of up to 40, nearest first)
+  (window as unknown as { __nearCars: () => number[][] }).__nearCars = () => {
+    const bm = scene.getObjectByName('cars-near') as THREE.BatchedMesh | undefined;
+    if (!bm) return [];
+    const out: number[][] = [];
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    for (let i = 0; i < bm.instanceCount; i++) {
+      if (!bm.getVisibleAt(i)) continue;
+      bm.getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      const e = m.elements;
+      out.push([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10, Math.round((Math.atan2(-e[8], -e[10]) * 180) / Math.PI), p.distanceTo(camera.position)]);
+    }
+    return out.sort((a, c) => a[4] - c[4]).slice(0, 40);
+  };
   window.__stats = () => {
     const s = [...frameMs].sort((a, b) => a - b);
     const p = (f: number) => (s.length ? s[Math.min(s.length - 1, Math.floor(s.length * f))] : 0);
