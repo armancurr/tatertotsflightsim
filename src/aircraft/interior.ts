@@ -109,7 +109,7 @@ export function seat(s: SeatSpec): THREE.BufferGeometry[] {
   out.push(tint(strap(mid, hip, 0.04, n), web, 0.9, 0));
   out.push(tint(strap(lapOut, buckle, 0.04, V(0, 1, 0)), web, 0.9, 0));
   out.push(tint(strap(lapIn, buckle, 0.04, V(0, 1, 0)), web, 0.9, 0));
-  out.push(tint(box(0.045, 0.01, 0.03, at(buckle.x, buckle.y + 0.004, buckle.z)), C.buckle, 0.3, 0.9));
+  out.push(tint(rbox(0.036, 0.008, 0.026, 0.003, at(buckle.x, buckle.y + 0.004, buckle.z)), 0x8d9093, 0.35, 0.85));
   // Inertia-reel anchor fitting on the wall.
   out.push(tint(rbox(0.03, 0.05, 0.04, 0.008, at(anchor.x, anchor.y + 0.02, anchor.z)), 0x2a2b2d, 0.6, 0.3));
   return out;
