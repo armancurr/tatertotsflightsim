@@ -4,7 +4,7 @@
  * `onAircraftChange`, with that aircraft's own config for the readings (limits, stall, flaps).
  */
 import { CONFIG, type Config } from '../../config';
-import { createHud, type Hud, type PanelDrawerFn } from '../../ui/hud';
+import { createHud, type Hud, type HudCombinerView, type PanelDrawerFn } from '../../ui/hud';
 import { createInstrumentModel, updateInstruments, type HudReadings } from '../../ui/instruments';
 import { veilActive } from '../../ui/veil';
 import { uiBusFor } from '../../ui/uiBus';
@@ -29,6 +29,8 @@ const mod: SystemModule = {
     const make = (m: PanelTarget, d: AircraftDef | null): Hud => createHud(ctx.hudRoot, { aircraft: panelTarget(m), config: d?.config ?? CONFIG, style: d?.hud ?? 'steam' });
     let hud = make(ctx.aircraft, def);
     let readings: HudReadings | null = null;
+    // Cockpit view of a jet with a HUD combiner: the HUD goes on the glass (see src/ui/hudGlass.ts).
+    const combinerView: HudCombinerView = { camera: ctx.camera, combiner: ctx.camera, body: { x: 0, y: 0, z: 0, w: 1 }, velocity: null };
     let muted = false;
     let menuOpen = false;
     const bus = uiBusFor(ctx.hudRoot.ownerDocument ?? ctx.hudRoot);
@@ -53,7 +55,15 @@ const mod: SystemModule = {
       },
       update(f) {
         const r = readings ?? updateInstruments(model, f.state, f.controls, 0, cfg);
+        const glass = f.cameraMode === 'cockpit' && f.def?.hud === 'jet' ? f.aircraft?.hudCombiner : undefined;
+        if (glass) {
+          combinerView.camera = f.camera;
+          combinerView.combiner = glass;
+          combinerView.body = f.aircraft.root.quaternion;
+          combinerView.velocity = f.state.velocity;
+        }
         hud.update(r, {
+          combiner: glass ? combinerView : null,
           cameraMode: f.cameraMode, paused: f.paused, fps: f.fps.fps, timeOfDay: ctx.atmosphere.timeOfDayName,
           state: f.state, controls: f.controls, mouseYoke: f.controlState.mouseYoke,
           landingLight: f.controlState.landingLight, veil: veilActive(),

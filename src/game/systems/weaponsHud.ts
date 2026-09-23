@@ -21,6 +21,7 @@ import {
   weaponsHudChanged, WEAPONS_HUD_KEY_LENGTH, type Rect,
 } from '../../ui/weaponsHud';
 import { formatSlantRange, gunLineDir, weaponsVisibility } from '../../ui/weaponsHudMath';
+import { createHudGlass, projectHudGlassObjects } from '../../ui/hudGlass';
 import { createSeekerView, seekerHotSpots, type SeekerView } from '../../ui/seekerView';
 import { applyWeaponsHudDemo, DEMO_MODES, seedDemoRange, type WeaponsHudDemoMode } from '../../ui/weaponsHudDemo';
 import type { AircraftDef } from '../../fleet/types';
@@ -69,6 +70,7 @@ const mod: SystemModule = {
 
     // ── State ──
     const frame = createWeaponsHudFrame();
+    const glass = createHudGlass();
     let model = createWeaponsHudModel(cfg);
     const key = new Float64Array(WEAPONS_HUD_KEY_LENGTH).fill(NaN);
     const overlay = createSeekerOverlay();
@@ -263,6 +265,9 @@ const mod: SystemModule = {
         frame.proj = cam.projectionMatrix.elements;
         frame.exterior = f.cameraMode !== 'cockpit';
         frame.hudBox = def?.hud === 'jet' ? hudBox : null;
+        // Cockpit view of a jet with a HUD combiner: the symbology goes on the glass.
+        const comb = f.cameraMode === 'cockpit' && def?.hud === 'jet' ? f.aircraft.hudCombiner : undefined;
+        frame.glass = comb ? projectHudGlassObjects(glass, cam, comb, root3.quaternion, f.state.velocity, vw, vh) : null;
         frame.gearUp = f.readings ? f.readings.gear === 'up' : f.state.gearPos < 0.02;
         frame.ax = root3.position.x;
         frame.ay = root3.position.y;

@@ -11,6 +11,7 @@
  */
 import { CONFIG, type Config } from '../config';
 import type { InstrumentReadings } from '../types';
+import type { HudGlass } from './hudGlass';
 
 /** Readings plus the jet extras from instruments.ts (optional so plain readings work too). */
 export type JetReadings = InstrumentReadings & { betaDeg?: number; flightPathDeg?: number; speedBrake?: boolean };
@@ -68,6 +69,41 @@ export function jetHudGeometry(r: JetReadings, w: number, h: number, cfg: Config
     horizonOffset: pitch * ppd,
     fpm: { x: clamp(bore.x + beta * ppd, W * 0.08, W * 0.92), y: clamp(bore.y + aoa * ppd, H * 0.06, H * 0.94) },
   };
+}
+
+const glassGeo: JetHudGeometry = { ppd: 1, bore: { x: 0, y: 0 }, rotation: 0, horizonOffset: 0, fpm: { x: 0, y: 0 } };
+
+/**
+ * The HUD geometry on the combiner glass (cockpit view), in the glass' HUD box px: the boresight
+ * and the px/deg from the projection, the horizon (ladder rotation + offset) on the world horizon,
+ * the flight-path marker on the velocity vector — each falling back to the readings when the
+ * projection has none (no horizon in view, too slow). Returns a shared object (no allocation).
+ */
+export function jetHudGeometryOnGlass(glass: HudGlass, r: JetReadings): JetHudGeometry {
+  const W = sz(glass.w);
+  const H = sz(glass.h);
+  const ppd = glass.ppd > 0 && Number.isFinite(glass.ppd) ? glass.ppd : 1;
+  const g = glassGeo;
+  g.ppd = ppd;
+  g.bore.x = fin(glass.boreX, W / 2);
+  g.bore.y = fin(glass.boreY, H / 3);
+  let roll = wrap180(fin(r.rollDeg));
+  if (roll === -180) roll = 180;
+  const pitch = clamp(fin(r.pitchDeg), -90, 90);
+  g.rotation = glass.horizonOk ? fin(glass.rotation, -roll * DEG) : -roll * DEG;
+  g.horizonOffset = glass.horizonOk ? clamp(fin(glass.horizonOffset, pitch * ppd), -1e5, 1e5) : pitch * ppd;
+  let fx: number;
+  let fy: number;
+  if (glass.fpmOk) {
+    fx = fin(glass.fpmX, g.bore.x);
+    fy = fin(glass.fpmY, g.bore.y);
+  } else {
+    fx = g.bore.x + clamp(fin(r.betaDeg), -45, 45) * ppd;
+    fy = g.bore.y + clamp(fin(r.aoaDeg), -30, 60) * ppd;
+  }
+  g.fpm.x = clamp(fx, W * 0.08, W * 0.92);
+  g.fpm.y = clamp(fy, H * 0.06, H * 0.94);
+  return g;
 }
 
 export interface Rung {
@@ -164,20 +200,28 @@ const fmtThousands = (v: number): string => {
   return n < 0 ? `-${s}` : s;
 };
 
+export interface JetHudDrawOptions {
+  /** Geometry to draw with (the combiner glass' projection) instead of the screen-space one. */
+  geometry?: JetHudGeometry;
+  /** Smallest text, px (the glass HUD is small on screen: keep it readable). */
+  minFont?: number;
+}
+
 /**
  * Draw the whole HUD into a w×h area at the context's origin (CSS px). The caller clears the
  * canvas. `st` carries the max-g memory (see trackJetHud).
  */
-export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, r: JetReadings, st: JetHudState, cfg: Config = CONFIG): void {
+export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, r: JetReadings, st: JetHudState, cfg: Config = CONFIG, opts?: JetHudDrawOptions): void {
   const W = sz(w);
   const H = sz(h);
   if (!W || !H) return;
   const j = cfg.hud.jet;
   const green = j.color;
-  const g = jetHudGeometry(r, W, H, cfg);
-  const lw = Math.max(1.2, H * 0.0034);
-  const small = Math.max(9, H * 0.03);
-  const big = Math.max(11, H * 0.038);
+  const g = opts?.geometry ?? jetHudGeometry(r, W, H, cfg);
+  const minFont = Math.max(9, fin(opts?.minFont, 9));
+  const lw = Math.max(opts?.geometry ? 1.4 : 1.2, H * 0.0034);
+  const small = Math.max(minFont, H * 0.03);
+  const big = Math.max(minFont + 2, H * 0.038);
 
   const strokeBoth = (build: () => void, width = lw) => {
     ctx.beginPath();
