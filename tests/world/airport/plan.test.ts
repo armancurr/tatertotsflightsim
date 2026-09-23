@@ -60,8 +60,9 @@ describe('airport plan (derived from layout.ts)', () => {
 
   it('puts a hold-short line on every connector, well clear of the runway', () => {
     const cons = plan.connectors;
-    expect(cons.length).toBe(layout.taxiways.filter((t) => t.kind === 'connector').length);
-    expect(plan.holdLines.length).toBe(cons.length);
+    // the layout's connectors + B (across 36/18 to the 03 threshold), which holds on both sides
+    expect(cons.length).toBe(layout.taxiways.filter((t) => t.kind === 'connector').length + 1);
+    expect(plan.holdLines.length).toBe(cons.length + 1);
     for (const h of plan.holdLines) {
       expect(Math.abs(h.c)).toBeGreaterThanOrEqual(45);
       const con = cons.find((k) => k.name === h.name)!;
@@ -70,18 +71,21 @@ describe('airport plan (derived from layout.ts)', () => {
     }
   });
 
-  it('parks a few Cessnas with several liveries on layout parking spots', () => {
-    expect(plan.parked.length).toBeGreaterThanOrEqual(6);
-    expect(plan.parked.length).toBeLessThanOrEqual(16);
+  it('parks Cessnas and Pipers with several liveries on tie-down spots (the apron and the south ramp)', () => {
+    expect(plan.parked.length).toBeGreaterThanOrEqual(16);
+    expect(plan.parked.length).toBeLessThanOrEqual(40);
     expect(new Set(plan.parked.map((p) => p.livery)).size).toBeGreaterThanOrEqual(3);
-    for (const p of plan.parked) expect(layout.parkingSpots.some((s) => Math.hypot(s.x - p.x, s.z - p.z) < 1e-6)).toBe(true);
+    const spots = [...layout.parkingSpots, ...plan.field.parking];
+    for (const p of plan.parked) expect(spots.some((s) => Math.hypot(s.x - p.x, s.z - p.z) < 1e-6)).toBe(true);
+    for (let i = 0; i < plan.parked.length; i++)
+      for (let j = i + 1; j < plan.parked.length; j++) expect(Math.hypot(plan.parked[i].x - plan.parked[j].x, plan.parked[i].z - plan.parked[j].z)).toBeGreaterThan(20);
   });
 
-  it('puts the cars inside the car park without overlaps', () => {
+  it('puts the cars inside the car parks without overlaps', () => {
     expect(plan.cars.length).toBeGreaterThanOrEqual(4);
     for (const car of plan.cars) {
       const rc = toRunwayCoords(car.x, car.z, layout.runway);
-      expect(inRect(plan.carpark, rc.along, rc.across)).toBe(true);
+      expect([plan.carpark, ...plan.carparks].some((cp) => inRect(cp, rc.along, rc.across))).toBe(true);
     }
     for (let i = 0; i < plan.cars.length; i++)
       for (let j = i + 1; j < plan.cars.length; j++) expect(Math.hypot(plan.cars[i].x - plan.cars[j].x, plan.cars[i].z - plan.cars[j].z)).toBeGreaterThan(2.3);
@@ -97,7 +101,8 @@ describe('airport plan (derived from layout.ts)', () => {
   });
 
   it('gives the hangars a mix of arched and gabled roofs', () => {
-    expect(plan.hangars.length).toBe(layout.hangars.length);
+    expect(plan.hangars.length).toBe(layout.hangars.length + 1); // + the maintenance hangar on the south ramp
+    expect(plan.hangars.some((h) => h.doorOpen > 0.8)).toBe(true);
     const roofs = new Set(plan.hangars.map((h) => h.roof));
     expect(roofs.has('arched')).toBe(true);
     expect(roofs.has('gabled')).toBe(true);

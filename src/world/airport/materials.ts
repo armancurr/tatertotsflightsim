@@ -68,8 +68,9 @@ vec3 apPerturb(vec3 surfPos, vec3 surfNorm, float h, float faceDir) {
 `;
 
 const RUNWAY_GLSL = /* glsl */ `
-uniform float uRwLen;
-uniform float uRwHalfW;
+// length and half width of the runway the fragment lies on (per-vertex frame: 36/18 or the crossing runway)
+#define uRwLen vRwLH.x
+#define uRwHalfW vRwLH.y
 // Rubber deposits: touchdown zones of both ends, concentrated along the centre (light-aircraft
 // main-gear tracks wander ±3 m), streaky along the runway, plus individual touchdown skid pairs.
 float apRubber(vec2 rw) {
@@ -113,10 +114,19 @@ float apAggregate(vec2 lp, float mpp) {
 // Varyings/attributes common to the ground-level airport surfaces (pavement, paint, shoulders).
 const GROUND_VERT_PARS = /* glsl */ `
 attribute float aKind;
+attribute float aFrame;
 uniform vec2 uRwThr;
 uniform vec2 uRwDir;
 uniform vec2 uRwRight;
+uniform float uRwLen;
+uniform float uRwHalfW;
+uniform vec2 uRw2Thr;
+uniform vec2 uRw2Dir;
+uniform vec2 uRw2Right;
+uniform float uRw2Len;
+uniform float uRw2HalfW;
 varying vec2 vRw;
+varying vec2 vRwLH;
 varying vec2 vWp;
 varying float vKind;
 `;
@@ -124,26 +134,35 @@ const GROUND_VERT = /* glsl */ `
 {
   vec4 apW = modelMatrix * vec4(transformed, 1.0);
   vWp = apW.xz;
-  vec2 rel = apW.xz - uRwThr;
-  vRw = vec2(dot(rel, uRwDir), dot(rel, uRwRight));
+  // runway coordinates in the frame of the runway this piece belongs to (36/18 or the crossing one)
+  bool second = aFrame > 0.5;
+  vec2 rel = apW.xz - (second ? uRw2Thr : uRwThr);
+  vRw = second ? vec2(dot(rel, uRw2Dir), dot(rel, uRw2Right)) : vec2(dot(rel, uRwDir), dot(rel, uRwRight));
+  vRwLH = second ? vec2(uRw2Len, uRw2HalfW) : vec2(uRwLen, uRwHalfW);
   vKind = aKind;
 }
 `;
 const GROUND_FRAG_PARS = /* glsl */ `
 varying vec2 vRw;
+varying vec2 vRwLH;
 varying vec2 vWp;
 varying float vKind;
 float apRough;
 float apBump;
 `;
 
-function runwayUniforms(rw: RunwayFrame): Record<string, THREE.IUniform> {
+function runwayUniforms(rw: RunwayFrame, rw2: RunwayFrame = rw): Record<string, THREE.IUniform> {
   return {
     uRwThr: { value: new THREE.Vector2(rw.threshold.x, rw.threshold.z) },
     uRwDir: { value: new THREE.Vector2(rw.dir.x, rw.dir.z) },
     uRwRight: { value: new THREE.Vector2(rw.right.x, rw.right.z) },
     uRwLen: { value: rw.length },
     uRwHalfW: { value: rw.halfWidth },
+    uRw2Thr: { value: new THREE.Vector2(rw2.threshold.x, rw2.threshold.z) },
+    uRw2Dir: { value: new THREE.Vector2(rw2.dir.x, rw2.dir.z) },
+    uRw2Right: { value: new THREE.Vector2(rw2.right.x, rw2.right.z) },
+    uRw2Len: { value: rw2.length },
+    uRw2HalfW: { value: rw2.halfWidth },
   };
 }
 
@@ -287,12 +306,12 @@ export interface ApronDetail {
   fuel: [number, number];
 }
 
-export function createPavementMaterial(rw: RunwayFrame, apron?: ApronDetail): THREE.MeshStandardMaterial {
+export function createPavementMaterial(rw: RunwayFrame, apron?: ApronDetail, rw2: RunwayFrame = rw): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: 0 });
   m.name = 'airport-pavement';
   const lanes = [...(apron?.lanes ?? []), -1e4, -1e4, -1e4, -1e4].slice(0, 4);
   const u = {
-    ...runwayUniforms(rw),
+    ...runwayUniforms(rw, rw2),
     uPark: { value: new THREE.Vector4(...(apron?.park ?? [0, 24, -1e4, -1e4])) },
     uParkN: { value: apron?.parkCount ?? 1 },
     uLanes: { value: lanes },
@@ -307,7 +326,7 @@ export function createPavementMaterial(rw: RunwayFrame, apron?: ApronDetail): TH
     patch(s, 'fragmentShader', '#include <roughnessmap_fragment>', 'roughnessFactor = apRough;');
     patch(s, 'fragmentShader', '#include <normal_fragment_maps>', 'normal = apPerturb(-vViewPosition, normal, apBump, faceDirection);');
   };
-  m.customProgramCacheKey = () => 'airport-pavement-v2';
+  m.customProgramCacheKey = () => 'airport-pavement-v3';
   return m;
 }
 
@@ -336,10 +355,10 @@ const MARKING_FRAG = /* glsl */ `
 }
 `;
 
-export function createMarkingMaterial(rw: RunwayFrame): THREE.MeshStandardMaterial {
+export function createMarkingMaterial(rw: RunwayFrame, rw2: RunwayFrame = rw): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.65, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: 0 });
   m.name = 'airport-markings';
-  const u = runwayUniforms(rw);
+  const u = runwayUniforms(rw, rw2);
   m.onBeforeCompile = (s) => {
     Object.assign(s.uniforms, u);
     patch(s, 'vertexShader', '#include <common>', GROUND_VERT_PARS);
@@ -349,7 +368,7 @@ export function createMarkingMaterial(rw: RunwayFrame): THREE.MeshStandardMateri
     patch(s, 'fragmentShader', '#include <roughnessmap_fragment>', 'roughnessFactor = apRough;');
     patch(s, 'fragmentShader', '#include <normal_fragment_maps>', 'normal = apPerturb(-vViewPosition, normal, apBump, faceDirection);');
   };
-  m.customProgramCacheKey = () => 'airport-markings-v2';
+  m.customProgramCacheKey = () => 'airport-markings-v3';
   return m;
 }
 
@@ -389,7 +408,7 @@ export function createShoulderMaterial(rw: RunwayFrame): THREE.MeshStandardMater
     patch(s, 'fragmentShader', '#include <common>', GROUND_FRAG_PARS + NOISE_GLSL);
     patch(s, 'fragmentShader', '#include <color_fragment>', SHOULDER_FRAG);
   };
-  m.customProgramCacheKey = () => 'airport-shoulders-v1';
+  m.customProgramCacheKey = () => 'airport-shoulders-v2';
   return m;
 }
 

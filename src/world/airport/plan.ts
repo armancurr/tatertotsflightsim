@@ -14,6 +14,8 @@
 import { getLayout, type AirportLayout, type BuildingSpot, type OrientedRect, type Road, type Spot, type XZ } from '../layout';
 import { fromRunwayCoords, toRunwayCoords, type RunwayFrame } from '../runway';
 import { mulberry32 } from '../noise';
+import { createAirportField, type AirportField, type FieldPave } from './field';
+import { pointInConvex, rectPoly, type P2 } from './geom2d';
 
 export interface RC {
   a: number;
@@ -25,7 +27,7 @@ export interface ABox {
   c0: number;
   c1: number;
 }
-export type PaveKind = 'runway' | 'taxiway' | 'apron' | 'carpark';
+export type PaveKind = 'runway' | 'taxiway' | 'apron' | 'carpark' | 'road';
 export interface PaveRect extends ABox {
   kind: PaveKind;
   name: string;
@@ -90,6 +92,18 @@ export interface FencePlan extends ABox {
 export interface AirportPlan {
   layout: AirportLayout;
   rw: RunwayFrame;
+  /** The crossing runway 03/21 and everything added around the field (field.ts). */
+  field: AirportField;
+  /** The crossing runway's frame. */
+  rw2: RunwayFrame;
+  /**
+   * Convex pavement pieces that aren't runway-aligned rectangles: the crossing runway (cut around
+   * 36/18) and taxiway C. Rectangles in `pavement` that a crossing-runway piece overlaps are cut
+   * around it when meshed (the runway owns the crossing).
+   */
+  polys: FieldPave[];
+  /** Extra car parks (the flight school's). */
+  carparks: ABox[];
   elevation: number;
   pavement: PaveRect[];
   fillets: PaveFillet[];
@@ -169,9 +183,22 @@ export function pointInFillet(f: PaveFillet, a: number, c: number): boolean {
 }
 
 export function pavementAt(plan: AirportPlan, a: number, c: number): PaveKind | null {
+  // the crossing runway owns where it crosses a taxiway; 36/18 (a rectangle) owns the intersection
+  for (const p of plan.polys) if (p.kind === 'runway' && pointInConvex(p.p, a, c, 1e-9)) return 'runway';
   for (const r of plan.pavement) if (a >= r.a0 && a <= r.a1 && c >= r.c0 && c <= r.c1) return r.kind;
+  for (const p of plan.polys) if (p.kind !== 'runway' && pointInConvex(p.p, a, c, 1e-9)) return p.kind;
   for (const f of plan.fillets) if (pointInFillet(f, a, c)) return f.kind;
   return null;
+}
+
+/** The crossing runway's pieces (convex, runway-36 coords). */
+export function crossRunwayPieces(plan: AirportPlan): P2[][] {
+  return plan.polys.filter((p) => p.kind === 'runway').map((p) => p.p);
+}
+
+/** Every runway surface as convex polygons (36/18's rectangle first). */
+export function runwayPolys(plan: AirportPlan): P2[][] {
+  return [rectPoly(plan.runway.a0, plan.runway.a1, plan.runway.c0, plan.runway.c1), ...crossRunwayPieces(plan)];
 }
 
 export function toWorld(plan: AirportPlan, a: number, c: number): XZ {
@@ -194,7 +221,10 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
   // ── taxiways ──────────────────────────────────────────────────────────────
   const par = ap.taxiways.find((t) => t.kind === 'parallel');
   if (!par) throw new Error('airport layout has no parallel taxiway');
-  const pb = rectOfLayout(par.rect, rw);
+  const field = createAirportField();
+  const pb0 = rectOfLayout(par.rect, rw);
+  // taxiway A continues north past the 18 threshold to meet taxiway C (field.ts)
+  const pb = { ...pb0, a1: Math.max(pb0.a1, field.taxiwayA1) };
   const side = (pb.c0 + pb.c1) / 2 >= 0 ? 1 : -1;
   const twNear = side > 0 ? pb.c0 : pb.c1; // edge facing the runway
   const twFar = side > 0 ? pb.c1 : pb.c0;
@@ -206,8 +236,13 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
       const b = rectOfLayout(t.rect, rw);
       return { name: t.name, a: (b.a0 + b.a1) / 2, halfWidth: (b.a1 - b.a0) / 2, c0: side * hwR, c1: twNear };
     });
+  // taxiway B crosses 36/18 at the 03 threshold's along position
+  connectors.push({ name: 'B', a: field.connectorB.a, halfWidth: field.connectorB.halfWidth, c0: side * hwR, c1: twNear });
+  connectors.sort((x, y) => x.a - y.a);
 
-  const ab = rectOfLayout(ap.apron, rw);
+  const ab0 = rectOfLayout(ap.apron, rw);
+  // the GA "south ramp" extends the apron toward the 36 threshold (field.ts)
+  const ab = { ...ab0, a0: Math.min(ab0.a0, field.apronA0) };
   const apron: ABox = side > 0 ? { ...ab, c0: Math.max(ab.c0, twFar) } : { ...ab, c1: Math.min(ab.c1, twFar) };
 
   // ── car park behind the terminal, around the access road start ────────────
@@ -239,6 +274,21 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
     { kind: 'apron', name: 'apron', ...apron },
     { kind: 'carpark', name: 'carpark', ...carpark },
   ];
+  // field rectangles (runway-aligned): B west of 36/18, T-hangar lanes, the ARFF apron, the school
+  // car park, the perimeter road (A's extension, B east and the south ramp are merged above)
+  const merged = new Set(['A-north', 'B-east', 'south-ramp', 'terminal-carpark']);
+  const polys: FieldPave[] = [];
+  for (const f of field.paving) {
+    if (merged.has(f.name)) continue;
+    const isRect = f.frame === 0 && f.p.length === 4 && f.p.every((q) => f.p.filter((o) => Math.abs(o.a - q.a) < 1e-6 || Math.abs(o.c - q.c) < 1e-6).length === 3);
+    if (!isRect) {
+      polys.push(f);
+      continue;
+    }
+    const a0 = Math.min(...f.p.map((q) => q.a)), a1 = Math.max(...f.p.map((q) => q.a));
+    const c0 = Math.min(...f.p.map((q) => q.c)), c1 = Math.max(...f.p.map((q) => q.c));
+    pavement.push({ kind: f.kind, name: f.name, a0, a1, c0, c1 });
+  }
 
   // ── fillets ───────────────────────────────────────────────────────────────
   const fillets: PaveFillet[] = [];
@@ -256,6 +306,14 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
     const ea = s < 0 ? apron.a0 : apron.a1;
     if (ea + s * R >= taxiway.a0 && ea + s * R <= taxiway.a1) fillets.push(fillet({ a: ea, c: twFar }, s, side, R, 'taxiway'));
   }
+  // B west of 36/18: fillets at the runway edge; T-hangar lanes and the ARFF apron: small ones at A
+  {
+    const bw = field.bWest;
+    fillets.push(fillet({ a: bw.a0, c: -side * hwR }, -1, -side as 1 | -1, R, 'taxiway'), fillet({ a: bw.a1, c: -side * hwR }, 1, -side as 1 | -1, R, 'taxiway'));
+    for (const r of pavement)
+      if ((r.name.startsWith('T') && r.name !== 'T-cross') || r.name === 'arff')
+        for (const s of [-1, 1] as const) fillets.push(fillet({ a: s < 0 ? r.a0 : r.a1, c: twFar }, s, side, 6, 'taxiway'));
+  }
 
   // ── hold lines ────────────────────────────────────────────────────────────
   const holdLines: HoldLine[] = connectors.map((k) => ({
@@ -265,6 +323,8 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
     halfWidth: k.halfWidth,
     side,
   }));
+  // taxiway B west of 36/18 (aircraft coming back from the 03 threshold hold short of 36/18)
+  holdLines.push({ name: 'B', a: field.connectorB.a, c: -side * HOLD_LINE_DISTANCE, halfWidth: field.connectorB.halfWidth, side: -side as 1 | -1 });
 
   // ── apron taxilanes ──────────────────────────────────────────────────────
   const rows = [...new Set(ap.parkingSpots.map((p) => Math.round(spotRC(p, rw).c * 10) / 10))].sort((x, y) => side * (x - y));
@@ -291,6 +351,17 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
     roofColor: roofCols[i % roofCols.length],
     doorOpen: i === biggest ? 0.42 : i === 3 ? 0.25 : 0,
   }));
+  // the maintenance hangar on the south ramp, doors wide open (field.ts)
+  for (const b of field.buildings)
+    if (b.kind === 'maintHangar')
+      hangars.push({
+        spot: { center: fromRunwayCoords(b.a, b.c, rw), headingDeg: b.headingDeg, width: b.width, depth: b.depth, height: b.height },
+        roof: 'gabled',
+        wall: 0xdcdcd6,
+        door: 0x8e969c,
+        roofColor: 0x8a9094,
+        doorOpen: 0.86,
+      });
 
   // ── parked aircraft ───────────────────────────────────────────────────────
   const spots = ap.parkingSpots.map((s, i) => ({ s, i, r: rnd() }));
@@ -302,6 +373,15 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
     headingDeg: p.s.headingDeg + (rnd() - 0.5) * 4,
     livery: k % LIVERY_COUNT,
   }));
+  // the south ramp: most tie-downs taken (a busy GA field), clear of the helipad and the King Air
+  const hp = fromRunwayCoords(field.helipad.a, field.helipad.c, rw);
+  const kingAirs = field.vehicles.filter((v) => v.kind === 'kingair').map((v) => fromRunwayCoords(v.a, v.c, rw));
+  field.parking.forEach((sp, k) => {
+    if (rnd() > 0.72) return;
+    if (Math.hypot(sp.x - hp.x, sp.z - hp.z) < field.helipad.r + 12) return;
+    if (kingAirs.some((q) => Math.hypot(sp.x - q.x, sp.z - q.z) < 16)) return;
+    parked.push({ x: sp.x, z: sp.z, headingDeg: sp.headingDeg + (rnd() - 0.5) * 4, livery: (k + 2) % LIVERY_COUNT });
+  });
 
   // ── car park stalls and cars ─────────────────────────────────────────────
   const stalls: Stall[] = [];
@@ -332,17 +412,34 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
       if (!cars.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 1)) cars.push({ x: p.x, z: p.z, headingDeg: headingOfRC(rw, 0, st.facing * side), color: i % CAR_COLOR_COUNT });
     }
 
+  // the flight school's car park: two rows of stalls facing each other, busier (students)
+  const cp2 = field.carpark2;
+  const stalls2: Stall[] = [];
+  const n2 = Math.floor((cp2.a1 - cp2.a0 - 2) / stallW);
+  for (const r of [
+    { c0: cp2.c0 + 0.3, facing: -1 as const },
+    { c0: cp2.c1 - 0.3 - depth, facing: 1 as const },
+  ])
+    for (let i = 0; i < n2; i++) stalls2.push({ a: cp2.a0 + 1 + (i + 0.5) * stallW, c0: r.c0, c1: r.c0 + depth, facing: r.facing });
+  for (const st of stalls2) {
+    if (rnd() > 0.5) continue;
+    const p = fromRunwayCoords(st.a + (rnd() - 0.5) * 0.25, (st.c0 + st.c1) / 2 + (rnd() - 0.5) * 0.3, rw);
+    cars.push({ x: p.x, z: p.z, headingDeg: headingOfRC(rw, (rnd() - 0.5) * 0.06, st.facing * side), color: Math.floor(rnd() * CAR_COLOR_COUNT) });
+  }
+  stalls.push(...stalls2);
+
   const fuelRC = spotRC(ap.fuel, rw);
 
   // ── fence ────────────────────────────────────────────────────────────────
   const buildings = [ap.tower, ap.terminal, ...ap.hangars].map((b) => ({ ...spotRC(b.center, rw), r: Math.max(b.width, b.depth) / 2 }));
   const eastMost = Math.max(carpark.c1, ...buildings.map((b) => b.c + b.r));
   const westMost = Math.min(-hwR, spotRC(ap.windsock, rw).c - 20, ...buildings.map((b) => b.c - b.r));
+  // the fence now encloses the crossing runway, the navaids, the fuel farm and the perimeter road
   const fence: FencePlan = {
-    a0: -(2400 * 0.3048 + 25),
-    a1: L + 250,
-    c0: westMost - 70,
-    c1: eastMost + 28,
+    a0: Math.min(-(2400 * 0.3048 + 25), field.fence.a0),
+    a1: Math.max(L + 250, field.fence.a1),
+    c0: Math.min(westMost - 70, field.fence.c0),
+    c1: Math.max(eastMost + 28, field.fence.c1),
     gates: [],
   };
   // gate where the access road leaves the field
@@ -360,10 +457,15 @@ export function createAirportPlan(ap: AirportLayout = getLayout().airport, roads
     }
   }
   fence.gates.push({ side: side > 0 ? 'east' : 'west', from: gateA - 8, to: gateA + 8 });
+  fence.gates.push(...field.gates);
 
   return {
     layout: ap,
     rw,
+    field,
+    rw2: field.cross,
+    polys,
+    carparks: [cp2],
     elevation: ap.elevation,
     pavement,
     fillets,

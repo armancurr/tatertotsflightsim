@@ -219,7 +219,7 @@ describe('taxiway, apron and car-park markings', () => {
   });
   it('paints hold-short markings across every connector: 2 solid lines on the taxiway side, 2 dashed on the runway side', () => {
     for (const h of plan.holdLines) {
-      const ms = tx.filter((m) => m.kind === 'hold-short' && m.name === h.name);
+      const ms = tx.filter((m) => m.kind === 'hold-short' && m.name === h.name && Math.sign(center(m).c) === Math.sign(h.c));
       const solid = ms.filter((m) => m.style === 'solid');
       const dashed = ms.filter((m) => m.style === 'dashed');
       expect(solid.length).toBe(2);

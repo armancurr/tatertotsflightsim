@@ -19,11 +19,13 @@
  *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
  *   ?aircraft=c172rg|f16|a10                 which aircraft to fly (src/fleet)
  *   ?spawn=range                             start 4 km short of the target range, 1,500 ft, 250 kt
+ *   ?rwy=36|18|03|21                         start lined up on that runway end (R resets there too)
  */
 import * as THREE from 'three';
 import { CONFIG, FT_TO_M } from '../config';
 import type { AircraftState, CameraMode, Controls } from '../types';
 import { createInitialState, createApproachState, approachControls, createTrimmedState, step } from '../physics';
+import { runwayEndFrame } from '../world/runway';
 import { createEnvironment } from '../world/environment';
 import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
@@ -89,7 +91,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   };
 
   // ── Simulation state ──────────────────────────────────────────────────────
-  let state: AircraftState = createInitialState(env, ac);
+  // ?rwy=36|18|03|21: start (and reset with R) lined up on that runway end
+  const startRunway = runwayEndFrame(params.get('rwy'));
+  let state: AircraftState = createInitialState(env, ac, startRunway);
   let prev: AircraftState = state;
   let controlState = createControlState();
   const camParam = params.get('cam') as CameraMode | null;
@@ -133,7 +137,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   });
 
   resetTo = (which: 'runway' | 'approach') => {
-    state = which === 'runway' ? createInitialState(env, ac) : createApproachState(env, ac);
+    state = which === 'runway' ? createInitialState(env, ac, startRunway) : createApproachState(env, ac);
     prev = state;
     controlState = resetControls(controlState, which === 'approach' ? approachControls(ac) : undefined);
     camRig = snapCamera(camRig);
