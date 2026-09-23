@@ -103,6 +103,25 @@
       speedKp: 1.2, speedKi: 0.35, throttleIdle: 0, approachThrottle: 60,
       gun: { muzzleVelocity: 1010, boresightDownDeg: 2, rateRps: 65 },
     },
+    /**
+     * Boeing 747-400 (flown light): gentle hands (big inertia, slow response — small, early inputs),
+     * flaps 20 for take-off (Vr ~145, rotate ~2°/s to ~9°, V2 + 10 climb), flaps 30 for landing,
+     * a long stabilised final at ~150 kt slowing to Vref ~130 + 5 over the threshold, a flare begun
+     * high (the mains are ~16 ft below the pilot's reference and far behind him), pitch kept well
+     * below the ~11° tail-strike attitude.
+     */
+    b747: {
+      jet: true, fbw: false, afterburner: false, gentle: true,
+      vrKt: 145, rotatePitchDeg: 8.5, climbKt: 180, climbPitchMaxDeg: 14, cruiseKt: 280,
+      takeoffThrottle: 100, climbThrottle: 95, cruiseThrottle: 70, takeoffFlapsNotch: 3,
+      rollSpeedScale: true,
+      approachKt: 150, vrefKt: 130, finalFlapsNotch: 5, patternFlapsNotch: 3, patternAglFt: 2000, patternKt: 190, finalLengthM: 9000,
+      maxBankDeg: 25, patternBankDeg: 25, maxThrottle: 100,
+      flareLeadS: 6, flareMinFt: 25, flareMaxFt: 60, touchdownSinkFpm: 180, maxFlarePitchDeg: 7.5, minFlarePitchDeg: 1.5, flareGain: 0.5, flareIdle: 'entry',
+      trackKdegPerM: 0.05, finalMaxCorrDeg: 10,
+      pitchKp: 0.1, pitchKd: 0.08, rollKp: 0.03, rollKd: 0.02, yawKp: 0.04, yawKd: 0.02, flareKp: 0.25, flareKd: 0.12,
+      speedKp: 1.2, speedKi: 0.3, throttleIdle: 0, approachThrottle: 50,
+    },
   };
 
   /**
@@ -110,7 +129,7 @@
    * WeaponsConfig) when given: Vr, the landing ratings, the main-gear height, the flap notches.
    */
   function profileFor(id, ac, weapons) {
-    const key = BASE[id] ? id : id === 'a10c' ? 'a10' : 'c172rg';
+    const key = BASE[id] ? id : id === 'a10c' ? 'a10' : id === '747' || id === 'b744' ? 'b747' : 'c172rg';
     const p = { id: key, ...structuredCloneSafe(BASE[key]) };
     if (ac && typeof ac === 'object') {
       const lim = ac.limits || {};
@@ -144,7 +163,8 @@
       // A conventional (non fly-by-wire) jet — the calibrated A-10 — wants firmer hands in pitch.
       if (p.jet && 'fbw' in ac) {
         p.fbw = !!ac.fbw;
-        if (!p.fbw) { p.pitchKp = 0.2; p.pitchKd = 0.06; p.pitchSpeedScale = true; p.autoTrim = true; p.gKp = 0.3; p.gKd = 0.05; }
+        if (!p.fbw && !p.gentle) { p.pitchKp = 0.2; p.pitchKd = 0.06; p.pitchSpeedScale = true; p.autoTrim = true; p.gKp = 0.3; p.gKd = 0.05; }
+        if (!p.fbw && p.gentle) { p.pitchSpeedScale = true; p.autoTrim = true; p.gKp = 0.12; p.gKd = 0.05; }
       }
       const stall = fin(lim.vsoKt);
       if (key === 'a10' && stall > 0) p.approachKt = Math.max(p.approachKt, Math.round(stall * 1.3));
@@ -152,8 +172,8 @@
     p.firmFpm ??= 600;
     p.smoothFpm ??= 300;
     p.butterFpm ??= 120;
-    p.gearOffsetFt ??= key === 'c172rg' ? 4 : key === 'f16' ? 5.7 : 6.4;
-    p.maxFlapsNotch ??= key === 'c172rg' ? 3 : 2;
+    p.gearOffsetFt ??= key === 'c172rg' ? 4 : key === 'f16' ? 5.7 : key === 'b747' ? 16.4 : 6.4;
+    p.maxFlapsNotch ??= key === 'c172rg' ? 3 : key === 'b747' ? 5 : 2;
     if (weapons && weapons.gun) {
       p.gun = { muzzleVelocity: fin(weapons.gun.muzzleVelocity, 1000), boresightDownDeg: fin(weapons.gun.boresightDownDeg, 0), rateRps: fin(weapons.gun.rateRps, 60) };
     }
@@ -532,19 +552,29 @@
         stats.takeoffAt = s.time;
         const courseDeg = RW.courseDeg;
         const toThr = o.throttle ?? P.takeoffThrottle;
+        // Take-off flaps (the 747: flaps 20) before the roll.
+        if (P.takeoffFlapsNotch !== undefined && fin(s.flapsNotch, 0) !== P.takeoffFlapsNotch) {
+          await flapsTo(Math.min(P.takeoffFlapsNotch, P.maxFlapsNotch ?? P.takeoffFlapsNotch));
+          s = sim();
+        }
         // Line up: the runway heading, steering back to the centreline with the rudder/nosewheel.
         const steer = (x) => {
           const c = lineCoords(x.position.x, x.position.z, RW.thrX, RW.thrZ, courseDeg);
           return wrap360(courseDeg - clamp(c.cross * 1.2, -8, 8));
         };
-        let r = await fly((x) => ({ pitch: null, roll: 0, yaw: steer(x), thr: toThr }), (x) => x.airspeed >= P.vrKt, 90000, 100);
+        // (a heavy keeps the nose on the runway until Vr — never let it fly itself off)
+        let r = await fly((x) => ({ pitch: P.gentle ? 0 : null, roll: 0, yaw: steer(x), thr: toThr, trim: false }), (x) => x.airspeed >= P.vrKt, 90000, 100);
         note('Vr');
         api.phase = 'rotate';
         let liftoff = null;
+        // Rotate at ~2–3°/s to the take-off attitude (a heavy jet: never a yank toward the tail strike).
+        const rot0 = drv.now();
+        const rotRate = P.gentle ? 2 : 100;
         r = await fly(
           (x) => {
             if (!liftoff && !x.onGround && x.altitudeAGL > P.gearOffsetFt + 3) liftoff = { x: x.position.x, z: x.position.z, t: x.time };
-            return { pitch: P.rotatePitchDeg, roll: 0, yaw: x.onGround ? steer(x) : null, thr: toThr };
+            const ramp = Math.min(P.rotatePitchDeg, ((drv.now() - rot0) / 1000) * rotRate);
+            return { pitch: ramp, roll: 0, yaw: x.onGround ? steer(x) : null, thr: toThr };
           },
           (x) => !x.onGround && x.verticalSpeed > 300 && x.altitudeAGL > P.gearOffsetFt + 35,
           60000,
@@ -558,7 +588,7 @@
         await gearTo(false);
         api.phase = 'climb out';
         const climbThr = o.climbThrottle ?? (P.id === 'f16' ? toThr : P.climbThrottle);
-        const flapsUpKt = P.id === 'c172rg' ? 65 : P.vrKt + 30;
+        const flapsUpKt = P.id === 'c172rg' ? 65 : P.id === 'b747' ? P.vrKt + 45 : P.vrKt + 30;
         let flapsUp = false;
         r = await fly(
           (x) => {
@@ -810,7 +840,9 @@
         let r = await fly(
           (s) => {
             const gp = glidePathTargets(s, P, RW);
-            return { pitch: clamp(pitchForVs(s, gp.vsFpm), -8, P.maxFlarePitchDeg - 1), roll: rollFor(s, gp.trackDeg, 20), thr: approachThrottle(s) };
+            // A heavy: the approach speed out on final, bleeding to Vref + 5 below ~800 ft.
+            if (P.vrefKt && !aoaT) hold.kt = (o.approachKt ?? P.approachKt) + ((P.vrefKt + 5) - (o.approachKt ?? P.approachKt)) * clamp((1500 - gp.heightFt) / 700, 0, 1);
+            return { pitch: clamp(pitchForVs(s, gp.vsFpm), -8, P.maxFlarePitchDeg - 1), roll: rollFor(s, gp.trackDeg, P.gentle ? 12 : 20), thr: approachThrottle(s) };
           },
           (s) => {
             if (wheelFt(s) <= flareHeightFt(-s.verticalSpeed, P)) { entrySink = Math.max(0, -s.verticalSpeed); return true; }
