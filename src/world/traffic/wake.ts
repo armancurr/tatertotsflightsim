@@ -37,6 +37,8 @@ export interface WakeSpec {
   kelvin: number;
   /** Water surface height. */
   level: number;
+  /** Opacity of the turbulent stern trail relative to a planing hull's (default 1). */
+  foam?: number;
 }
 
 /** Vertices per wake sample: foam (2) + two arms (2 + 2). */
@@ -76,6 +78,7 @@ export function writeWake(buf: WakeBuffers, v0: number, samples: readonly WakeSa
   const halfL = spec.length / 2;
   const halfB = spec.beam / 2;
   const y = spec.level + 0.06;
+  const foam = spec.foam ?? 1;
   for (let j = 0; j < count; j++) {
     const s = samples[j];
     const h = s.course * DEG;
@@ -90,7 +93,7 @@ export function writeWake(buf: WakeBuffers, v0: number, samples: readonly WakeSa
     // ── foam trail from the stern ──
     const sx = s.x - fx * halfL * 0.92;
     const sz = s.z - fz * halfL * 0.92;
-    const fw = halfB * (0.62 + 1.9 * Math.pow(age01, 0.6)) * (0.55 + 0.45 * vf);
+    const fw = halfB * (0.62 + 1.15 * Math.pow(age01, 0.7)) * (0.55 + 0.45 * vf);
     let k = v0 + 2 * j;
     for (let side = -1; side <= 1; side += 2, k++) {
       P[k * 3] = sx + rx * fw * side;
@@ -99,7 +102,7 @@ export function writeWake(buf: WakeBuffers, v0: number, samples: readonly WakeSa
       D[k * 4] = s.travelled;
       D[k * 4 + 1] = side;
       D[k * 4 + 2] = age01;
-      D[k * 4 + 3] = strength;
+      D[k * 4 + 3] = strength * foam;
       T[k] = 0;
     }
     // ── Kelvin arms from the bow ──
@@ -108,7 +111,7 @@ export function writeWake(buf: WakeBuffers, v0: number, samples: readonly WakeSa
     const dist = Math.max(0, now.travelled - s.travelled);
     const alpha = kelvinAngle(s.speed, spec.length);
     const off = halfB * 0.85 + dist * Math.tan(alpha);
-    const hw = 0.35 + halfB * 0.12 + 0.018 * dist;
+    const hw = 0.5 + halfB * 0.3 + 0.035 * dist;
     const armStrength = strength * spec.kelvin;
     for (let arm = 0; arm < 2; arm++) {
       const sgn = arm === 0 ? -1 : 1;
