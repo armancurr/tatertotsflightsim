@@ -115,7 +115,7 @@ export const UI_CSS = `
 .tfs-setting { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tfs-setting > label, .tfs-setting > .tfs-label { font-size: 12px; font-weight: 650; color: rgba(244,241,234,0.72); }
 .tfs-seg { display: flex; padding: 3px; gap: 3px; border-radius: 10px; background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.08); }
-.tfs-seg button { flex: 1 1 0; min-width: 0; padding: 6px 4px; border: 0; border-radius: 7px; background: transparent; font-size: 12.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(244,241,234,0.8); }
+.tfs-seg button { flex: 1 1 auto; min-width: 0; padding: 6px 7px; border: 0; border-radius: 7px; background: transparent; font-size: 12.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(244,241,234,0.8); }
 .tfs-seg button:hover { background: rgba(255,255,255,0.08); }
 .tfs-seg button[aria-pressed="true"] { background: var(--tfs-gold); color: #211404; box-shadow: 0 2px 8px rgba(242,154,46,0.35); }
 .tfs-switch { display: inline-flex; align-items: center; gap: 10px; align-self: flex-start; padding: 3px 12px 3px 3px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.28); font-size: 12.5px; font-weight: 700; }

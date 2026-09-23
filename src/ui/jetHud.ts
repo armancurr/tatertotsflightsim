@@ -180,9 +180,11 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
   ctx.lineJoin = 'round';
 
   // ── Pitch ladder (rolled about the boresight, clipped to the middle of the HUD) ──
+  // The ladder keeps clear of the heading tape (bottom with the gear up, top with it down).
+  const tapeTop = r.gear !== 'up';
   ctx.save();
   ctx.beginPath();
-  ctx.rect(W * 0.2, H * 0.03, W * 0.6, H * 0.8);
+  ctx.rect(W * 0.2, tapeTop ? H * 0.19 : H * 0.03, W * 0.6, H * 0.77);
   ctx.clip();
   ctx.translate(g.bore.x, g.bore.y);
   ctx.rotate(g.rotation);
@@ -242,7 +244,7 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
   });
 
   // ── Airspeed (left) and altitude (right) tapes with boxed readouts ──
-  const span = H * 0.22;
+  const span = H * 0.2;
   const tape = (x: number, value: number, unit: number, labelEvery: number, dir: 1 | -1, fmt: (v: number) => string, boxText: string) => {
     const pxPer = span / (unit * 4);
     const v0 = Math.floor((value - unit * 4) / unit) * unit;
@@ -260,10 +262,10 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
       if (Math.abs(y - g.bore.y) > span || Math.abs(y - g.bore.y) < big * 1.1) continue;
       text(fmt(v), x - dir * H * 0.03, y, small * 0.9, dir > 0 ? 'right' : 'left', 500);
     }
-    // Box with the current value, pointing at the scale.
-    const bw = big * 3.6;
+    // Box with the current value, pointing at the scale (wide enough for the digits: mono ≈ 0.62 em each).
+    const bw = Math.max(big * 3.6, big * (0.62 * boxText.length + 1));
     const bh = big * 1.45;
-    const bx = dir > 0 ? x - H * 0.03 - bw : x + H * 0.03;
+    const bx = dir > 0 ? Math.max(1, x - H * 0.03 - bw) : Math.min(W - bw - 1, x + H * 0.03);
     strokeBoth(() => {
       ctx.rect(bx, g.bore.y - bh / 2, bw, bh);
     });
@@ -276,25 +278,26 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
 
   // ── Corner data ──
   const gl = fin(r.gLoad, 1);
-  text(`G ${gl.toFixed(1)}`, W * 0.03, H * 0.06, big, 'left', 700);
-  text(`MAX ${Math.max(st.maxG, gl).toFixed(1)}`, W * 0.03, H * 0.06 + big * 1.3, small, 'left');
+  text(`G ${gl.toFixed(1)}`, W * 0.03, H * 0.05, big, 'left', 700);
+  text(`MAX ${Math.max(st.maxG, gl).toFixed(1)}`, W * 0.03, H * 0.05 + big * 1.2, small, 'left');
   const low = g.bore.y + span + big * 1.2;
   text(`M ${Math.max(0, fin(r.mach)).toFixed(2)}`, W * 0.03, low, big, 'left', 700);
   text(`AOA ${fin(r.aoaDeg).toFixed(1)}`, W * 0.03, low + big * 1.3, small, 'left');
   const thr = clamp(fin(r.throttlePct), 0, 100);
-  text(`THR ${Math.round(thr)}%`, W * 0.97, H * 0.06, big, 'right', 700);
+  text(`THR ${Math.round(thr)}%`, W * 0.97, H * 0.05, big, 'right', 700);
   const ab = clamp(fin(r.afterburner), 0, 1);
-  if (ab > 0.02) text('AB', W * 0.97, H * 0.06 + big * 1.3, big, 'right', 800);
-  if (r.engineStatus === 'OFF' || r.engineStatus === 'FAILED') text(`ENG ${r.engineStatus}`, W * 0.97, H * 0.06 + big * 2.6, small, 'right', 700);
+  const eng = r.engineStatus === 'OFF' || r.engineStatus === 'FAILED' ? `ENG ${r.engineStatus}` : '';
+  if (ab > 0.02 || eng) text([ab > 0.02 ? 'AB' : '', eng].filter(Boolean).join('  '), W * 0.97, H * 0.05 + big * 1.2, small, 'right', 800);
   const agl = fin(r.altitudeAglFt);
   if (agl < 5000) text(`R ${fmtThousands(Math.round(agl / 10) * 10)}`, W * 0.97, low, big, 'right', 700);
-  const vs = fin(r.verticalSpeedFpm);
-  text(`VS ${vs >= 0 ? '+' : '−'}${fmtThousands(Math.abs(Math.round(vs / 10) * 10))}`, W * 0.97, low + big * 1.3, small, 'right');
+  const vs = Math.round(fin(r.verticalSpeedFpm) / 10) * 10;
+  text(`VS ${vs > 0 ? '+' : vs < 0 ? '−' : ''}${fmtThousands(Math.abs(vs))}`, W * 0.97, low + big * 1.3, small, 'right');
 
   // ── Heading tape: bottom, or top with the gear down ──
   const gearUp = r.gear === 'up';
   const tw = W * 0.46;
-  const ty = gearUp ? H * 0.95 : H * 0.045;
+  // Baseline: ticks and labels face the HUD's centre, the caret and the digital heading its edge.
+  const ty = gearUp ? H * 0.88 : H * 0.12;
   const marks = headingTapeMarks(fin(r.headingDeg), tw);
   const tdir = gearUp ? -1 : 1; // ticks rise from the bottom tape, hang from the top one
   strokeBoth(() => {
@@ -314,14 +317,15 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
     if (!m.major || Math.abs(m.x) > tw / 2 - small) continue;
     text(m.label, W / 2 + m.x, ty + tdir * H * 0.042, small);
   }
-  text(String(Math.round(wrap360(fin(r.headingDeg))) % 360).padStart(3, '0'), W / 2, ty - tdir * H * 0.045, small, 'center', 700);
+  text(String(Math.round(wrap360(fin(r.headingDeg))) % 360).padStart(3, '0'), W / 2, ty - tdir * H * 0.058, small, 'center', 700);
 
-  // ── Cues above the heading tape ──
-  const cues: string[] = [];
-  if (r.gear === 'down') cues.push('GEAR DN');
-  else if (r.gear === 'transit') cues.push('GEAR ⇅');
-  if (r.speedBrake) cues.push('SPD BRK');
-  if (cues.length) text(cues.join('   '), W / 2, gearUp ? H * 0.84 : H * 0.84, small, 'center', 700);
+  // ── Configuration cues, under the vertical speed ──
+  let cy = low + big * 2.5;
+  if (r.gear !== 'up') {
+    text(r.gear === 'down' ? 'GEAR DN' : 'GEAR ⇅', W * 0.97, cy, small, 'right', 700);
+    cy += big * 1.2;
+  }
+  if (r.speedBrake) text('SPD BRK', W * 0.97, cy, small, 'right', 700);
 
   ctx.restore();
 }
