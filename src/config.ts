@@ -100,6 +100,13 @@ export interface FbwConfig {
   pitchZeta: number;
   /** Roll-rate response time constant, s. */
   rollTau: number;
+  /**
+   * Roll-command shaping (optional): the commanded roll acceleration is limited to rollAccelDeg (deg/s²)
+   * while the rate builds and rollStopAccelDeg while it is taken off — a tap gives a modest bank change,
+   * a held stick builds to the full rate over ~maxRollRateDeg / rollAccelDeg seconds, releases stop crisply.
+   */
+  rollAccelDeg?: number;
+  rollStopAccelDeg?: number;
   /** Yaw loop (sideslip → 0, turn coordination): natural frequency (rad/s) and damping. */
   yawOmega: number;
   yawZeta: number;
@@ -1727,7 +1734,11 @@ function makeF16(): AircraftConfig {
       pFactor: 0,
       /** Two 60° petals beside the nozzle. */
       cdSpeedBrake: 0.06,
-      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.0, inducedGain: 0.7 },
+      /**
+       * Wave drag: CD0 × 2.4 at M 1.1 easing to × 2.2 at M 2 (≈ 0.041, NASA TP-1538 order). Was × 2.0 at M 2,
+       * which let the jet reach M 2.38 at 40,000 ft in steady flight (real: M ≈ 2.0; audit in f16-accuracy.test.ts).
+       */
+      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.2, inducedGain: 0.7 },
     },
 
     engine: {
@@ -1882,6 +1893,9 @@ function makeF16(): AircraftConfig {
       pitchOmega: 5,
       pitchZeta: 0.8,
       rollTau: 0.12,
+      /** Held full stick: 300 °/s after ~0.7 s; a 0.3 s keyboard tap ≈ 35° of bank. */
+      rollAccelDeg: 420,
+      rollStopAccelDeg: 1200,
       yawOmega: 3,
       yawZeta: 0.8,
       pedalBetaDeg: 6,
@@ -1957,30 +1971,206 @@ export const F16_AIRCRAFT: AircraftConfig = makeF16();
  * gun's firing barrel sits on the centreline). Twin fins at x = ±2.87 on the tailplane tips.
  * Engine pods on the upper rear fuselage, centred at x = ±1.55, y = +1.1, z = +3.1 … +6.4.
  *
- * FLIGHT MODEL: placeholder (F-16 aero with the A-10 geometry) until src/physics calibrates it.
+ * FLIGHT MODEL (src/physics; calibration table in src/physics/aircraft.ts, tests/physics/a10*.test.ts).
+ * Combat weight 16,000 kg: 11,321 kg empty + ~2,600 kg fuel (of 4,853) + 1,150 rounds of 30 mm
+ * (~800 kg) + 4 × AGM-65D on two LAU-88s (~1,300 kg) + ALQ-131 ECM and Sniper pods (~500 kg). MTOW 23 t.
+ *   Engines   2 × GE TF34-GE-100A, 40.3 kN (9,065 lbf) each, NO afterburner (abDetent = 1: the whole
+ *             lever is idle → military). High-bypass (6.2:1) → strong thrust lapse with speed
+ *             (Bartel & Young: T/T₀ ≈ 1 − 1.05·M + 0.7·M² at BPR 6, plus ~5 % installation loss at low
+ *             speed) and the famously slow spool: idle → 95 % in ~7 s.
+ *   Wing      47.01 m², 17.53 m span, AR 6.54, straight, thick NACA 6716 (root) / 6713 (tip): CLα 4.9/rad,
+ *             CLmax 1.45 at ~17–18° α with the inboard leading-edge slats out (they extend automatically
+ *             near the stall and keep the root flying — their effect is folded into the wide, rounded top
+ *             of the lift curve), a gentle trailing-edge stall (8° break), ~1.5° washout: benign,
+ *             departure-resistant, spins only with pro-spin controls held and recovers when released.
+ *   Flaps     three positions UP / MVR 7° / DN 20° (single-slotted, ΔCL 0.55 at 20°).
+ *   Controls  hydraulic, direct (no fly-by-wire); the pitch and yaw SAS are modelled as strong natural
+ *             damping (cmQ, cnR). Big outboard ailerons: ~100°/s at 250–300 KIAS. Elevator: enough to
+ *             rotate at Vr and flare, and to reach CLmax up to ~320 KIAS (corner speed) — above that a
+ *             hard pull breaks the airframe (7.33 g limit, 11 g ultimate).
+ *   Speed brake  the split-aileron "decelerons" (upper and lower halves open): CD +0.09 at ~60 % open,
+ *             no pitch change.
+ *   Inertia   estimated from the mass distribution (kg·m², ± 20 %):
+ *               roll  ≈ wing 2.3 t over 17.5 m (m·b²/18 ≈ 39,000) + Mavericks and LAU-88s at x ≈ ±4.3 m
+ *                       (~24,000) + pods at x ≈ ±6–7 m (~16,000) + gear pods, engines, wing fuel, fuselage
+ *                       (~8,000)                                                            → 85,000
+ *               pitch ≈ engines 1.3 t at z ≈ +4.8 (29,000) + empennage 0.5 t at z ≈ +8.5 (36,000) +
+ *                       armoured cockpit + avionics 1.1 t at z ≈ −4.5 (23,000) + gun/drum/ammo (10,000) +
+ *                       fuselage structure (~30,000) + wing, fuel, stores (~5,000)          → 130,000
+ *               yaw   ≈ pitch + roll (flat mass distribution) − a little                   → 205,000
+ * Checked against: USAF A-10 fact sheet, T.O. 1A-10C-1 summary numbers, Jane's; see the calibration table.
  */
 function makeA10(): AircraftConfig {
-  const f16 = structuredClone(F16_AIRCRAFT);
+  const c172 = CONFIG.aircraft;
+  const f16 = F16_AIRCRAFT;
   return {
-    ...f16,
     name: 'A-10C Thunderbolt II',
     registration: '80-0281',
+    /** Combat weight (see above), kg. */
+    mass: 16000,
+    inertia: { pitch: 130000, yaw: 205000, roll: 85000 },
     wingArea: 47.01,
     wingSpan: 17.53,
+    /** Mean aerodynamic chord of the tapered outer panels + constant-chord centre section, m. */
     meanChord: 2.73,
+    /** Straight AR 6.5 wing with the fuselage, nacelle and gear-pod interference. */
+    oswald: 0.78,
+
+    aero: {
+      /** Cambered 16 %-thick section: zero-lift α ≈ −1.5° body (level fuselage in cruise). */
+      cl0: 0.125,
+      clAlpha: 4.9,
+      /** Slats out: CLmax 1.45 at ~17–18°. */
+      stallAlphaDeg: 18,
+      stallAlphaNegDeg: -14,
+      /** Wide rounded top: the lift curve flattens from ~13° (buffet builds long before the break). */
+      stallRoundingDeg: 5,
+      /** Trailing-edge stall of a thick section: lift falls away slowly (~25 % lost 5° past the peak). */
+      stallBreakWidthDeg: 12,
+      flatPlateLift: 1.2,
+      flatPlateDrag: 1.3,
+      /** Loaded: 11 pylons, 4 AGM-65D on LAU-88s, two pods, gun, gear pods, big nacelles. */
+      cd0: 0.047,
+      cdGear: 0.012,
+      /** Single-slotted flaps, 20° (DN). */
+      cdFlapsFull: 0.035,
+      clFlapsFull: 0.55,
+      stallAlphaFlapsShiftDeg: -1,
+      cmFlapsFull: -0.02,
+      cdBeta: 0.5,
+      cyBeta: -0.7,
+      cyRudder: -0.12,
+      /** Conventional, very stable (static margin ≈ 18 %), trimmed near zero at ~250–300 KIAS. */
+      cm0: 0.06,
+      cm0Tail: 0,
+      cmAlpha: -0.9,
+      /** Tail volume 0.69 (10.6 m² × 8.3 m) + the pitch SAS. */
+      cmQ: -18,
+      cmAlphaDot: -6,
+      cmElevator: 0.3,
+      cmTrim: 0.2,
+      /** Outer-panel dihedral. */
+      clBeta: -0.09,
+      clP: -0.45,
+      clR: 0.1,
+      /** Big outboard ailerons (±25°). */
+      clAileron: 0.05,
+      clRudder: 0.012,
+      /** Twin fins on the tailplane tips, big tail arm; cnR includes the yaw SAS. */
+      cnBeta: 0.15,
+      cnP: -0.02,
+      cnR: -0.35,
+      cnAileron: -0.003,
+      cnRudder: 0.06,
+      stripStallBlendDeg: 2,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      wingStrips: 4,
+      washoutDeg: 1.5,
+      /** Thick sections stall from the trailing edge: the strips lose lift gently → weak autorotation. */
+      stripStallBreakWidthDeg: 20,
+      /** Departure-resistant: weak autorotation once stalled. */
+      stripRollGainStalled: 0.5,
+      stripYawGain: 1,
+      /** Ailerons on the outer panels. */
+      aileronSpanStart: 0.55,
+      /** The twin fins sit outboard on the tailplane tips, clear of the fuselage/wing wake. */
+      stallYawDampingLoss: 0.05,
+      stallRudderLoss: 0.05,
+      bodyCrossflowCn: 0.3,
+      postStallFlapLiftFraction: 0.5,
+      stallPitchBreak: -0.06,
+      stallTailBlanking: 0.2,
+      /** Turbofans: nothing blows over the tail, no P-factor. */
+      propwashTail: 0,
+      propwashTailMaxRatio: 1,
+      cmGroundEffect: 0.05,
+      groundEffectLift: 0.15,
+      groundEffectScale: 0.25,
+      pFactor: 0,
+      /** Decelerons ~60 % open. */
+      cdSpeedBrake: 0.09,
+      /** Thick straight wing: drag divergence from M ≈ 0.62 (the 450 KIAS / M 0.75 limits are a wall). */
+      transonic: { machCrit: 0.62, machPeak: 0.85, peakFactor: 3, factorAtMach2: 3, inducedGain: 0 },
+    },
+
     engine: {
-      ...f16.engine,
+      type: 'jet',
       jet: {
-        ...f16.engine.jet!,
-        /** 2 × TF34-GE-100A, 9,065 lbf each; no afterburner (maxThrustN = milThrustN). */
+        /** 2 × TF34-GE-100A, 9,065 lbf each (SL static, uninstalled). */
         milThrustN: 80600,
+        /** No afterburner. */
         maxThrustN: 80600,
         idleThrustN: 4000,
-        /** Both nozzles combined; the nacelles are canted so the thrust line passes just above the CG. */
+        /** The detent is at the stop: the whole lever is idle → military, afterburner never lights. */
+        abDetent: 1,
+        abMin: 0,
+        abLightCore: 1,
+        abRampUpPerSec: 0,
+        abRampDownPerSec: 10,
+        /** Slow: idle → 95 % ≈ 7 s. */
+        spoolUpTauIdle: 5.5,
+        spoolUpTauMil: 1.0,
+        spoolDownTau: 1.8,
+        densityExponent: 0.8,
+        /** High-bypass lapse with speed (see above). */
+        lowSpeedLapse: 1.1,
+        ramDry: 0.75,
+        ramAb: 0,
+        /**
+         * Both nacelles combined. They sit 1.1 m above the CG, canted ~9° nose-down so the thrust line
+         * passes ~0.35 m above the CG: power pitches the nose down only a little.
+         */
         thrustPoint: { x: 0, y: 0.35, z: 6.4 },
       },
+      maxPowerW: 0,
       staticThrustN: 80600,
+      propEfficiency: 1,
+      spoolUpTau: 1,
+      spoolDownTau: 1,
+      idlePower: 0,
+      /** Core speed (N2), %. */
+      idleRpm: 60,
+      maxRpm: 100,
+      /** APU-assisted start, shortened for play, s. */
+      startTime: 8,
+      windmillRpmPerKt: 0.05,
+      crankRpm: 22,
+      rpmTau: 0.6,
+      spinDownTau: 4,
+      windmillDragCoeff: 0,
     },
+
+    flaps: {
+      /** UP / MVR (manoeuvre, take-off) / DN. */
+      notchesDeg: [0, 7, 20],
+      rateDegPerSec: 4,
+      vfeKt: 210,
+      autoWithGearDeg: 0,
+      autoRetractKt: 0,
+    },
+
+    gear: {
+      retractable: true,
+      /** Mains fold forward into the wing pods, nose gear forward into the fuselage. */
+      transitTime: 6,
+      vleKt: 200,
+      vloKt: 200,
+      retractDelay: 1.5,
+      squatSwitch: true,
+    },
+
+    surfaces: {
+      elevatorMaxDeg: 25,
+      aileronMaxDeg: 25,
+      rudderMaxDeg: 25,
+      flapMaxDeg: 20,
+      trimTabMaxDeg: 10,
+      nosewheelSteerMaxDeg: 45,
+    },
+
     geometry: {
       ...f16.geometry,
       length: 16.26,
@@ -2018,7 +2208,87 @@ function makeA10(): AircraftConfig {
         { name: 'cabinRoof', x: 0, y: 1.6, z: -4.0 },
       ],
     },
-    limits: { ...f16.limits, vsoKt: 100, vs1Kt: 115, vrKt: 120, vxKt: 180, vyKt: 210, vaKt: 300, vnoKt: 400, vneKt: 450, gLimitPos: 7.33, gLimitNeg: -3, structuralFailureG: 11, structuralFailureNegG: -5 },
+
+    /** Visual-only (src/aircraft; the A-10 model owner may override). */
+    model: structuredClone(c172.model),
+
+    ground: {
+      /**
+       * Heavy-duty rough-field struts sized for 16 t: static loads ≈ 16 kN nose (the nose leg is 4.85 m
+       * ahead of the CG, the mains only 0.55 m behind it) and 70 kN per main → ~0.08 m / 0.07 m of
+       * compression out of 0.25 m travel; damping ≈ 0.55 × critical in compression (× 3 in rebound).
+       */
+      springMain: 880000,
+      damperMain: 90000,
+      springNose: 230000,
+      damperNose: 22000,
+      rollingFriction: { ...c172.ground.rollingFriction },
+      /** Anti-skid brakes. */
+      brakeFriction: 0.4,
+      lateralFriction: 0.7,
+      frictionSmoothing: 0.25,
+      /** Nosewheel steering (±45°) is for taxiing: it fades out by ~40 kt. */
+      steeringFadeSpeed: 20,
+      steeringMinFraction: 0.1,
+      longitudinalSmoothing: 0.05,
+      bottomOutStiffness: 10,
+      reboundDampingFactor: 3,
+      tailSkidFriction: 0.4,
+    },
+
+    /** Direct hydraulic controls (the SAS is modelled as damping in the aero derivatives). */
+    fbw: null,
+
+    limits: {
+      vsoKt: 100,
+      vs1Kt: 120,
+      vrKt: 120,
+      vxKt: 160,
+      vyKt: 200,
+      /** Corner speed: CLmax gives 7.33 g at ~320 KIAS. */
+      vaKt: 320,
+      vnoKt: 400,
+      vneKt: 450,
+      gLimitPos: 7.33,
+      gLimitNeg: -3,
+      /** Ultimate = 1.5 × limit. */
+      structuralFailureG: 11,
+      structuralFailureNegG: -4.5,
+      /** 450 × 1.12 ≈ 505 KIAS (design dive speed) fails the airframe. */
+      overspeedFailureFactor: 1.12,
+      maxAngularRate: 8,
+    },
+
+    stall: {
+      /** The AoA tone starts well before the break. */
+      warningMarginDeg: 4,
+      recoveryHysteresisDeg: 2,
+    },
+
+    landing: {
+      butterFpm: 150,
+      smoothFpm: 360,
+      firmFpm: 660,
+      /** Rough-field gear: 10 ft/s design sink rate with margin. */
+      hardFpm: 1000,
+      /** 17.5 m span, tips 2 m up. */
+      maxBankDeg: 12,
+      /** Nose gear first. */
+      minPitchDeg: -3,
+      minAirborneTime: 1.5,
+      ditchSpeedKt: 0,
+      scrapeSpeedMs: 3,
+      terrainImpactMs: 8,
+      terrainPenetrationM: 0.3,
+      nearGroundAglM: 40,
+      obstacleCheckAglM: 400,
+    },
+
+    spawn: {
+      runwayStartOffset: 60,
+      /** 3° final from 6 km at 140 kt, gear down, flaps DN (notch 2 = 20°). */
+      approach: { distance: 6000, height: 330, speedKt: 140, flapsNotch: 2, throttle: 0.6, aimPointM: 300 },
+    },
   };
 }
 

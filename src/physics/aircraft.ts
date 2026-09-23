@@ -47,7 +47,10 @@
  *   CLα, CLmax                                 3.5 / rad; 1.63 @ 32° α (vortex lift) ~3.5; ~1.6 @ 30–35°
  *   CD0 subsonic → transonic peak → M 2        0.0185 → 0.044 @ M 1.1 → 0.037        roughly doubles M 0.95–1.1
  *   Max L/D (clean)                            10.9 @ 250 KIAS                       ~10–11
- *   Top speed, max AB: sea level / 40,000 ft   M 1.18 (766 KIAS) / M 2.05            M 1.2 / M 2.0
+ *   Top speed, max AB: sea level / 40,000 ft   M 1.17 (774 KIAS) / M 2.00 (steady)   M 1.2 / M 2.0  (wave drag ×2.2 at M 2; was ×2.0 → M 2.38)
+ *   Peak climb (Ps), SL, max AB / sustained    ~40,000 fpm / 17.3 °/s at M 0.8, 8.4 g   50–60,000 fpm / 18–20 °/s  ⚠ low: jet.ts ram model
+ *     turn                                     (needs a normal-shock inlet-recovery term + more AB ram; f16-accuracy.test.ts)
+ *   Instantaneous turn, 5,000 ft               23 °/s at 392 KIAS (9 g at the 25° limit)  ~26 °/s (lighter)
  *   Top speed, military power: SL / 40,000 ft  M 0.98 / M 1.05                       ~M 1.0 (no supercruise)
  *   AB take-off (12 t): rotate / lift-off      155 KIAS / ~183 KIAS, 487 m           rotate 150–160 kt, 450–700 m
  *   Held full aft stick on the take-off roll   rotation-rate limited, pitch ≤ 12° on the wheels (tail-strike protection)
@@ -65,6 +68,26 @@
  *   Approach, 3° glide, gear + flaperons       150 KIAS at α 11.9°, pitch 8.9°       ~140–150 kt at 11–13° α
  *   Landing (flare, idle)                      ~144 KIAS, −374 fpm, 12.7° pitch, rollout 1,050 m (brakes + speed brake)   800–1,200 m
  *   Structural limits                          > 13.5 g / < −6 g, > 865 KIAS (800 × 1.08) = failure
+ *
+ * ─── Calibration: A-10C (16,000 kg combat weight: 4 × AGM-65D + pods; 2 × TF34-GE-100A; ISA) ───
+ * Checked by tests/physics/a10.test.ts, a10-flight.test.ts, a10-keyboard.test.ts, a10-fuzz.test.ts, recoil.test.ts.
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Thrust SL static / spool idle → 95 %       80.6 kN, no afterburner / 7.2 s       2 × 40.3 kN / 6–8 s
+ *   CLα, CLmax clean / MVR 7° / DN 20°         4.9 / rad; 1.45 @ 18° / 1.61 / 1.92    4.8–5.0; 1.4–1.5 @ 16–18°
+ *   Stall, idle, 1–2 kt/s: clean / gear+DN     116 KIAS / 100 KIAS, breaks straight  115–125 / 95–105 KIAS
+ *   Take-off (MVR, rotate 120 KIAS)            lift-off 144 KIAS, ground roll 748 m  Vr 115–125, 700–1,000 m
+ *   Climb at 200 KIAS, military                5,200 fpm                             5,000–6,000 fpm
+ *   Max level speed, 1,000 ft (loaded)         369 KTAS                              340–380 (381 clean)
+ *   Roll rate, full aileron: 250 / 300 KIAS    92 / 114 °/s (46 at 150 KIAS)         90–110 °/s
+ *   60° bank level turn, 300 KIAS              1.97 g, 5.6 °/s                       2 g
+ *   Full aft stick: 300 / 430 KIAS             6.2 g (lift-limited) / over-G failure  7.33 g limit, 11 g ultimate
+ *   Decelerons, 300 KIAS idle                  +6.3 kt/s, no pitch change            big drag, no trim change
+ *   Pro-spin held 10 s → recovery              84 °/s yaw; anti-spin 1.8 s, hands-off 5.4 s   spin-resistant, recoverable
+ *   Approach 140 KIAS, flaps DN, 3° glide      α 4.3°, pitch 1.3°, trim +0.2         130–140 KIAS
+ *   Landing (flare, idle, brakes + decelerons) 129 KIAS, −308 fpm "smooth", rollout 765 m
+ *   GAU-8 burst, 2 s at 300 KIAS (45 kN)       −9.8 kt vs not firing, Δpitch 1.3°, Δhdg 0°   F·t/m ≈ 10.9 kt
  *
  *   step() cost (M2 Max, node): C172 ~1.6 µs, C172 spinning (strips) ~4 µs, F-16 with FBW ~5 µs   ≪ 0.1 ms
  */
@@ -86,6 +109,7 @@ import { applyFbw } from './fbw';
 import { groundContacts } from './ground';
 import { FLAT_ENV } from './flatEnv';
 import { solveTrim, type TrimRequest } from './trim';
+import { gunRecoil } from './recoil';
 
 const DEG = Math.PI / 180;
 const ZERO: Vec3 = Object.freeze({ x: 0, y: 0, z: 0 });
@@ -414,7 +438,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
   const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
   const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0 });
-  const fAir = bodyToWorld(q, { x: aero.fx, y: aero.fy, z: aero.fz });
+  // Gun recoil while rounds are leaving the barrel (set by the weapons system; see ./recoil).
+  const gun = gunRecoil(raw.gunFiring, cfg);
+  const fAir = bodyToWorld(q, { x: aero.fx + gun.fx, y: aero.fy + gun.fy, z: aero.fz + gun.fz });
 
   // ── Ground, structure, water, obstacles ──
   const omegaWorld = bodyToWorld(q, w);
@@ -478,9 +504,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   const position = { x: pos.x + velocity.x * dt, y: pos.y + velocity.y * dt, z: pos.z + velocity.z * dt };
 
   const tg = worldToBody(q, gr.torque);
-  const tx = aero.tx + tg.x;
-  const ty = aero.ty + tg.y;
-  const tz = aero.tz + tg.z;
+  const tx = aero.tx + tg.x + gun.tx;
+  const ty = aero.ty + tg.y + gun.ty;
+  const tz = aero.tz + tg.z + gun.tz;
   const I = ac.inertia;
   // ω̇ = I⁻¹(τ − ω × Iω), diagonal inertia (pitch = X, yaw = Y, roll = Z).
   const hx = I.pitch * w.x;
@@ -497,7 +523,7 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // ── Load factor: specific force along body up (accelerometer), and the airframe (aero) part for over-G ──
   const nAero = aero.fy / (m * g);
   const gBody = worldToBody(q, gr.force);
-  const loadFactor = (aero.fy + gBody.y) / (m * g);
+  const loadFactor = (aero.fy + gun.fy + gBody.y) / (m * g);
   if (nAero > ac.limits.structuralFailureG || nAero < ac.limits.structuralFailureNegG) {
     return crashedState(state, 'Structural failure — over-G', time, env, cfg, { flapsDeg, gearPos });
   }
