@@ -8,6 +8,7 @@ import fc from 'fast-check';
 import * as THREE from 'three';
 import { createA10Anim, stepA10Anim, A10_LIMITS } from '../../../src/aircraft/a10/animate';
 import { createA10Model, A10_PART } from '../../../src/aircraft/a10';
+import { STICK, THROTTLE } from '../../../src/aircraft/a10/cockpit';
 import { createDefaultVisualState, createRestReadings, type AircraftVisualState } from '../../../src/aircraft/types';
 import { A10_WEAPONS } from '../../../src/config';
 
@@ -36,6 +37,8 @@ const visualState: fc.Arbitrary<AircraftVisualState> = fc
     sb: wild,
     gun: wild,
     stores: fc.array(fc.boolean(), { maxLength: 6 }),
+    airStores: fc.option(fc.array(fc.boolean(), { maxLength: 4 }), { nil: undefined }),
+    thr: wild,
     crashed: fc.boolean(),
     crashAge: wild,
     aoa: wild,
@@ -61,10 +64,11 @@ const visualState: fc.Arbitrary<AircraftVisualState> = fc
     speedBrake: r.sb,
     gunSpin: r.gun,
     stores: r.stores,
+    airStores: r.airStores,
     crashed: r.crashed,
     crashAge: r.crashAge,
     lights: r.lights,
-    instruments: r.withInst ? { ...createRestReadings(), aoaDeg: r.aoa, airspeedKt: r.kt, state: 'airborne' as const } : null,
+    instruments: r.withInst ? { ...createRestReadings(), aoaDeg: r.aoa, airspeedKt: r.kt, throttlePct: r.thr * 60, headingDeg: r.kt, state: 'airborne' as const } : null,
   }));
 const dtArb = fc.oneof(fc.double({ min: 0, max: 0.5, noNaN: true }), fc.constantFrom(Number.NaN, -1, Number.POSITIVE_INFINITY));
 
@@ -110,7 +114,7 @@ describe('A-10 model fuzz', () => {
   });
   afterAll(() => m.dispose());
 
-  it('no transform ever goes NaN, and the muzzle and missile stations stay put', { timeout: 60_000 }, () => {
+  it('no transform ever goes NaN, the muzzle and missile stations stay put, the stick and throttles stay in their travel', { timeout: 60_000 }, () => {
     const muzzle = m.root.getObjectByName(A10_PART.gunMuzzle)!;
     const mz = A10_WEAPONS.gun!.muzzle;
     fc.assert(
@@ -130,6 +134,17 @@ describe('A-10 model fuzz', () => {
           expect(o.position.distanceTo(new THREE.Vector3(st.x, st.y, st.z))).toBeLessThan(1e-9);
           expect(o.visible).toBe(s.stores?.[i] !== false);
         });
+        A10_WEAPONS.airMissiles!.stations.forEach((st, i) => {
+          const o = m.root.getObjectByName(A10_PART.airStore(i))!;
+          expect(o.position.distanceTo(new THREE.Vector3(st.x, st.y, st.z))).toBeLessThan(1e-9);
+          expect(o.visible).toBe(s.airStores?.[i] !== false);
+        });
+        const stick = m.root.getObjectByName(A10_PART.stick)!.parent!;
+        expect(Math.abs(stick.rotation.x)).toBeLessThanOrEqual(STICK.pitchDeg * DEG + 1e-9);
+        expect(Math.abs(stick.rotation.z)).toBeLessThanOrEqual(STICK.rollDeg * DEG + 1e-9);
+        const thr = m.root.getObjectByName(A10_PART.throttle)!.parent!;
+        expect(thr.rotation.x).toBeLessThanOrEqual(THROTTLE.idleDeg * DEG + 1e-9);
+        expect(thr.rotation.x).toBeGreaterThanOrEqual(THROTTLE.maxDeg * DEG - 1e-9);
       }),
       { numRuns: 120 },
     );
