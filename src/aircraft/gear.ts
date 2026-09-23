@@ -42,6 +42,10 @@ export const GEAR_PART = {
 
 export interface GearRig {
   group: THREE.Group;
+  /** Containers (identity transforms, children animated) that break off separately in a crash. */
+  nose: THREE.Group;
+  mainLeft: THREE.Group;
+  mainRight: THREE.Group;
   /** `crashed` shows the collapsed gear of a wreck (nose folded, mains splayed and bent back, a door torn off). */
   update(anim: AircraftAnimation, v: AircraftVisualState, dt: number, crashed?: boolean): void;
 }
@@ -173,6 +177,12 @@ function wheelGeometry(R: number, rim: number, width: number, brake: number, seg
 export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): GearRig {
   const group = new THREE.Group();
   group.name = 'gear';
+  const noseGroup = new THREE.Group();
+  noseGroup.name = 'gear.nose';
+  const mainGroups = [new THREE.Group(), new THREE.Group()];
+  mainGroups[0].name = 'gear.main.left';
+  mainGroups[1].name = 'gear.main.right';
+  group.add(noseGroup, mainGroups[0], mainGroups[1]);
   const segs = quality === 'high' ? 44 : 24;
   const cast = (m: THREE.Mesh, name?: string) => {
     m.castShadow = true;
@@ -190,7 +200,7 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
   const axleY = NOSE_GEAR.axleDown.y - np.y; // axle below the pivot (negative)
   const noseSwing = new THREE.Group();
   noseSwing.position.copy(np);
-  group.add(noseSwing);
+  noseGroup.add(noseSwing);
   const collarY = -0.265;
   const upper = merge([
     // Trunnion across the pivot, oleo barrel, steering collar.
@@ -248,13 +258,13 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
   const braceL = new THREE.Mesh(unitLink(0.012, 0x8a8c8e, 0.4, 0.8), linkMat);
   braceU.name = 'noseBrace.upper';
   braceL.name = 'noseBrace.lower';
-  group.add(braceU, braceL);
+  noseGroup.add(braceU, braceL);
   const anchor = V(NOSE_GEAR.braceAnchor.x, NOSE_GEAR.braceAnchor.y, NOSE_GEAR.braceAnchor.z);
 
   // Nose doors: clamshells along the belly under the cabin floor, curved to the belly line.
   const doorsGroup = new THREE.Group();
   doorsGroup.name = 'noseDoors';
-  group.add(doorsGroup);
+  noseGroup.add(doorsGroup);
   const hw = WELL.nose.halfWidth + 0.01;
   const dz0 = WELL.nose.z0 - 0.01;
   const dz1 = WELL.nose.z1 + 0.01;
@@ -318,11 +328,11 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
     for (const f of [0.3, 0.55, 0.8]) legParts.push(tint(box(0.012, 0.014, 0.012, 0, L * f, 0.033), 0x5c5e60, 0.5, 0.7));
     const legMesh = cast(new THREE.Mesh(merge(legParts), mats.parts), side < 0 ? 'leg.left' : 'leg.right');
     legMesh.position.set(side * MAIN_GEAR.pivot.x, MAIN_GEAR.pivot.y, MAIN_GEAR.pivot.z);
-    group.add(legMesh);
+    mainGroups[side < 0 ? 0 : 1].add(legMesh);
     // Axle fitting: stub from the leg foot (inboard) to the wheel, caliper aft-low on the disc, brake-line loop.
     const axle = new THREE.Group();
     axle.name = side < 0 ? GEAR_PART.axleLeft : GEAR_PART.axleRight;
-    group.add(axle);
+    mainGroups[side < 0 ? 0 : 1].add(axle);
     const st = MAIN_GEAR.stub;
     const hwM = MAIN_GEAR.tyreWidth / 2;
     const fitting = merge([
@@ -375,6 +385,9 @@ export function buildGear(mats: AircraftMaterials, quality: 'high' | 'low'): Gea
 
   return {
     group,
+    nose: noseGroup,
+    mainLeft: mainGroups[0],
+    mainRight: mainGroups[1],
     update(anim, v, dt, crashed = false) {
       const step = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.25)) : 0;
       const c = v.wheelCompression;

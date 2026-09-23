@@ -237,7 +237,7 @@ export const CONFIG = {
       propRadius: 0.96,
       spinnerTip: { x: 0, y: 0.05, z: -2.28 },
       /** Pilot's eye point (left seat). */
-      pilotEye: { x: -0.28, y: 0.52, z: -0.15 },
+      pilotEye: { x: -0.28, y: 0.64, z: 0.02 },
       /** Wing: root chord line at the top of the cabin. */
       wingRootLeadingEdge: { x: 0, y: 0.95, z: -0.55 },
       wingRootChord: 1.63,
@@ -288,6 +288,8 @@ export const CONFIG = {
       /** Nose leg swings aft this far into its well; nose doors open this far. */
       noseGearRetractDeg: 90,
       gearDoorOpenDeg: 75,
+      /** Cabin fill: fraction of the sun's irradiance that reaches shaded cabin surfaces (bounce light). */
+      cabinFill: 0.16,
       /** Instrument panel texture redraw rate in the cockpit view (Hz), and outside it. */
       panelRedrawHz: 30,
       panelRedrawHzExterior: 4,

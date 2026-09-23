@@ -6,11 +6,14 @@
  *   gear=0..1 flaps=deg elev= ail= rud= trim= steer= (−1..1) rpm= comp=nose,left,right
  *   lights=nav,strobe,beacon,landing,taxi   t=seconds (light timing)   q=high|low
  *   sun=azimuth,elevation (deg)   spin=1 (auto-rotate)   hud=0
+ *   crash=1 (wreck)   explode=0..1 (break-up parts pushed apart from the CG, for inspection)
+ *   view=mascot (the livery mascot flat, at several sizes)
  * window.__ready (after the first frames), window.__stats {calls, triangles, geometries, textures}.
  */
 import * as THREE from 'three';
 import { createAircraft, createDefaultVisualState } from '../aircraft/index';
 import { CONFIG } from '../config';
+import { MASCOT_BOX, drawTaterMascot } from '../aircraft/mascot';
 
 const q = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
@@ -126,6 +129,20 @@ state.lights = {
   taxi: lightList.includes('taxi'),
 };
 state.cameraMode = view === 'cockpit' ? 'cockpit' : 'orbit';
+state.crashed = q.get('crash') === '1';
+state.crashAge = num('crashAge', 8);
+// Exploded view of the crash break-up parts: each part slides away from the CG along its centre.
+const explode = num('explode', 0);
+if (explode > 0) {
+  ac.root.updateMatrixWorld(true);
+  for (const part of ac.getBreakupParts()) {
+    const box = new THREE.Box3().setFromObject(part.object);
+    const c = box.getCenter(new THREE.Vector3());
+    ac.root.worldToLocal(c);
+    const dir = c.lengthSq() > 1e-6 ? c.normalize() : new THREE.Vector3(0, 1, 0);
+    part.object.position.addScaledVector(dir, explode * 1.6);
+  }
+}
 state.instruments = {
   airspeedKt: num('ias', 0), altitudeFt: 98, altitudeAglFt: 0, headingDeg: 360, verticalSpeedFpm: 0,
   pitchDeg: 0, rollDeg: 0, slipSkid: 0, turnRateDegPerSec: 0, throttlePct: num('thr', 0),
@@ -218,3 +235,28 @@ renderer.setAnimationLoop((now) => {
 });
 renderer.autoClear = true;
 renderer.info.autoReset = false;
+
+// ── Flat mascot sheet (view=mascot): the livery art at several sizes on white paint ──────────
+if (q.get('view') === 'mascot') {
+  const c = document.createElement('canvas');
+  c.width = innerWidth;
+  c.height = innerHeight;
+  Object.assign(c.style, { position: 'fixed', inset: '0', zIndex: '5' });
+  document.body.appendChild(c);
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#f2f2ee';
+  g.fillRect(0, 0, c.width, c.height);
+  const big = Math.min((c.width * 0.62) / MASCOT_BOX.w, (c.height * 0.9) / MASCOT_BOX.h);
+  g.save();
+  g.translate(20, 20);
+  g.scale(big, big);
+  drawTaterMascot(g);
+  g.restore();
+  for (const [k, y] of [[0.3, 40], [0.15, 260], [0.07, 420]] as const) {
+    g.save();
+    g.translate(c.width * 0.66, y);
+    g.scale(k, k);
+    drawTaterMascot(g, { outline: 7 / Math.sqrt(k / 0.3) });
+    g.restore();
+  }
+}

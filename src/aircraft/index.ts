@@ -13,14 +13,16 @@ import * as THREE from 'three';
 import { CONFIG } from '../config';
 import type { InstrumentReadings } from '../types';
 import { computeAnimation, createAnimation, createPropDisc, propDiscParams, strobeRate } from './animate';
+import type { BreakupPart } from '../fleet/types';
+import { createBreakupRig, splitByTriangles } from './breakup';
 import { buildCockpit } from './cockpit';
 import { buildFuselage } from './fuselage';
 import { buildGear, GEAR_PART } from './gear';
-import { createFuselageTextures } from './livery';
-import { createMaterials, createPartsMaterial, merge, tint } from './materials';
+import { createFuselageTextures, doorOutlineDistance } from './livery';
+import { addCabinFill, createMaterials, createPartsMaterial, merge, tint } from './materials';
 import { drawPlaceholderPanel, PANEL } from './panel';
 import { buildProp, PROP_PART } from './prop';
-import { FUSE_Z0, fuselageSection, type SectionParams } from './shape';
+import { FUSE_Z0, WINDSHIELD_BASE_Z, fuselageSection, type SectionParams } from './shape';
 import { buildTail } from './tail';
 import { buildWells } from './wells';
 import { bendBladePoint, charProgress, deformWreckGeometry, deformWreckPoint, tailSkewTransform, wingFoldTransform } from './wreck';
@@ -35,7 +37,13 @@ export { PANEL, PANEL_LAYOUT, drawPlaceholderPanel } from './panel';
 export const PART = {
   fuselage: 'fuselage',
   glass: 'glass',
-  wing: 'wing',
+  /** The left wing mesh (PART.wing kept for older lookups). */
+  wing: 'wing.left',
+  wingLeft: 'wing.left',
+  wingRight: 'wing.right',
+  cowl: 'cowl',
+  doorLeft: 'door.left',
+  doorRight: 'door.right',
   flapLeft: 'flap.left',
   flapRight: 'flap.right',
   aileronLeft: 'aileron.left',
@@ -61,6 +69,14 @@ export interface AircraftModel {
   setVisualState(v: AircraftVisualState, dt: number): void;
   setPanelDrawer(fn: PanelDrawer): void;
   landingLight: THREE.SpotLight;
+  /**
+   * The parts that separate in a crash (fuselage, engine, prop, wings with struts, tail, gear
+   * legs, doors). Each object is a container at the identity while attached; the model only
+   * animates its children. Same array every call.
+   */
+  getBreakupParts(): BreakupPart[];
+  /** Re-attach every part to its original parent, child slot and local transform (on reset). */
+  restoreBreakupParts(): void;
   dispose(): void;
 }
 
@@ -88,9 +104,11 @@ function hingedPivot(name: string, pos: THREE.Vector3, quat: THREE.Quaternion) {
   return { pivot, slide, rot };
 }
 
-/** Fuselage-mounted details: cowl inlets, exhaust, antennas, step, cowl flaps. */
-function fuselageDetails(): THREE.BufferGeometry[] {
+/** Fuselage-mounted details, by the part they break off with: cabin (antennas, steps), engine (cowl inlets, cowl flaps, exhaust), tail (fin antennas). */
+function fuselageDetails(): { fuselage: THREE.BufferGeometry[]; engine: THREE.BufferGeometry[]; tail: THREE.BufferGeometry[] } {
   const out: THREE.BufferGeometry[] = [];
+  const engine: THREE.BufferGeometry[] = [];
+  const tail: THREE.BufferGeometry[] = [];
   const sec: SectionParams = { top: 0, bottom: 0, halfWidth: 0, widthY: 0, nTop: 2, nBot: 2 };
   const faceZ = FUSE_Z0 - 0.02;
   // Twin cowl inlets beside the spinner: dark mouths with a painted lip.
@@ -108,22 +126,22 @@ function fuselageDetails(): THREE.BufferGeometry[] {
     shape.lineTo(0, -hh);
     const mouth = new THREE.ExtrudeGeometry(shape, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 2, curveSegments: 14 });
     mouth.translate(s * 0.235, 0.0, faceZ - 0.012);
-    out.push(tint(mouth, 0x060606, 0.9, 0));
+    engine.push(tint(mouth, 0x060606, 0.9, 0));
     const lip = new THREE.TorusGeometry(1, 0.13, 8, 28);
     lip.scale(0.068, 0.082, 0.05);
     lip.translate(s * 0.238, 0.0, faceZ - 0.006);
-    out.push(tint(lip, 0xefefea, 0.3, 0));
+    engine.push(tint(lip, 0xefefea, 0.3, 0));
   }
   // Lower cowl air exit / cowl flaps.
   fuselageSection(-1.27, sec);
   const flap = new THREE.BoxGeometry(0.42, 0.02, 0.09);
   flap.rotateX(-0.25);
   flap.translate(0, sec.bottom + 0.012, -1.27);
-  out.push(tint(flap, 0x1a1a1b, 0.8, 0));
+  engine.push(tint(flap, 0x1a1a1b, 0.8, 0));
   // Exhaust stack (right lower cowl).
   fuselageSection(-1.4, sec);
-  out.push(tint(tube(V(0.2, sec.bottom + 0.1, -1.46), V(0.23, sec.bottom - 0.045, -1.32), 0.024, 0.026, 14), 0xc8c8c4, 0.22, 1.0));
-  out.push(tint(tube(V(0.2, sec.bottom + 0.1, -1.46), V(0.231, sec.bottom - 0.047, -1.318), 0.016, 0.016, 12), 0x201b18, 0.9, 0.2));
+  engine.push(tint(tube(V(0.2, sec.bottom + 0.1, -1.46), V(0.23, sec.bottom - 0.045, -1.32), 0.024, 0.026, 14), 0xc8c8c4, 0.22, 1.0));
+  engine.push(tint(tube(V(0.2, sec.bottom + 0.1, -1.46), V(0.231, sec.bottom - 0.047, -1.318), 0.016, 0.016, 12), 0x201b18, 0.9, 0.2));
   // Com whips on the cabin roof (behind the wing centre section).
   for (const [z, lean] of [[0.35, 0.3], [0.8, 0.35]] as const) {
     fuselageSection(z, sec);
@@ -138,6 +156,21 @@ function fuselageDetails(): THREE.BufferGeometry[] {
   const blade = new THREE.BoxGeometry(0.008, 0.08, 0.06);
   blade.translate(0.0, sec.bottom - 0.04, 1.0);
   out.push(tint(blade, 0x1c1c1c, 0.6, 0.2));
+  // Refuelling step (lower cowl side) and grab handle (upper cowl side) on each side, for
+  // reaching the wing fuel caps — a high wing has no walkway.
+  for (const s of [-1, 1]) {
+    fuselageSection(-1.5, sec);
+    const hw = sec.halfWidth;
+    const pad = new THREE.BoxGeometry(0.02, 0.012, 0.09);
+    pad.translate(s * (hw + 0.012), -0.2, -1.5);
+    engine.push(tint(pad, 0x3c3d3f, 0.7, 0.4));
+    engine.push(tint(tube(V(s * (hw - 0.01), -0.19, -1.53), V(s * (hw + 0.018), -0.205, -1.5), 0.006, 0.006, 6), 0x9ea0a2, 0.35, 0.8));
+    const handle = new THREE.TorusGeometry(0.045, 0.006, 6, 14, Math.PI);
+    handle.rotateY(Math.PI / 2);
+    handle.rotateX(-Math.PI / 2);
+    handle.translate(s * (hw - 0.03), 0.17, -1.55);
+    engine.push(tint(handle, 0xb8babc, 0.3, 0.9));
+  }
   // Boarding steps behind each door.
   for (const s of [-1, 1]) {
     fuselageSection(0.42, sec);
@@ -148,9 +181,9 @@ function fuselageDetails(): THREE.BufferGeometry[] {
   }
   // Nav "cat whisker" antenna on the fin.
   for (const s of [-1, 1]) {
-    out.push(tint(tube(V(s * 0.02, 1.16, 5.12), V(s * 0.32, 1.26, 5.3), 0.004, 0.003, 6), 0x1c1c1c, 0.6, 0.3));
+    tail.push(tint(tube(V(s * 0.02, 1.16, 5.12), V(s * 0.32, 1.26, 5.3), 0.004, 0.003, 6), 0x1c1c1c, 0.6, 0.3));
   }
-  return out;
+  return { fuselage: out, engine, tail };
 }
 
 export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): AircraftModel {
@@ -173,31 +206,77 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     return m;
   };
 
-  // Fuselage, glass, cabin shell.
-  const fus = buildFuselage(quality);
-  const skin = shadowed(new THREE.Mesh(fus.skin, mats.skin));
-  skin.name = PART.fuselage;
-  exterior.add(skin);
-  const glass = new THREE.Mesh(fus.glass, mats.glass);
-  glass.name = PART.glass;
-  glass.renderOrder = 1;
-  exterior.add(glass);
+  // Break-up part containers (identity transforms; only their children are ever animated).
+  const partGroup = (name: string) => {
+    const g = new THREE.Group();
+    g.name = `part.${name}`;
+    exterior.add(g);
+    return g;
+  };
+  const P = {
+    fuselage: partGroup('fuselage'),
+    engine: partGroup('engine'),
+    prop: partGroup('prop'),
+    leftWing: partGroup('leftWing'),
+    rightWing: partGroup('rightWing'),
+    tail: partGroup('tail'),
+    leftDoor: partGroup('leftDoor'),
+    rightDoor: partGroup('rightDoor'),
+  };
 
-  // Wing.
+  // Fuselage skin, split by where it goes in a crash: cabin + tailcone, cowling (ahead of the
+  // firewall), and the two cabin doors (inside the painted door outline). Same material, same
+  // UVs, so the pieces are seamless while attached.
+  const fus = buildFuselage(quality);
+  const doorOf = (x: number, y: number, z: number) => (Math.abs(x) > 0.25 && doorOutlineDistance(z, y) < 0 ? (x < 0 ? 0 : 1) : -1);
+  const skinParts = splitByTriangles(fus.skin, 4, (x, y, z) => {
+    if (z < WINDSHIELD_BASE_Z) return 1;
+    const d = doorOf(x, y, z);
+    return d < 0 ? 0 : 2 + d;
+  });
+  fus.skin.dispose();
+  const skinMesh = (g: THREE.BufferGeometry | null, name: string, parent: THREE.Group) => {
+    const m = shadowed(new THREE.Mesh(g ?? new THREE.BufferGeometry(), mats.skin));
+    m.name = name;
+    parent.add(m);
+    return m;
+  };
+  const skin = skinMesh(skinParts[0], PART.fuselage, P.fuselage);
+  const cowl = skinMesh(skinParts[1], PART.cowl, P.engine);
+  const doorSkins = [skinMesh(skinParts[2], PART.doorLeft, P.leftDoor), skinMesh(skinParts[3], PART.doorRight, P.rightDoor)];
+  const glassParts = splitByTriangles(fus.glass, 3, (x, y, z) => 1 + doorOf(x, y, z));
+  fus.glass.dispose();
+  const glassMesh = (g: THREE.BufferGeometry | null, name: string, parent: THREE.Group) => {
+    const m = new THREE.Mesh(g ?? new THREE.BufferGeometry(), mats.glass);
+    m.name = name;
+    m.renderOrder = 1;
+    parent.add(m);
+    return m;
+  };
+  const glass = glassMesh(glassParts[0], PART.glass, P.fuselage);
+  const glassMeshes = [glass, glassMesh(glassParts[1], 'glass.door.left', P.leftDoor), glassMesh(glassParts[2], 'glass.door.right', P.rightDoor)];
+
+  // Wing (each side with half the centre section and its strut), flaps and ailerons.
   const wing = buildWing(quality);
-  const wingMesh = shadowed(new THREE.Mesh(wing.paint, mats.paint));
-  wingMesh.name = PART.wing;
-  exterior.add(wingMesh);
+  const wingMeshes = [
+    shadowed(new THREE.Mesh(wing.paint.left, mats.paint)),
+    shadowed(new THREE.Mesh(wing.paint.right, mats.paint)),
+  ];
+  wingMeshes[0].name = PART.wingLeft;
+  wingMeshes[1].name = PART.wingRight;
+  P.leftWing.add(wingMeshes[0]);
+  P.rightWing.add(wingMeshes[1]);
+  const sideGroup = (side: number) => (side < 0 ? P.leftWing : P.rightWing);
   const flapRig = wing.flaps.map((f) => {
     const h = hingedPivot(f.side < 0 ? PART.flapLeft : PART.flapRight, f.position, f.quaternion);
     h.rot.add(shadowed(new THREE.Mesh(f.geometry, mats.paint)));
-    exterior.add(h.pivot);
+    sideGroup(f.side).add(h.pivot);
     return h;
   });
   const aileronRig = wing.ailerons.map((a) => {
     const h = hingedPivot(a.side < 0 ? PART.aileronLeft : PART.aileronRight, a.position, a.quaternion);
     h.rot.add(shadowed(new THREE.Mesh(a.geometry, mats.paint)));
-    exterior.add(h.pivot);
+    sideGroup(a.side).add(h.pivot);
     return h;
   });
 
@@ -205,7 +284,7 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const tail = buildTail(quality);
   const tailplane = new THREE.Group();
   tailplane.name = PART.tailplane;
-  exterior.add(tailplane);
+  P.tail.add(tailplane);
   tailplane.add(shadowed(new THREE.Mesh(tail.stab, mats.paint)));
   const elev = hingedPivot(PART.elevator, tail.elevator.position, new THREE.Quaternion());
   elev.rot.add(shadowed(new THREE.Mesh(tail.elevator.geometry, mats.paint)));
@@ -216,7 +295,7 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
 
   const finGroup = new THREE.Group();
   finGroup.name = PART.fin;
-  exterior.add(finGroup);
+  P.tail.add(finGroup);
   const finMesh = shadowed(new THREE.Mesh(tail.fin, mats.fin));
   finGroup.add(finMesh);
   const rud = hingedPivot(PART.rudder, tail.rudder.position, tail.rudder.quaternion);
@@ -225,9 +304,9 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
 
   // Propeller.
   const prop = buildProp(mats, quality);
-  exterior.add(prop.hub);
+  P.prop.add(prop.hub);
 
-  // Gear, and the well liners behind the belly openings.
+  // Gear (nose and each main leg in its own container), and the well liners behind the belly openings.
   const gear = buildGear(mats, quality);
   exterior.add(gear.group);
   const wellMat = createPartsMaterial('ac-wells');
@@ -236,16 +315,31 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const wells = new THREE.Mesh(buildWells(quality), wellMat);
   wells.name = 'gearWells';
   wells.receiveShadow = true;
-  exterior.add(wells);
+  P.fuselage.add(wells);
 
-  // Static details (one merged mesh): wing details, fuselage details, beacon pod.
+  // Static details, one merged mesh per part: cabin (antennas, steps), engine (inlets, cowl flaps,
+  // exhaust), tail (fin antennas, beacon pod), each wing (fuel cap, pitot, strut cuffs).
   const bb = tail.beaconBase;
   const pod = new THREE.SphereGeometry(1, 16, 10);
   pod.scale(0.035, 0.03, 0.09);
   pod.translate(bb.x, bb.y + 0.012, bb.z);
-  const details = shadowed(new THREE.Mesh(merge([...wing.parts, ...fuselageDetails(), tint(pod, 0xf0f0ec, 0.3, 0)]), mats.parts));
-  details.name = 'details';
-  exterior.add(details);
+  const fd = fuselageDetails();
+  const detailMesh = (name: string, list: THREE.BufferGeometry[], parent: THREE.Group) => {
+    const m = shadowed(new THREE.Mesh(merge(list), mats.parts));
+    m.name = name;
+    parent.add(m);
+    return m;
+  };
+  const details = detailMesh('details', fd.fuselage, P.fuselage);
+  const detailMeshes = [
+    details,
+    detailMesh('details.engine', fd.engine, P.engine),
+    detailMesh('details.tail', [...fd.tail, tint(pod, 0xf0f0ec, 0.3, 0)], P.tail),
+    detailMesh('details.wing.left', wing.parts.left, P.leftWing),
+    detailMesh('details.wing.right', wing.parts.right, P.rightWing),
+  ];
+  // Inlets, cuffs, pitot, caps and fin whiskers are too small to cast a visible shadow.
+  for (const m of detailMeshes.slice(1)) m.castShadow = false;
 
   // ── Lights ────────────────────────────────────────────────────────────────
   const lensGeo = (pos: THREE.Vector3, sx: number, sy: number, sz: number, hex: number) => {
@@ -290,7 +384,7 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   };
   const lampMesh = new THREE.Mesh(merge([tint(lampDisc(wing.lamps.landing), 0xffffff, 0.2), tint(lampDisc(wing.lamps.taxi), 0xffffff, 0.2)]), mats.lamp);
   lampMesh.name = 'landingLamps';
-  exterior.add(lampMesh);
+  P.leftWing.add(lampMesh);
 
   // Glow sprites for every light in one Points draw.
   const glowPos = [
@@ -359,7 +453,29 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     }
   }
   const cockpit = buildCockpit(mats, fus.cabin, panelTex, interiorParts);
-  exterior.add(cockpit.group);
+  P.fuselage.add(cockpit.group);
+
+  // Cabin fill light, following the scene's sun (found once per scene, updated every frame).
+  const cabinFill = { value: new THREE.Color(0, 0, 0) };
+  addCabinFill(mats.cabin, cabinFill);
+  addCabinFill(interiorParts, cabinFill);
+  let fillScene: THREE.Object3D | null = null;
+  let fillSun: THREE.DirectionalLight | null = null;
+  const shell = cockpit.group.getObjectByName('cabinShell');
+  if (shell) {
+    shell.onBeforeRender = (_r, scene) => {
+      if (scene !== fillScene) {
+        fillScene = scene;
+        fillSun = null;
+        scene.traverse((o) => {
+          if (!fillSun && (o as THREE.DirectionalLight).isDirectionalLight) fillSun = o as THREE.DirectionalLight;
+        });
+      }
+      const sun = fillSun as THREE.DirectionalLight | null;
+      if (sun) cabinFill.value.copy(sun.color).multiplyScalar(sun.intensity * CONFIG.aircraft.model.cabinFill);
+      else cabinFill.value.setRGB(0, 0, 0);
+    };
+  }
 
   let drawer: PanelDrawer = drawPlaceholderPanel;
   const rest = createRestReadings();
@@ -386,13 +502,9 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   ].map(([o, m]) => ({ o: o as THREE.Object3D, p: (o as THREE.Object3D).position.clone(), q: (o as THREE.Object3D).quaternion.clone(), m: m as THREE.Matrix4 }));
   const hubRest = { p: prop.hub.position.clone(), q: prop.hub.quaternion.clone() };
   const hubWreck = { p: deformWreckPoint(hubRest.p.clone(), new THREE.Vector3()), q: new THREE.Quaternion().setFromEuler(new THREE.Euler(0.17, 0.07, 0.12)) };
-  const swaps = [
-    { mesh: skin, intact: skin.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
-    { mesh: wingMesh, intact: wingMesh.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
-    { mesh: details, intact: details.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
-    { mesh: finMesh, intact: finMesh.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint },
-    { mesh: prop.blades, intact: prop.blades.geometry, wreck: null as THREE.BufferGeometry | null, fn: bendBladePoint },
-  ];
+  const swaps = [skin, cowl, ...doorSkins, ...wingMeshes, ...detailMeshes, finMesh]
+    .map((mesh) => ({ mesh, intact: mesh.geometry, wreck: null as THREE.BufferGeometry | null, fn: deformWreckPoint }))
+    .concat([{ mesh: prop.blades, intact: prop.blades.geometry, wreck: null as THREE.BufferGeometry | null, fn: bendBladePoint }]);
   let wrecked = false;
   const _wm = new THREE.Matrix4();
   const _ws = new THREE.Vector3();
@@ -413,7 +525,7 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     }
     prop.hub.position.copy(on ? hubWreck.p : hubRest.p);
     prop.hub.quaternion.copy(on ? hubWreck.q : hubRest.q);
-    glass.visible = !on;
+    for (const g of glassMeshes) g.visible = !on;
     glows.visible = !on;
     strobeMesh.visible = !on;
   }
@@ -506,8 +618,11 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     if (v.cameraMode !== lastMode) {
       lastMode = v.cameraMode;
       for (const d of cockpit.details) d.visible = inCockpit;
+      // From the seat the gear and wells are always hidden by the doors and cowling: skip them.
+      gear.group.visible = !inCockpit;
+      wells.visible = !inCockpit;
       mats.glass.opacity = inCockpit ? 0.1 : 0.3;
-      mats.glass.envMapIntensity = inCockpit ? 0.35 : 1.2;
+      mats.glass.envMapIntensity = inCockpit ? 0.6 : 1.2;
       const tintColor = inCockpit ? fullColor : dimInterior;
       if (textures) mats.cabin.color.copy(tintColor);
       else mats.cabin.color.copy(cabinPlain).multiply(tintColor);
@@ -538,6 +653,21 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     0,
   );
 
+  // ── Crash break-up ────────────────────────────────────────────────────────
+  const breakup = createBreakupRig([
+    { name: 'fuselage', object: P.fuselage, mass: 430 },
+    { name: 'engine', object: P.engine, mass: 160, burning: true },
+    { name: 'prop', object: P.prop, mass: 30 },
+    { name: 'leftWing', object: P.leftWing, mass: 110, burning: true },
+    { name: 'rightWing', object: P.rightWing, mass: 110, burning: true },
+    { name: 'tail', object: P.tail, mass: 40 },
+    { name: 'noseGear', object: gear.nose, mass: 14 },
+    { name: 'leftMainGear', object: gear.mainLeft, mass: 22 },
+    { name: 'rightMainGear', object: gear.mainRight, mass: 22 },
+    { name: 'leftDoor', object: P.leftDoor, mass: 12 },
+    { name: 'rightDoor', object: P.rightDoor, mass: 12 },
+  ]);
+
   return {
     root,
     setVisualState,
@@ -546,15 +676,30 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
       panelClock = Infinity;
     },
     landingLight,
+    getBreakupParts: () => breakup.parts,
+    restoreBreakupParts: () => breakup.restore(),
     dispose() {
-      root.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (m.geometry) m.geometry.dispose();
-      });
+      const geos = new Set<THREE.BufferGeometry>();
+      const collect = (o: THREE.Object3D) =>
+        o.traverse((c) => {
+          const m = c as THREE.Mesh;
+          if (m.geometry) geos.add(m.geometry);
+        });
+      collect(root);
+      for (const p of breakup.parts) {
+        collect(p.object);
+        if (!root.getObjectById(p.object.id)) p.object.removeFromParent();
+      }
+      for (const sw of swaps) {
+        geos.add(sw.intact);
+        if (sw.wreck) geos.add(sw.wreck);
+      }
+      for (const g of geos) g.dispose();
       for (const m of mats.all) m.dispose();
       if (textures) {
         textures.map.dispose();
         textures.orm.dispose();
+        textures.normal.dispose();
         textures.cabin.dispose();
         textures.fin.dispose();
       }

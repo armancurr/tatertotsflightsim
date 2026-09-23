@@ -13,6 +13,7 @@ import { merge, tint, type AircraftMaterials } from './materials';
 import { PANEL, PANEL_BOTTOM_Y } from './panel';
 import { fuselageSection, monotoneCurve, type SectionParams } from './shape';
 import { WELL, sectionHalfWidthAt } from './gearKinematics';
+import { compass, fuelSelector, headliner, lowerPanel, seat, sunVisors, visorHinges } from './interior';
 
 export interface CockpitRig {
   group: THREE.Group;
@@ -50,6 +51,25 @@ function rbox(w: number, h: number, d: number, r: number, x: number, y: number, 
   return g;
 }
 
+/** Front seats: cushion top, seat-back placement and recline (+ = top leans aft). */
+export const COCKPIT = {
+  seatX: 0.3,
+  cushionY: -0.25,
+  cushionTopY: -0.19,
+  cushionZ: -0.32,
+  backY: 0.16,
+  backZ: 0.12,
+  backHeight: 0.66,
+  backDepth: 0.1,
+  reclineRad: 0.2,
+  /** z of the seat back's front face at height y. */
+  seatBackFrontZ(y: number): number {
+    const a = COCKPIT.reclineRad;
+    const ly = (y - COCKPIT.backY + (COCKPIT.backDepth / 2) * Math.sin(a)) / Math.cos(a);
+    return COCKPIT.backZ + ly * Math.sin(a) - (COCKPIT.backDepth / 2) * Math.cos(a);
+  },
+};
+
 const _sec: SectionParams = { top: 0, bottom: 0, halfWidth: 0, widthY: 0, nTop: 2, nBot: 2 };
 /** Height of the cabin's inner upper surface above (x, z). */
 function innerTopY(x: number, z: number, inset: number): number {
@@ -59,6 +79,21 @@ function innerTopY(x: number, z: number, inset: number): number {
   return _sec.widthY + (_sec.top - inset - _sec.widthY) * Math.pow(1 - Math.pow(r, _sec.nTop), 1 / _sec.nTop);
 }
 
+const LIP_Z = PANEL.z + 0.012;
+const LIP_Y = PANEL.topY + 0.022;
+const glareProfile = monotoneCurve([
+  [-1.25, 0.245],
+  [-1.1, 0.283],
+  [-0.95, 0.318],
+  [-0.8, LIP_Y - 0.012],
+  [LIP_Z, LIP_Y],
+]);
+
+/** Top of the glareshield at (x, z): the shroud from the panel lip down to the windshield base. */
+export function glareshieldTopY(x: number, z: number): number {
+  return Math.min(glareProfile(z) - 0.03 * (x / 0.5) ** 2, innerTopY(x, z, 0.047));
+}
+
 /**
  * Glareshield: padded shroud from the panel lip down to the windshield base,
  * kept under the pilot's sightline to the cowling (eye → windshield base).
@@ -66,23 +101,14 @@ function innerTopY(x: number, z: number, inset: number): number {
 function glareshield(): THREE.BufferGeometry {
   const rings: number[][] = [];
   const nx = 24;
-  const lipZ = PANEL.z + 0.012;
-  const lipY = PANEL.topY + 0.022;
-  const profile = monotoneCurve([
-    [-1.25, 0.245],
-    [-1.1, 0.283],
-    [-0.95, 0.318],
-    [-0.8, lipY - 0.012],
-    [lipZ, lipY],
-  ]);
+  const lipZ = LIP_Z;
   const zs = [-1.24, -1.15, -1.05, -0.95, -0.85, -0.78, lipZ - 0.012, lipZ - 0.004, lipZ, lipZ + 0.004];
   const drops = [0, 0, 0, 0, 0, 0, 0, 0.006, 0.018, 0.034];
   zs.forEach((z, i) => {
     const ring: number[] = [];
     for (let j = 0; j <= nx; j++) {
       const x = -0.5 + (j / nx) * 1.0;
-      const y = Math.min(profile(z) - 0.03 * (x / 0.5) ** 2, innerTopY(x, z, 0.047));
-      ring.push(x, y - drops[i], z);
+      ring.push(x, glareshieldTopY(x, z) - drops[i], z);
     }
     rings.push(ring);
   });
@@ -196,25 +222,29 @@ export function buildCockpit(
     tint(box(0.15, PANEL_BOTTOM_Y - WELL.nose.roofY, 0.2, 0, (PANEL_BOTTOM_Y + WELL.nose.roofY) / 2, PANEL.z - 0.02), 0x242527, 0.85, 0),
     // Floor / carpet: footwells either side of the nose-well hump, then full width to the front seats.
     ...floor(),
-    // Front seats: cushion + back + headrest-less C172 seat (inner edges clear of the nose well).
-    ...[-0.3, 0.3].flatMap((x) => [
-      tint(rbox(0.38, 0.12, 0.5, 0.04, x, -0.25, -0.32), seatCloth, 0.95, 0),
-      tint(rbox(0.4, 0.66, 0.1, 0.04, x, 0.16, 0.12, new THREE.Euler(-0.2, 0, 0)), seatCloth, 0.95, 0),
-      tint(box(0.03, 0.05, 0.4, x - 0.16, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
-      tint(box(0.03, 0.05, 0.4, x + 0.16, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
-    ]),
+    // Front seats: pleated fabric inserts in vinyl frames, belts; rails under the cushions.
+    ...[-1, 1].flatMap((side) => {
+      const x = side * COCKPIT.seatX;
+      return [
+        ...seat({ x, cushionY: COCKPIT.cushionY, cushionZ: COCKPIT.cushionZ, backY: COCKPIT.backY, backZ: COCKPIT.backZ, backHeight: COCKPIT.backHeight, reclineRad: COCKPIT.reclineRad, outboard: side as -1 | 1 }),
+        tint(box(0.03, 0.05, 0.4, x - 0.16, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
+        tint(box(0.03, 0.05, 0.4, x + 0.16, -0.33, -0.3), 0x6d6f72, 0.4, 0.8),
+      ];
+    }),
     // Rear bench (sits above the main gear leg slots).
     tint(rbox(0.9, 0.12, 0.46, 0.04, 0, -0.19, 0.72), seatCloth, 0.95, 0),
-    tint(rbox(0.9, 0.58, 0.1, 0.04, 0, 0.16, 1.02, new THREE.Euler(-0.18, 0, 0)), seatCloth, 0.95, 0),
+    tint(rbox(0.9, 0.58, 0.1, 0.04, 0, 0.16, 1.02, new THREE.Euler(0.18, 0, 0)), seatCloth, 0.95, 0),
     // Door armrests and handles.
     ...[-1, 1].flatMap((s) => [
       tint(rbox(0.06, 0.05, 0.62, 0.015, s * 0.49, 0.12, -0.05), 0x5b554d, 0.8, 0),
       tint(box(0.02, 0.02, 0.1, s * 0.5, 0.2, 0.18), 0x9a9c9e, 0.35, 0.8),
     ]),
-    // Wet compass hanging from the windshield frame.
-    tint(rbox(0.08, 0.065, 0.07, 0.012, 0.0, 0.765, -0.6), 0x111213, 0.5, 0),
-    tint(box(0.05, 0.03, 0.004, 0.0, 0.765, -0.563), 0xd8d4c0, 0.3, 0),
-    tint(tube(V(0, 0.795, -0.6), V(0, 0.84, -0.62), 0.008, 8), 0x111213, 0.5, 0),
+    // Wet compass, fuel selector, lower-panel switches/breakers/placards, headliner, visor hinges.
+    ...compass(),
+    ...fuelSelector(),
+    ...lowerPanel(),
+    ...headliner(),
+    ...visorHinges(),
     // Prop (blue) and mixture (red) controls, pushed in.
     tint(tube(V(0.045, KNOB_Y, PANEL.z), V(0.045, KNOB_Y, PANEL.z + 0.03), 0.006), 0xc8cacc, 0.25, 0.9),
     tint(tube(V(0.045, KNOB_Y, PANEL.z + 0.03), V(0.045, KNOB_Y, PANEL.z + 0.055), 0.018, 16), 0x1e3f9a, 0.45, 0),
@@ -229,6 +259,24 @@ export function buildCockpit(
   const furniture = new THREE.Mesh(merge(staticParts), interiorParts);
   furniture.name = 'cabinFurniture';
   group.add(furniture);
+
+  // Sun visors: smoky tinted plastic (only worth drawing from the seat).
+  const visorMat = new THREE.MeshPhysicalMaterial({
+    color: 0x2a2622,
+    roughness: 0.18,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    name: 'ac.visor',
+  });
+  mats.all.push(visorMat);
+  const visors = new THREE.Mesh(sunVisors(), visorMat);
+  visors.name = 'sunVisors';
+  visors.renderOrder = 2;
+  group.add(visors);
+  details.push(visors);
 
   // Yokes.
   const yokeGeo = yokeGeometry();
