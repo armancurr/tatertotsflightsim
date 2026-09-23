@@ -42,7 +42,8 @@ describe('traffic renderer (functional, headless)', () => {
       return [path[k][1] + (path[k + 1][1] - path[k][1]) * f, path[k][2] + (path[k + 1][2] - path[k][2]) * f];
     };
     const batch = cars.group.children.find((o) => (o as THREE.BatchedMesh).isBatchedMesh) as THREE.BatchedMesh;
-    const shadows = cars.group.children.find((o) => (o as THREE.InstancedMesh).isInstancedMesh) as THREE.InstancedMesh;
+    const far = cars.group.getObjectByName('cars-far') as THREE.InstancedMesh;
+    const shadows = cars.group.getObjectByName('car-shadows') as THREE.InstancedMesh;
     const glows = cars.group.children.find((o) => (o as THREE.Points).isPoints) as THREE.Points;
     const m = new THREE.Matrix4();
     const dt = 1 / 15;
@@ -60,8 +61,8 @@ describe('traffic renderer (functional, headless)', () => {
       if (f % 45 !== 0) continue;
       checks++;
       const st = cars.stats();
-      // draw calls: the batch, the shadows, the glows — each one call when it draws anything
-      const calls = (st.drawn > 0 ? 1 : 0) + (shadows.count > 0 ? 1 : 0) + (glows.visible ? 1 : 0);
+      // draw calls: near batch, far instances, shadows, glows — each one call when it draws anything
+      const calls = (st.near > 0 ? 1 : 0) + (far.count > 0 ? 1 : 0) + (shadows.count > 0 ? 1 : 0) + (glows.visible ? 1 : 0);
       expect(calls).toBe(st.drawCalls);
       maxCalls = Math.max(maxCalls, calls);
       if (dusk && st.glows > 0) sawGlows = true;
@@ -75,7 +76,13 @@ describe('traffic renderer (functional, headless)', () => {
         for (const e of m.elements) expect(Number.isFinite(e)).toBe(true);
         if (i < sim.cap) expect(sim.alive[i]).toBe(1);
       }
-      expect(visible).toBe(st.drawn);
+      expect(visible).toBe(st.near);
+      expect(far.count).toBe(st.far);
+      expect(st.near + st.far).toBe(st.drawn);
+      for (let k = 0; k < far.count; k++) {
+        far.getMatrixAt(k, m);
+        for (const e of m.elements) expect(Number.isFinite(e)).toBe(true);
+      }
       expect(shadows.count).toBeLessThanOrEqual(shadows.instanceMatrix.count);
     }
     expect(checks).toBeGreaterThan(100);

@@ -1,19 +1,24 @@
 /**
  * Road traffic renderer: moving vehicles (sim.ts on the lane graph of the
- * active roads), parked cars (parking.ts), contact shadows and dusk lamp
- * glows — three draw calls in all:
+ * active roads), parked cars (parking.ts: kerbs and car parks), contact
+ * shadows and dusk lamp glows — four draw calls at most:
  *
- *  1. one BatchedMesh for every vehicle body, trailer and parked car (10
- *     models × 2 levels of detail, per-instance paint/odometer/steering/lights
- *     in a data texture; material.ts),
- *  2. one InstancedMesh of contact shadows,
- *  3. one Points layer of lamp glows (only while the lamps are on).
+ *  1. near vehicles (≤ nearDistance): one BatchedMesh of the detailed models
+ *     (per-instance paint, odometer → spinning wheels, steering, lamps in a
+ *     data texture; material.ts). Only the few near cars are in it, so its
+ *     multi-draw stays short;
+ *  2. far vehicles: ONE instanced draw of a parametric box car (farcar.ts);
+ *  3. contact shadows (instanced quads, multiplied);
+ *  4. lamp glows (points, only while the lamps are on).
  *
  * The lane graph is built time-sliced (~4 ms per frame) once the roads' lane
  * data arrives from their worker. Vehicles sit on the exact rendered road
- * surface (`RoadSurface.height`, the terrain + road lift where a chunk is not
- * built yet), pitched between their axles and rolled with the road's camber;
- * the shader applies the same LOD lift + depth pull as the road.
+ * surface (`RoadSurface.height`, or the terrain + road lift where a chunk is
+ * not built yet), pitched between their axles and rolled with the road's
+ * camber; both materials apply the road's LOD lift + depth pull. Parked cars
+ * are static: placed once, their far instances and shadows rebuilt only when
+ * the set, their level of detail or the sun changes. Vehicles beyond 800 m
+ * move every other frame. No allocation per frame.
  */
 import * as THREE from 'three';
 import { CONFIG } from '../../config';
@@ -25,14 +30,15 @@ import { lodLiftArray } from '../roads/depth';
 import { LaneGraph, KIND } from './lanes';
 import { TrafficSim, type PathPoint, type SimCamera, type VehiclePose } from './sim';
 import { ParkingField, type ParkedCar } from './parking';
-import { SPECS, SEMI, VT, MODEL_COUNT, MODEL_TRAILER, TRAILER_WHEELBASE as TRAILER_WB } from './specs';
+import { SPECS, SEMI, VT, MODEL_COUNT, MODEL_TRAILER, TRAILER_WHEELBASE } from './specs';
 import { buildVehicleGeometry, lampAnchors } from './vehicles';
 import { createCarMaterial, createCarUniforms, createShadowMaterial, createGlowMaterial, FLAG_HEAD, FLAG_BRAKE, FLAG_IND_L, FLAG_IND_R } from './material';
+import { createFarMaterial, farTemplate } from './farcar';
 import { paintFinish, paintRGB } from './paint';
 
 export { LaneGraph } from './lanes';
 export { TrafficSim } from './sim';
-export { ParkingField, parkedSlots } from './parking';
+export { ParkingField, parkedSlots, carParkSlots } from './parking';
 export { buildVehicleGeometry } from './vehicles';
 export { SPECS, VT } from './specs';
 
@@ -55,6 +61,7 @@ export interface CarsStats {
   parked: number;
   drawn: number;
   near: number;
+  far: number;
   shadows: number;
   glows: number;
   drawCalls: number;
@@ -76,7 +83,13 @@ const TEX_W = 256;
 /** Lamp glows are drawn within this distance (m²); beyond HALF_RATE vehicles update every other frame. */
 const GLOW_D2 = 2200 * 2200;
 const HALF_RATE_D2 = 800 * 800;
+/** Parked cars switch to the detailed model closer than moving ones (they are many and static). */
+const PARKED_NEAR = 0.6;
 const LIFT_BY_KIND = lodLiftArray();
+const KIND_NAMES = ['highway', 'road', 'access', 'lane', 'street', 'drive'] as const;
+const TRAILER_HALF = (SEMI.trailerRear - SEMI.trailerFront) / 2;
+/** Trailer box centre, back from the trailer model origin (midway kingpin–axle). */
+const TRAILER_BACK = TRAILER_HALF - (SEMI.kingpin - SEMI.trailerFront) - TRAILER_WHEELBASE / 2;
 
 export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
   const cfg = opts.cfg ?? CONFIG.world.cars;
@@ -86,17 +99,13 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
   const TRAILER0 = cap;
   const PARK0 = cap * 2;
 
-  // ── geometry ──
-  const geos: THREE.BufferGeometry[][] = [];
+  // ── near: the detailed models in one BatchedMesh ──
+  const geos = Array.from({ length: MODEL_COUNT }, (_, m) => buildVehicleGeometry(m, 0));
   let verts = 0;
   let idx = 0;
-  for (let m = 0; m < MODEL_COUNT; m++) {
-    const pair = [buildVehicleGeometry(m, 0), buildVehicleGeometry(m, 1)];
-    for (const g of pair) {
-      verts += g.getAttribute('position').count;
-      idx += g.index!.count;
-    }
-    geos.push(pair);
+  for (const g of geos) {
+    verts += g.getAttribute('position').count;
+    idx += g.index!.count;
   }
   const texH = Math.ceil((maxInst * 2) / TEX_W);
   const data = new Float32Array(TEX_W * texH * 4);
@@ -105,22 +114,37 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
   const U = createCarUniforms(dataTex);
   const material = createCarMaterial(U);
   const batch = new THREE.BatchedMesh(maxInst, verts, idx, material);
-  batch.name = 'cars';
+  batch.name = 'cars-near';
   batch.sortObjects = false;
   batch.perObjectFrustumCulled = true;
   batch.frustumCulled = false;
   batch.castShadow = false;
   batch.receiveShadow = true;
-  const geoId: number[][] = geos.map((pair) => pair.map((g) => batch.addGeometry(g)));
+  const geoId = geos.map((g) => batch.addGeometry(g));
   for (let k = 0; k < maxInst; k++) {
-    batch.addInstance(geoId[0][1]);
+    batch.addInstance(geoId[0]);
     batch.setVisibleAt(k, false);
   }
-  const instGeo = new Int32Array(maxInst).fill(geoId[0][1]);
+  const instGeo = new Int32Array(maxInst).fill(geoId[0]);
   const instVis = new Uint8Array(maxInst);
   const instSerial = new Float64Array(maxInst).fill(-1);
 
-  // contact shadows
+  // ── far: one instanced parametric car ──
+  const farGeo = farTemplate();
+  const aInst = new THREE.InstancedBufferAttribute(new Float32Array(maxInst * 4), 4);
+  aInst.setUsage(THREE.DynamicDrawUsage);
+  farGeo.setAttribute('aInst', aInst);
+  const farMat = createFarMaterial(U);
+  const far = new THREE.InstancedMesh(farGeo, farMat, maxInst);
+  far.name = 'cars-far';
+  far.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(maxInst * 3), 3);
+  far.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  far.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  far.frustumCulled = false;
+  far.count = 0;
+  far.receiveShadow = true;
+
+  // ── contact shadows ──
   const quad = new THREE.PlaneGeometry(1, 1);
   quad.rotateX(-Math.PI / 2);
   const shadowCap = maxInst;
@@ -138,7 +162,7 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
   shadows.renderOrder = 1;
   shadows.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
-  // lamp glows
+  // ── lamp glows ──
   const glowCap = cap * 4 + 8;
   const glowPos = new Float32Array(glowCap * 3);
   const glowAttr = new Float32Array(glowCap * 4);
@@ -155,7 +179,7 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
 
   const group = new THREE.Group();
   group.name = 'cars';
-  group.add(batch, shadows, glows);
+  group.add(batch, far, shadows, glows);
   scene.add(group);
 
   // ── state ──
@@ -164,28 +188,13 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
   let sim: TrafficSim | null = null;
   let parking: ParkingField | null = null;
   let surfaceOf: Roads['surface'] | null = null;
+  let connH: Float32Array | null = null;
   let tau = 0;
   let time = 0;
   let lights = 0;
-  let parkX = Infinity;
-  let parkZ = Infinity;
-  let parkCursor = 0;
-  let lodPass = false;
-  let lodX = Infinity;
-  let lodZ = Infinity;
-  let lodY = Infinity;
-  let parkShadowDirty = true;
-  let nParkShadow = 0;
-  let parkedShown = 0;
-  const lastSun = new THREE.Vector3();
-  const parkInst = new Map<number, number>();
-  const parkFree: number[] = [];
-  for (let k = cfg.maxParked - 1; k >= 0; k--) parkFree.push(PARK0 + k);
-  const parkCar: (ParkedCar | null)[] = new Array(cfg.maxParked).fill(null);
-  const parkPending: number[] = [];
-  const parkY = new Float32Array(cfg.maxParked * 3); // y, pitch, provisional
-  let connH: Float32Array | null = null;
+  let frameNo = 0;
   const cam: SimCamera = { x: 0, z: 0, fx: 0, fz: -1 };
+  const camPos = new THREE.Vector3();
   const pose: VehiclePose = TrafficSim.newPose();
   const tmpP: PathPoint = { x: 0, z: 0, hx: 0, hz: 1, piece: -1, s: 0, across: 0, conn: -1, frac: 0 };
   const m4 = new THREE.Matrix4();
@@ -193,20 +202,48 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
   const vX = new THREE.Vector3();
   const vY = new THREE.Vector3();
   const vZ = new THREE.Vector3();
-  const camPos = new THREE.Vector3();
+  const tmpColor = new THREE.Color();
+  const frustum = new THREE.Frustum();
+  const projView = new THREE.Matrix4();
+  const cullSphere = new THREE.Sphere();
+  // per slot (moving body / trailer / parked): last matrix (half-rate frames), linear paint + finish, flags + road kind
+  const mcache = new Float32Array(maxInst * 16);
+  const pcol = new Float32Array(maxInst * 4);
+  const fcache = new Float32Array(maxInst * 2);
+  // parked
+  let parkX = Infinity;
+  let parkZ = Infinity;
+  let parkCursor = 0;
+  let lodPass = false;
+  let lodX = Infinity;
+  let lodZ = Infinity;
+  let lodY = Infinity;
+  let parkDirty = true;
+  const parkInst = new Map<number, number>();
+  const parkFree: number[] = [];
+  for (let k = cfg.maxParked - 1; k >= 0; k--) parkFree.push(PARK0 + k);
+  const parkCar: (ParkedCar | null)[] = new Array(cfg.maxParked).fill(null);
+  const parkPending: number[] = [];
+  /** Per parked slot: y, pitch slope, state (0 placed, 1 waiting, 2 provisional height), near (1). */
+  const parkY = new Float32Array(cfg.maxParked * 4);
+  const lastSun = new THREE.Vector3();
+  // counts
+  let nShadow = 0;
+  let nParkShadow = 0;
+  let nFar = 0;
+  let nParkFar = 0;
+  let nGlowW = 0;
   let nDrawn = 0;
   let nNear = 0;
-  let nGlow = 0;
+  let parkedShown = 0;
+  let parkedNear = 0;
+  // this frame's sun (shadows)
+  let shadowD2 = 0;
+  let sunX = 0;
+  let sunZ = 1;
+  let castLen = 1;
 
-  /** Road surface height at a path point (as rendered, without the shader's LOD lift). */
-  const heightOf = (p: PathPoint): number => {
-    const g = graph!;
-    if (p.piece >= 0) return pieceHeight(p.piece, p.s, p.across, p.x, p.z);
-    const c = g.connectors[p.conn];
-    const h0 = connEnd(c.id, 0);
-    const h1 = connEnd(c.id, 1);
-    return h0 + (h1 - h0) * p.frac;
-  };
+  // ── heights ──
   const pieceHeight = (piece: number, s: number, across: number, x: number, z: number): number => {
     const g = graph!;
     const h = surfaceOf ? surfaceOf.height(piece, s, across, g.pWidth[piece] / 2) : NaN;
@@ -223,58 +260,99 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
     const u = end === 0 ? cc.inU : cc.outU;
     g.lanePoint(lane, u, tmpP);
     const piece = lane >> 1;
-    const s = g.laneS(lane, u);
-    const h = surfaceOf ? surfaceOf.height(piece, s, g.laneAcross[lane], g.pWidth[piece] / 2) : NaN;
+    const h = surfaceOf ? surfaceOf.height(piece, g.laneS(lane, u), g.laneAcross[lane], g.pWidth[piece] / 2) : NaN;
     if (h === h) {
       connH![k] = h;
       return h;
     }
     return opts.heightAt(tmpP.x, tmpP.z) + pavedLift(KIND_NAMES[g.pKind[piece]]);
   };
+  /** Road surface height at a path point (as rendered, without the shader's LOD lift). */
+  const heightOf = (p: PathPoint): number => {
+    if (p.piece >= 0) return pieceHeight(p.piece, p.s, p.across, p.x, p.z);
+    const h0 = connEnd(p.conn, 0);
+    const h1 = connEnd(p.conn, 1);
+    return h0 + (h1 - h0) * p.frac;
+  };
   const liftKindOf = (p: PathPoint): number => {
-    const g = graph!;
-    if (p.piece >= 0) return g.pKind[p.piece];
-    const c = g.connectors[p.conn];
+    if (p.piece >= 0) return graph!.pKind[p.piece];
+    const c = graph!.connectors[p.conn];
     return LIFT_BY_KIND[c.kindIn] >= LIFT_BY_KIND[c.kindOut] ? c.kindIn : c.kindOut;
   };
+  /** +1 on a lane that travels with increasing s (across is right of travel), −1 otherwise. */
+  const laneSign = (p: PathPoint): number => {
+    const g = graph!;
+    const k = g.segmentAt(p.piece, p.s);
+    return g.pnz[k] * p.hx - g.pnx[k] * p.hz >= 0 ? 1 : -1;
+  };
+  /** −1 left, +1 right, 0 none: the indicator for the turn the vehicle is about to make (or making). */
+  const turnSignal = (i: number): number => {
+    const s = sim!;
+    const g = graph!;
+    let c = s.conn[i];
+    if (c < 0) {
+      const k = s.next[i];
+      if (k < 0 || g.connectors[k].inU - s.u[i] > 45) return 0;
+      c = k;
+    }
+    const t = g.connectors[c].turn;
+    return t === 2 ? -1 : t;
+  };
 
-  const writeData = (inst: number, paint: number, odo: number, steer: number, flags: number, kind: number) => {
-    const o = inst * 8;
+  // ── instance writers ──
+  const setPaint = (slot: number, paint: number) => {
+    tmpColor.setHex(paintRGB(paint));
+    pcol[slot * 4] = tmpColor.r;
+    pcol[slot * 4 + 1] = tmpColor.g;
+    pcol[slot * 4 + 2] = tmpColor.b;
+    pcol[slot * 4 + 3] = paintFinish(paint);
+  };
+  /** Near instance data (paint from pcol, odometer, steering, flags, road kind). */
+  const writeData = (slot: number, odo: number, steer: number, flags: number, kind: number) => {
+    const o = slot * 8;
+    data[o] = pcol[slot * 4];
+    data[o + 1] = pcol[slot * 4 + 1];
+    data[o + 2] = pcol[slot * 4 + 2];
+    data[o + 3] = pcol[slot * 4 + 3];
     data[o + 4] = odo;
     data[o + 5] = steer;
     data[o + 6] = flags;
     data[o + 7] = kind;
-    if (paint >= 0) {
-      tmpColor.setHex(paintRGB(paint));
-      data[o] = tmpColor.r;
-      data[o + 1] = tmpColor.g;
-      data[o + 2] = tmpColor.b;
-      data[o + 3] = paintFinish(paint);
+  };
+  const show = (slot: number, geo: number) => {
+    if (instGeo[slot] !== geo) {
+      batch.setGeometryIdAt(slot, geo);
+      instGeo[slot] = geo;
+    }
+    if (!instVis[slot]) {
+      batch.setVisibleAt(slot, true);
+      instVis[slot] = 1;
     }
   };
-  const tmpColor = new THREE.Color();
-
-  const show = (inst: number, geo: number) => {
-    if (instGeo[inst] !== geo) {
-      batch.setGeometryIdAt(inst, geo);
-      instGeo[inst] = geo;
-    }
-    if (!instVis[inst]) {
-      batch.setVisibleAt(inst, true);
-      instVis[inst] = 1;
+  const hide = (slot: number) => {
+    if (instVis[slot]) {
+      batch.setVisibleAt(slot, false);
+      instVis[slot] = 0;
     }
   };
-  const hide = (inst: number) => {
-    if (instVis[inst]) {
-      batch.setVisibleAt(inst, false);
-      instVis[inst] = 0;
-    }
+  /** Appends a far instance of model m, placed by m4, with slot's paint. */
+  const addFar = (slot: number, m: number, kind: number) => {
+    if (nFar >= maxInst) return;
+    far.setMatrixAt(nFar, m4);
+    const c = far.instanceColor!.array as Float32Array;
+    c[nFar * 3] = pcol[slot * 4];
+    c[nFar * 3 + 1] = pcol[slot * 4 + 1];
+    c[nFar * 3 + 2] = pcol[slot * 4 + 2];
+    const a = aInst.array as Float32Array;
+    a[nFar * 4] = m;
+    a[nFar * 4 + 1] = kind;
+    a[nFar * 4 + 2] = pcol[slot * 4 + 3];
+    a[nFar * 4 + 3] = 0;
+    nFar++;
   };
-
-  /** Basis from a forward vector (with slope) and a right-side cross slope; writes m4. */
+  /** m4 = the model basis from a forward vector (with slope) and the road's cross slope to the right. */
   const compose = (x: number, y: number, z: number, fx: number, fy: number, fz: number, bank: number) => {
     vZ.set(-fx, -fy, -fz).normalize();
-    // right = heading rotated, tilted by the road's cross slope
     vX.set(-fz, 0, fx).normalize();
     vX.y = bank;
     vX.normalize();
@@ -285,16 +363,11 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
     m4.elements[13] = y;
     m4.elements[14] = z;
   };
-
-  let nShadow = 0;
-  const addShadow = (x: number, y: number, z: number, hx: number, hz: number, hl: number, hw: number, strength: number, kind: number, sunX: number, sunZ: number, len: number) => {
+  const addShadow = (x: number, y: number, z: number, hx: number, hz: number, hl: number, hw: number, kind: number, len: number) => {
     if (nShadow >= shadowCap) return;
-    // sun offset in the car frame (x right, z back)
-    const rx = -hz;
-    const rz = hx;
-    const ox = (sunX * rx + sunZ * rz) * len;
+    // the sun's offset in the car frame (x right, z back)
+    const ox = (sunX * -hz + sunZ * hx) * len;
     const oz = -(sunX * hx + sunZ * hz) * len;
-    // rotation about Y taking the model −Z to (hx, hz): columns X = (−hz, 0, hx), Z = (−hx, 0, −hz)
     const e = sm4.elements;
     e[0] = -hz;
     e[1] = 0;
@@ -316,40 +389,51 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
     D[o + 1] = hw;
     D[o + 2] = ox;
     D[o + 3] = oz;
-    M[o] = strength;
+    M[o] = 0.9;
     M[o + 1] = kind;
     M[o + 2] = 2 * hw + Math.abs(ox) + 1.4;
     M[o + 3] = 2 * hl + Math.abs(oz) + 1.4;
     nShadow++;
   };
-
-  /** Shadow and lamp glows of a model placed by m4 (matrix of the model origin; −Z column = back). */
+  const addGlow = (x: number, y: number, z: number, dx: number, dz: number, tail: boolean, intensity: number) => {
+    if (nGlowW >= glowCap) return;
+    glowPos[nGlowW * 3] = x;
+    glowPos[nGlowW * 3 + 1] = y;
+    glowPos[nGlowW * 3 + 2] = z;
+    glowAttr[nGlowW * 4] = dx;
+    glowAttr[nGlowW * 4 + 1] = dz;
+    glowAttr[nGlowW * 4 + 2] = tail ? 1 : 0;
+    glowAttr[nGlowW * 4 + 3] = intensity;
+    nGlowW++;
+  };
+  const anchors = Array.from({ length: MODEL_COUNT }, (_, m) => lampAnchors(m));
   const lampP = [0, 0, 0];
-  const extras = (m: number, flags: number, kind: number, d2: number, _fresh: boolean) => {
+  /** Model → world with the current m4 (x mirrored by side), into lampP. */
+  const lampWorld = (a: readonly number[], side: number) => {
+    const e = m4.elements;
+    const lx = a[0] * side;
+    lampP[0] = e[0] * lx + e[4] * a[1] + e[8] * a[2] + e[12];
+    lampP[1] = e[1] * lx + e[5] * a[1] + e[9] * a[2] + e[13];
+    lampP[2] = e[2] * lx + e[6] * a[1] + e[10] * a[2] + e[14];
+  };
+  /** Shadow and lamp glows of model m placed by m4 (origin on the ground midway between the axles; −Z column = back). */
+  const extras = (m: number, flags: number, kind: number, d2: number, glowsToo: boolean) => {
     const e = m4.elements;
     let hx = -e[8];
     let hz = -e[10];
     const hl0 = Math.hypot(hx, hz) || 1;
     hx /= hl0;
     hz /= hl0;
-    if (d2 < shadowD2Cur) {
-      if (m === MODEL_TRAILER) {
-        const tHalf = (SEMI.trailerRear - SEMI.trailerFront) / 2;
-        // model origin = midway kingpin–axle; the box centre lies back from it
-        const back = tHalf - (SEMI.kingpin - SEMI.trailerFront) - TRAILER_WB / 2;
-        addShadow(e[12] - hx * back, e[13], e[14] - hz * back, hx, hz, tHalf, SEMI.trailerWidth / 2, 0.9, kind, sunXCur, sunZCur, castLenCur * 2.4);
-      } else {
+    if (d2 < shadowD2) {
+      if (m === MODEL_TRAILER) addShadow(e[12] - hx * TRAILER_BACK, e[13], e[14] - hz * TRAILER_BACK, hx, hz, TRAILER_HALF, SEMI.trailerWidth / 2, kind, castLen * 2.4);
+      else {
         const sp = SPECS[m];
-        if (m === VT.semi) {
-          const off = sp.frontOverhang + sp.wheelbase / 2 - 3.15;
-          addShadow(e[12] + hx * off, e[13], e[14] + hz * off, hx, hz, 3.15, sp.width / 2, 0.9, kind, sunXCur, sunZCur, castLenCur * sp.height * 0.6);
-        } else {
-          const off = sp.frontOverhang - sp.length / 2 + sp.wheelbase / 2;
-          addShadow(e[12] + hx * off, e[13], e[14] + hz * off, hx, hz, sp.length / 2, sp.width / 2, 0.9, kind, sunXCur, sunZCur, castLenCur * sp.height * 0.6);
-        }
+        const hl = m === VT.semi ? 3.15 : sp.length / 2;
+        const off = sp.frontOverhang + sp.wheelbase / 2 - hl;
+        addShadow(e[12] + hx * off, e[13], e[14] + hz * off, hx, hz, hl, sp.width / 2, kind, castLen * sp.height * 0.6);
       }
     }
-    if (lights > 0.01 && d2 < GLOW_D2) {
+    if (glowsToo && lights > 0.01 && d2 < GLOW_D2) {
       const an = anchors[m];
       const brake = flags & FLAG_BRAKE ? 2 : 1;
       if (an.head) {
@@ -366,34 +450,21 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
       }
     }
   };
-  let shadowD2Cur = 0;
-  let sunXCur = 0;
-  let sunZCur = 1;
-  let castLenCur = 1;
-  let frameNo = 0;
-
-  let nGlowW = 0;
-  const addGlow = (x: number, y: number, z: number, dx: number, dz: number, tail: boolean, intensity: number) => {
-    if (nGlowW >= glowCap) return;
-    glowPos[nGlowW * 3] = x;
-    glowPos[nGlowW * 3 + 1] = y;
-    glowPos[nGlowW * 3 + 2] = z;
-    glowAttr[nGlowW * 4] = dx;
-    glowAttr[nGlowW * 4 + 1] = dz;
-    glowAttr[nGlowW * 4 + 2] = tail ? 1 : 0;
-    glowAttr[nGlowW * 4 + 3] = intensity;
-    nGlowW++;
-  };
-  const anchors = Array.from({ length: MODEL_COUNT }, (_, m) => lampAnchors(m));
-  /** Model → world with the current m4 (x mirrored by side), into lampP. */
-  const lampWorld = (a: readonly number[], side: number) => {
-    const e = m4.elements;
-    const lx = a[0] * side;
-    lampP[0] = e[0] * lx + e[4] * a[1] + e[8] * a[2] + e[12];
-    lampP[1] = e[1] * lx + e[5] * a[1] + e[9] * a[2] + e[13];
-    lampP[2] = e[2] * lx + e[6] * a[1] + e[10] * a[2] + e[14];
+  /** Draws slot (body or trailer of a moving vehicle) with the matrix in m4: near → the batch, far → the far mesh. */
+  const place = (slot: number, m: number, near: boolean, kind: number, odo: number, steer: number, flags: number) => {
+    if (near) {
+      batch.setMatrixAt(slot, m4);
+      show(slot, geoId[m]);
+      writeData(slot, odo, steer, flags, kind);
+      nNear++;
+    } else {
+      hide(slot);
+      addFar(slot, m, kind);
+    }
+    nDrawn++;
   };
 
+  // ── parked cars ──
   const refreshParking = () => {
     if (!parking) return;
     parking.refresh(cam.x, cam.z, true);
@@ -405,7 +476,7 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
       parkCar[inst - PARK0] = null;
       parkInst.delete(id);
       parkFree.push(inst);
-      parkShadowDirty = true;
+      parkDirty = true;
     }
     parkPending.length = 0;
     for (let k = 0; k < parking.count; k++) {
@@ -414,40 +485,75 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
       const inst = parkFree.pop()!;
       parkInst.set(c.id, inst);
       parkCar[inst - PARK0] = c;
-      parkY[(inst - PARK0) * 3 + 2] = 1; // needs placing
+      parkY[(inst - PARK0) * 4 + 2] = 1;
       parkPending.push(inst);
     }
   };
-
-  /** Places a parked car on the road (heights at its axles) and shows it. */
+  /** Places a parked car (heights at its axles), caches its matrix and paint. */
   const placeParked = (inst: number, nearD: number) => {
-    const c = parkCar[inst - PARK0];
+    const j = inst - PARK0;
+    const c = parkCar[j];
     if (!c) return;
     const g = graph!;
     const sp = SPECS[c.type];
     const sgn = c.across > 0 ? 1 : -1; // +s is forward for the right-hand kerb
-    const sF = c.s + sgn * (sp.wheelbase / 2);
-    const sR = c.s - sgn * (sp.wheelbase / 2);
     const fx = c.x + (c.hx * sp.wheelbase) / 2;
     const fz = c.z + (c.hz * sp.wheelbase) / 2;
     const rx = c.x - (c.hx * sp.wheelbase) / 2;
     const rz = c.z - (c.hz * sp.wheelbase) / 2;
     // car parks stand on the terrain; kerbside cars on the road surface
     const park = c.piece < 0;
-    const hF = park ? opts.heightAt(fx, fz) + 0.03 : pieceHeight(c.piece, sF, c.across, fx, fz);
-    const hR = park ? opts.heightAt(rx, rz) + 0.03 : pieceHeight(c.piece, sR, c.across, rx, rz);
+    const hF = park ? opts.heightAt(fx, fz) + 0.03 : pieceHeight(c.piece, c.s + sgn * (sp.wheelbase / 2), c.across, fx, fz);
+    const hR = park ? opts.heightAt(rx, rz) + 0.03 : pieceHeight(c.piece, c.s - sgn * (sp.wheelbase / 2), c.across, rx, rz);
     const surf = park ? 0 : surfaceOf ? surfaceOf.height(c.piece, c.s, c.across, g.pWidth[c.piece] / 2) : NaN;
-    const o = (inst - PARK0) * 3;
+    const o = j * 4;
     parkY[o] = (hF + hR) / 2;
     parkY[o + 1] = (hF - hR) / sp.wheelbase;
-    parkY[o + 2] = surf === surf ? 0 : 2; // 2 = provisional (terrain), re-placed later
-    writeData(inst, c.paint, 0, 0, 0, KIND.street);
+    parkY[o + 2] = surf === surf ? 0 : 2;
+    setPaint(inst, c.paint);
     compose(c.x, parkY[o], c.z, c.hx, parkY[o + 1], c.hz, 0);
-    batch.setMatrixAt(inst, m4);
+    mcache.set(m4.elements, inst * 16);
+    writeData(inst, 0, 0, 0, KIND.street);
     const d = Math.hypot(c.x - cam.x, c.z - cam.z, camPos.y - parkY[o]);
-    show(inst, geoId[c.type][d < nearD ? 0 : 1]);
-    parkShadowDirty = true;
+    parkY[o + 3] = d < nearD * PARKED_NEAR ? 1 : 0;
+    if (parkY[o + 3]) {
+      batch.setMatrixAt(inst, m4);
+      show(inst, geoId[c.type]);
+    } else hide(inst);
+    parkDirty = true;
   };
+  /** Rebuilds the static parked sections of the far mesh and of the shadows. */
+  const rebuildParked = () => {
+    nFar = 0;
+    nShadow = 0;
+    parkedShown = 0;
+    parkedNear = 0;
+    for (let j = 0; j < cfg.maxParked; j++) {
+      const c = parkCar[j];
+      if (!c || parkY[j * 4 + 2] === 1) continue;
+      const inst = PARK0 + j;
+      parkedShown++;
+      m4.fromArray(mcache, inst * 16);
+      if (parkY[j * 4 + 3]) parkedNear++;
+      else addFar(inst, c.type, KIND.street);
+      extras(c.type, 0, KIND.street, 0, false);
+    }
+    nParkFar = nFar;
+    nParkShadow = nShadow;
+  };
+
+  const uploadRange = (attrs: THREE.BufferAttribute[], full: boolean, from: number, to: number) => {
+    for (const at of attrs) {
+      at.clearUpdateRanges();
+      const w = at.itemSize;
+      if (full) at.addUpdateRange(0, Math.max(1, to) * w);
+      else if (to > from) at.addUpdateRange(from * w, (to - from) * w);
+      else continue;
+      at.needsUpdate = true;
+    }
+  };
+  const farAttrs = [far.instanceMatrix, far.instanceColor!, aInst] as THREE.BufferAttribute[];
+  const shadowAttrs = [shadows.instanceMatrix, aDims, aMisc] as THREE.BufferAttribute[];
 
   const cars: Cars = {
     get sim() {
@@ -468,9 +574,7 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
         sim = null;
         parking = null;
       }
-      if (graph && !graph.complete) {
-        if (!graph.buildStep(4)) return;
-      }
+      if (graph && !graph.complete && !graph.buildStep(4)) return;
       if (!graph) return;
       if (!sim) {
         sim = new TrafficSim(graph, { cfg });
@@ -496,30 +600,27 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
         tau = sim.advance(dt, cam);
         time += dt;
       }
-      // lamps: on as the sun gets low
+      // lamps on as the sun gets low; indicators blink at 1.5 Hz
       const elev = (Math.asin(Math.max(-1, Math.min(1, sunDir.y))) * 180) / Math.PI;
-      const t = Math.max(0, Math.min(1, (cfg.lightsOnDeg - elev) / (cfg.lightsOnDeg - cfg.lightsFullDeg)));
-      lights = t * t * (3 - 2 * t);
+      const tl = Math.max(0, Math.min(1, (cfg.lightsOnDeg - elev) / (cfg.lightsOnDeg - cfg.lightsFullDeg)));
+      lights = tl * tl * (3 - 2 * tl);
       U.uLights.value = lights;
-      U.uBlink.value = Math.floor(time * 1.5 * 2) % 2;
+      U.uBlink.value = Math.floor(time * 3) % 2;
       U.uSunDir.value.copy(sunDir);
       const vh = typeof innerHeight === 'number' && innerHeight > 0 ? innerHeight * Math.min(2, typeof devicePixelRatio === 'number' ? devicePixelRatio : 1) : 900;
       U.uPx.value = vh / (2 * Math.tan((camera.fov * Math.PI) / 360));
-      // shadow sweep: away from the sun, longer as it gets low (capped)
-      const sElev = Math.max(0.12, sunDir.y);
+      // shadows sweep away from the sun, longer as it gets low (capped)
       const sh = Math.hypot(sunDir.x, sunDir.z) || 1;
-      const sunX = -sunDir.x / sh;
-      const sunZ = -sunDir.z / sh;
-      const castLen = Math.min(2.6, 1 / Math.tan(Math.asin(Math.min(1, sElev))));
-      sunXCur = sunX;
-      sunZCur = sunZ;
-      castLenCur = castLen;
-
-      nGlowW = 0;
-      nDrawn = 0;
-      nNear = 0;
+      sunX = -sunDir.x / sh;
+      sunZ = -sunDir.z / sh;
+      castLen = Math.min(2.6, 1 / Math.tan(Math.asin(Math.min(1, Math.max(0.12, sunDir.y)))));
+      shadowD2 = cfg.shadowDistance * cfg.shadowDistance;
       const nearD = cfg.nearDistance;
-      // ── parked cars (static: placed once, LOD re-checked as the camera moves, shadows rebuilt on change) ──
+      const farD2 = cfg.farDistance * cfg.farDistance;
+      const g = graph;
+      nGlowW = 0;
+
+      // ── parked (static) ──
       if (parking && (Math.hypot(cam.x - parkX, cam.z - parkZ) > 80 || parking.work(1.5))) {
         parkX = cam.x;
         parkZ = cam.z;
@@ -534,52 +635,53 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
           lodY = camPos.y;
           parkCursor = 0;
         }
-        const parkN = cfg.maxParked;
-        for (let k = 0; k < 350 && parkCursor < parkN; k++, parkCursor++) {
+        for (let k = 0; k < 350 && parkCursor < cfg.maxParked; k++, parkCursor++) {
           const j = parkCursor;
           const inst = PARK0 + j;
           const c = parkCar[j];
-          if (!c || parkY[j * 3 + 2] === 1) continue;
-          if (parkY[j * 3 + 2] === 2 && surfaceOf && c.piece >= 0) {
-            const h = surfaceOf.height(c.piece, c.s, c.across, graph.pWidth[c.piece] / 2);
+          if (!c || parkY[j * 4 + 2] === 1) continue;
+          if (parkY[j * 4 + 2] === 2 && surfaceOf && c.piece >= 0) {
+            const h = surfaceOf.height(c.piece, c.s, c.across, g.pWidth[c.piece] / 2);
             if (h === h) {
               placeParked(inst, nearD);
               continue;
             }
           }
-          const d = Math.hypot(c.x - cam.x, c.z - cam.z, camPos.y - parkY[j * 3]);
-          show(inst, geoId[c.type][d < nearD * (instGeo[inst] === geoId[c.type][0] ? 1.05 : 0.95) ? 0 : 1]);
+          const d = Math.hypot(c.x - cam.x, c.z - cam.z, camPos.y - parkY[j * 4]);
+          const wasNear = parkY[j * 4 + 3] === 1;
+          const near = d < nearD * PARKED_NEAR * (wasNear ? 1.05 : 0.95);
+          if (near === wasNear) continue;
+          parkY[j * 4 + 3] = near ? 1 : 0;
+          if (near) {
+            m4.fromArray(mcache, inst * 16);
+            batch.setMatrixAt(inst, m4);
+            show(inst, geoId[c.type]);
+          } else hide(inst);
+          parkDirty = true;
         }
-        if (parkCursor >= parkN) lodPass = false;
+        if (parkCursor >= cfg.maxParked) lodPass = false;
       }
-      const sunMoved = sunDir.dot(lastSun) < 0.99999;
-      let fullShadowUpload = false;
-      if (parkShadowDirty || sunMoved) {
+      let fullUpload = false;
+      if (parkDirty || sunDir.dot(lastSun) < 0.99999) {
         lastSun.copy(sunDir);
-        parkShadowDirty = false;
-        fullShadowUpload = true;
-        nShadow = 0;
-        parkedShown = 0;
-        for (let j = 0; j < cfg.maxParked; j++) {
-          const c = parkCar[j];
-          if (!c || parkY[j * 3 + 2] === 1) continue;
-          parkedShown++;
-          const sp = SPECS[c.type];
-          const off = sp.frontOverhang - sp.length / 2 + sp.wheelbase / 2;
-          addShadow(c.x + c.hx * off, parkY[j * 3], c.z + c.hz * off, c.hx, c.hz, sp.length / 2, sp.width / 2, 0.9, KIND.street, sunX, sunZ, castLen * sp.height * 0.6);
-        }
-        nParkShadow = nShadow;
+        parkDirty = false;
+        fullUpload = true;
+        rebuildParked();
       }
+      nFar = nParkFar;
       nShadow = nParkShadow;
-      const farD2 = cfg.farDistance * cfg.farDistance;
-      shadowD2Cur = cfg.shadowDistance * cfg.shadowDistance;
-      const g = graph;
+      nNear = parkedNear;
+      nDrawn = parkedShown;
+
       // ── moving vehicles ──
       frameNo++;
+      projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(projView, camera.coordinateSystem, camera.reversedDepth);
       for (let i = 0; i < cap; i++) {
+        const ti = TRAILER0 + i;
         if (!sim.alive[i]) {
           hide(i);
-          hide(TRAILER0 + i);
+          hide(ti);
           continue;
         }
         const dx0 = sim.cx[i] - cam.x;
@@ -588,31 +690,48 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
         const type = sim.type[i];
         if (d2 > farD2) {
           hide(i);
-          hide(TRAILER0 + i);
+          hide(ti);
           continue;
         }
         const semi = type === VT.semi;
-        // far vehicles move on alternate frames (a fraction of a pixel at that range)
-        if (d2 > HALF_RATE_D2 && instVis[i] && instSerial[i] === sim.serial[i] && ((frameNo + i) & 1) === 1) {
-          const flags = data[i * 8 + 6];
-          const kind = data[i * 8 + 7];
-          batch.getMatrixAt(i, m4);
-          extras(type, flags, kind, d2, false);
-          nDrawn++;
-          if (semi) {
-            batch.getMatrixAt(TRAILER0 + i, m4);
-            extras(MODEL_TRAILER, flags, kind, d2, false);
-            nDrawn++;
+        const serial = sim.serial[i];
+        const fresh = instSerial[i] !== serial;
+        // out of view: nothing to draw (its last matrix gives the height; a generous sphere keeps shadows at the edges)
+        if (!fresh) {
+          cullSphere.center.set(sim.cx[i], mcache[i * 16 + 13], sim.cz[i]);
+          cullSphere.radius = semi ? 24 : 12;
+          if (!frustum.intersectsSphere(cullSphere)) {
+            hide(i);
+            hide(ti);
+            continue;
           }
+        }
+        if (fresh) {
+          setPaint(i, sim.paint[i]);
+          if (semi) setPaint(ti, sim.paint2[i]);
+        }
+        // far vehicles move on alternate frames (a fraction of a pixel at that range)
+        if (!fresh && d2 > HALF_RATE_D2 && ((frameNo + i) & 1) === 1) {
+          const flags = fcache[i * 2];
+          const kind = fcache[i * 2 + 1];
+          m4.fromArray(mcache, i * 16);
+          place(i, type, false, kind, 0, 0, flags);
+          extras(type, flags, kind, d2, true);
+          if (semi) {
+            m4.fromArray(mcache, ti * 16);
+            place(ti, MODEL_TRAILER, false, kind, 0, 0, flags);
+            extras(MODEL_TRAILER, flags, kind, d2, true);
+          } else hide(ti);
           continue;
         }
+        instSerial[i] = serial;
         const v = sim.v[i];
         sim.pose(i, v * tau, pose);
         const hF = heightOf(pose.front);
         const hR = heightOf(pose.rear);
         const y = (hF + hR) / 2;
         const dist = Math.sqrt(d2 + (camPos.y - y) ** 2);
-        const near = dist < nearD * (instGeo[i] === geoId[type][0] ? 1.05 : 0.95);
+        const near = dist < nearD * (instVis[i] ? 1.05 : 0.95);
         // roll with the road's cross slope (+ across is right of increasing s: flip on backward lanes)
         let bank = 0;
         if (near && pose.front.piece >= 0 && surfaceOf) {
@@ -622,12 +741,6 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
           const b = surfaceOf.height(p.piece, p.s, p.across - 0.8, hw);
           if (a === a && b === b) bank = ((a - b) / 1.6) * laneSign(p);
         }
-        compose(pose.x, y, pose.z, pose.fx - pose.rx, hF - hR, pose.fz - pose.rz, bank);
-        batch.setMatrixAt(i, m4);
-        show(i, geoId[type][near ? 0 : 1]);
-        nDrawn++;
-        if (near) nNear++;
-        // instance data
         let flags = 0;
         if (lights > 0.01) flags |= FLAG_HEAD;
         if (sim.acc[i] < -0.9 || v < 0.3) flags |= FLAG_BRAKE;
@@ -635,39 +748,31 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
         if (turn < 0) flags |= FLAG_IND_L;
         else if (turn > 0) flags |= FLAG_IND_R;
         const kind = liftKindOf(pose.front);
-        const serial = sim.serial[i];
+        fcache[i * 2] = flags;
+        fcache[i * 2 + 1] = kind;
         const odo = (sim.odo[i] + v * tau) % 2000;
-        writeData(i, instSerial[i] !== serial ? sim.paint[i] : -1, odo, pose.steer, flags, kind);
-        instSerial[i] = serial;
+        compose(pose.x, y, pose.z, pose.fx - pose.rx, hF - hR, pose.fz - pose.rz, bank);
+        mcache.set(m4.elements, i * 16);
+        place(i, type, near, kind, odo, pose.steer, flags);
         extras(type, flags, kind, d2, true);
-        // semi trailer: pivots at the kingpin, its axle follows the path
+        // a semi's trailer pivots at the kingpin; its axle follows the path
         if (semi) {
-          const ti = TRAILER0 + i;
           const hA = heightOf(pose.axle);
           const hK = hR + 0.02;
           compose((pose.kx + pose.ax) / 2, (hK + hA) / 2, (pose.kz + pose.az) / 2, pose.kx - pose.ax, hK - hA, pose.kz - pose.az, 0);
-          batch.setMatrixAt(ti, m4);
-          show(ti, geoId[MODEL_TRAILER][near ? 0 : 1]);
-          writeData(ti, instSerial[ti] !== serial ? sim.paint2[i] : -1, odo, 0, flags, kind);
-          instSerial[ti] = serial;
-          nDrawn++;
+          mcache.set(m4.elements, ti * 16);
+          place(ti, MODEL_TRAILER, near, kind, odo, 0, flags);
           extras(MODEL_TRAILER, flags, kind, d2, true);
-        } else hide(TRAILER0 + i);
+        } else hide(ti);
       }
-      nDrawn += parkedShown;
+      far.count = nFar;
       shadows.count = nShadow;
-      for (const at of [shadows.instanceMatrix, aDims, aMisc] as THREE.BufferAttribute[]) {
-        at.clearUpdateRanges();
-        const w = at.itemSize;
-        if (fullShadowUpload) at.addUpdateRange(0, nShadow * w);
-        else if (nShadow > nParkShadow) at.addUpdateRange(nParkShadow * w, (nShadow - nParkShadow) * w);
-        at.needsUpdate = true;
-      }
+      uploadRange(farAttrs, fullUpload, nParkFar, nFar);
+      uploadRange(shadowAttrs, fullUpload, nParkShadow, nShadow);
       glowGeo.setDrawRange(0, nGlowW);
       (glowGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
       (glowGeo.getAttribute('aGlow') as THREE.BufferAttribute).needsUpdate = true;
       glows.visible = nGlowW > 0 && lights > 0.01;
-      nGlow = nGlowW;
       dataTex.needsUpdate = true;
     },
     reset() {
@@ -675,15 +780,16 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
       parkX = Infinity;
     },
     stats() {
-      const drawCalls = (nDrawn > 0 ? 1 : 0) + (nShadow > 0 ? 1 : 0) + (glows.visible ? 1 : 0);
+      const drawCalls = (nNear > 0 ? 1 : 0) + (nFar > 0 ? 1 : 0) + (nShadow > 0 ? 1 : 0) + (glows.visible ? 1 : 0);
       return {
         ready: !!sim,
         moving: sim?.count ?? 0,
         parked: parking?.count ?? 0,
         drawn: nDrawn,
         near: nNear,
+        far: nFar,
         shadows: nShadow,
-        glows: nGlow,
+        glows: glows.visible ? nGlowW : 0,
         drawCalls,
         ...(sim ? sim.stats() : {}),
       };
@@ -691,9 +797,12 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
     dispose() {
       scene.remove(group);
       batch.dispose();
-      for (const pair of geos) for (const g of pair) g.dispose();
+      for (const g of geos) g.dispose();
       material.dispose();
       dataTex.dispose();
+      farGeo.dispose();
+      farMat.dispose();
+      far.dispose();
       quad.dispose();
       shadowMat.dispose();
       shadows.dispose();
@@ -701,34 +810,5 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
       glowMat.dispose();
     },
   };
-
-  /** +1 if the path point is on a forward lane (across measured right of travel), −1 on a backward one. */
-  const laneSign = (p: PathPoint): number => {
-    // forward lanes carry positive across except for shifted street lanes; compare the travel direction with the piece normal
-    const g = graph!;
-    const k = g.segmentAt(p.piece, p.s);
-    // tangent of increasing s = (nz, −nx)
-    const tx = g.pnz[k];
-    const tz = -g.pnx[k];
-    return tx * p.hx + tz * p.hz >= 0 ? 1 : -1;
-  };
-
-  /** −1 left, +1 right, 0 none: the indicator for the turn the vehicle is about to make (or making). */
-  const turnSignal = (i: number): number => {
-    const s = sim!;
-    const g = graph!;
-    let c = s.conn[i];
-    if (c < 0) {
-      const k = s.next[i];
-      if (k < 0) return 0;
-      if (g.connectors[k].inU - s.u[i] > 45) return 0;
-      c = k;
-    }
-    const t = g.connectors[c].turn;
-    return t === 2 ? -1 : t;
-  };
-
   return cars;
 }
-
-const KIND_NAMES = ['highway', 'road', 'access', 'lane', 'street', 'drive'] as const;

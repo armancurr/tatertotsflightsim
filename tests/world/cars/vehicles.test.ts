@@ -111,3 +111,30 @@ describe('vehicle models', () => {
     });
   });
 });
+
+describe('far level of detail (one instanced parametric car)', () => {
+  it('has each model\'s real length, width and height', async () => {
+    const { FAR_SHAPES } = await import('../../../src/world/cars/farcar');
+    FAR_SHAPES.forEach((f, m) => {
+      if (m === MODEL_TRAILER) {
+        expect(f.L).toBeCloseTo(SEMI.trailerRear - SEMI.trailerFront, 3);
+        expect(f.belt).toBeCloseTo(SEMI.trailerHeight, 3);
+        return;
+      }
+      const s = SPECS[m];
+      expect(f.L).toBeCloseTo(m === VT.semi ? 6.3 : s.length, 3);
+      expect(f.W).toBeCloseTo(s.width, 3);
+      expect(Math.max(f.roof, f.bTop, f.belt)).toBeGreaterThan(s.height * 0.95);
+      expect(Math.max(f.roof, f.bTop, f.belt)).toBeLessThan(s.height * 1.05);
+      expect(f.a0).toBeLessThanOrEqual(f.a1);
+      expect(f.b0).toBeLessThanOrEqual(f.b1);
+    });
+  });
+  it('is one small template (≤ 60 triangles) with the attributes its shader reads', async () => {
+    const { farTemplate } = await import('../../../src/world/cars/farcar');
+    const g = farTemplate();
+    expect(g.index!.count / 3).toBeLessThanOrEqual(60);
+    for (const a of ['aT', 'aK', 'normal', 'position']) expect(g.getAttribute(a)).toBeDefined();
+    expect(g.getAttribute('aT').count).toBe(g.getAttribute('position').count);
+  });
+});
