@@ -250,8 +250,10 @@ default-exports `{ name, order, create(ctx) }`. `systems/index.ts` finds them au
 | `onAction`, `onReset`, `onResize`, `stats`, `dispose` | as named |
 
 Current systems (order): loading (0, the start-up veil), camerafx (1, speed-dependent field of
-view), terrain (10), water (20), airport (30), roads (40), towns (50), vegetation (60), grass (61),
-fx (80), audio (90), hud (100). (Traffic has no system file yet.) A system that throws is isolated and
+view), crash (2, the break-up director), terrain (10), water (20), airport (30), roads (40),
+ships (44), cars (45), airTraffic (46), towns (50), vegetation (60), grass (61), targets (65),
+weapons (70), missiles (71), fx (80), combatfx (85), audio (90), hud (100), weaponsHud (101),
+gmeter (102), menu (105). A system that throws is isolated and
 logged; the rest keep running. `?no=trees,towns` in the URL switches systems off (handy for
 profiling), and each system's CPU time appears in `window.sim.perf.systems`.
 
@@ -260,13 +262,14 @@ the same wiring file.
 
 ## 9b. The fleet (src/fleet) — more than one aircraft
 
-Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`), names,
-a **full config** (the same shape as `CONFIG`, with its own `aircraft` section and optional camera
-overrides — the physics, cameras and instruments just receive it), which HUD it uses (`steam` gauges
-or a `jet` head-up display), which engine sound (`piston` or `jet`), and a `createModel()` factory
-returning an `AircraftModelHandle` (`root`, `setVisualState`, optional panel drawer, landing light,
-and `getBreakupParts()` / `restoreBreakupParts()` for the crash). The player picks one from the
-dropdown at the top right (or `?aircraft=f16`); `app.ts` swaps the model and the config and
+Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`, `a10`),
+names, a **full config** (the same shape as `CONFIG`, with its own `aircraft` and `weapons` sections
+and optional camera overrides — the physics, cameras, instruments and weapons just receive it),
+which HUD it uses (`steam` gauges or a `jet` head-up display), which engine sound (`piston`, `jet`
+or `turbofan`), and a `createModel()` factory returning an `AircraftModelHandle` (`root`,
+`setVisualState`, optional panel drawer, landing light, `hudCombiner` for jets, and
+`getBreakupParts()` / `restoreBreakupParts()` for the crash). The player picks one from the
+dropdown at the top right (or `?aircraft=a10`); `app.ts` swaps the model and the config and
 restarts on the runway, and every system hears `onAircraftChange(def, model)`.
 
 **To add an aircraft:** (1) add its section to `src/config.ts` with the same shape as
@@ -274,9 +277,9 @@ restarts on the runway, and every system hears `onAircraftChange(def, model)`.
 (2) build its model under `src/aircraft/<name>/` implementing `AircraftModelHandle`; (3) add one
 entry to `FLEET`. Tests in `tests/fleet/` check every entry spawns resting on its gear.
 
-## 9c. Combat (src/combat) — the A-10's gun, missiles and the tanks
+## 9c. Combat (src/combat) — guns, missiles and the tanks
 
-The A-10C (and the F-16's gun) plug into the same systems layer. Everything talks through one
+The A-10C's and the F-16's weapons plug into the same systems layer. Everything talks through one
 **combat world** per scene (`combatWorld(scene)`, `src/combat/world.ts`, plain data + pure maths):
 
 - **Targets** — every ground vehicle is a `GroundTarget`: a hull box standing on the ground
