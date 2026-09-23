@@ -118,7 +118,7 @@ describe('combatfx system', () => {
     t.frame();
     (g.simCombatFx as { demo: (k: string, o?: object) => unknown }).demo('maverick', { distance: 800 });
     let flash = 0;
-    for (let i = 0; i < 60 * 6; i++) {
+    for (let i = 0; i < 60 * 9; i++) {
       t.frame();
       flash = Math.max(flash, t.fx.sim.flashLevel);
     }

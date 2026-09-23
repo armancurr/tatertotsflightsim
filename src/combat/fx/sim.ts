@@ -458,12 +458,12 @@ export class CombatFxSim {
       t.growTau = 0.35;
       t.gravity = 9.81;
       t.drag = 1.1;
-      t.alpha = snow ? 0.6 : 0.78;
+      t.alpha = snow ? 0.6 : 0.85;
       t.fadeIn = 0.02;
-      t.fadeOut = 0.55;
-      const dark = snow ? 0.95 : 0.5 + 0.15 * this.rnd();
+      t.fadeOut = 0.5;
+      const dark = snow ? 0.95 : 0.42 + 0.15 * this.rnd();
       t.r = alb[0] * dark; t.g = alb[1] * dark; t.b = alb[2] * dark;
-      t.lighten = snow ? 0 : 0.8;
+      t.lighten = snow ? 0 : 0.6;
       t.turbulence = 0.5;
       t.groundY = g;
       fx.smoke.emit(t);
@@ -475,9 +475,9 @@ export class CombatFxSim {
       t.x = x + this.sym(1.2); t.y = g + 0.6 + this.rnd(); t.z = z + this.sym(1.2);
       t.vx = this.sym(1.8) + dx * 2; t.vy = this.range(S.puffRise); t.vz = this.sym(1.8) + dz * 2;
       t.life = this.range(S.puffLife);
-      t.size0 = 1.6 + 0.8 * this.rnd();
+      t.size0 = 2.6 + 1.2 * this.rnd();
       t.size1 = this.range(S.puffSize) * (0.85 + 0.25 * big);
-      t.growTau = 1.1 + 0.8 * this.rnd();
+      t.growTau = 0.9 + 0.8 * this.rnd();
       t.drag = 1.3;
       t.buoyancy = 0.5;
       t.buoyTau = 2;
@@ -486,7 +486,7 @@ export class CombatFxSim {
       t.fadeOut = 0.62;
       const sh = 0.9 + 0.2 * this.rnd();
       t.r = alb[0] * sh; t.g = alb[1] * sh; t.b = alb[2] * sh;
-      t.lighten = snow ? 0 : 0.25;
+      t.lighten = snow ? 0 : 0.12;
       t.rotRate = this.sym(0.3);
       t.turbulence = 1.2;
       t.groundY = g;

@@ -1566,13 +1566,13 @@ export const CONFIG = {
       soil: {
         ejecta: 4,
         ejectaSpeed: [9, 22] as [number, number],
-        ejectaSize: [1, 2.2] as [number, number],
-        ejectaLife: [1, 1.9] as [number, number],
+        ejectaSize: [1.4, 3] as [number, number],
+        ejectaLife: [0.9, 1.7] as [number, number],
         puffs: 2,
-        puffSize: [7, 13] as [number, number],
+        puffSize: [8, 14] as [number, number],
         puffLife: [8, 14] as [number, number],
         puffRise: [3, 7] as [number, number],
-        puffAlpha: 0.38,
+        puffAlpha: 0.45,
       },
       /** Pavement / rock: sparks + a grey puff + a couple of chips. */
       hard: { sparks: 5, chips: 2, puffs: 1, puffSize: [2.5, 5] as [number, number], puffLife: [3, 6] as [number, number], puffAlpha: 0.32 },
@@ -1595,9 +1595,9 @@ export const CONFIG = {
       /** A round glancing off armour: speed (m/s) and glowing life (s). */
       ricochet: { speed: [230, 380] as [number, number], life: [0.35, 0.8] as [number, number] },
       /** Dust albedos (linear). */
-      soilAlbedo: [0.44, 0.38, 0.3] as [number, number, number],
-      sandAlbedo: [0.6, 0.53, 0.41] as [number, number, number],
-      grassAlbedo: [0.4, 0.37, 0.28] as [number, number, number],
+      soilAlbedo: [0.37, 0.31, 0.24] as [number, number, number],
+      sandAlbedo: [0.55, 0.48, 0.37] as [number, number, number],
+      grassAlbedo: [0.34, 0.3, 0.23] as [number, number, number],
       hardAlbedo: [0.52, 0.51, 0.5] as [number, number, number],
       snowAlbedo: [0.88, 0.9, 0.93] as [number, number, number],
       /** AGM-65 detonation: flash, fireball, ground shock ring, dirt column, lingering smoke. Air burst above airBurstM AGL. */
