@@ -85,11 +85,12 @@ On a CPU-only machine, such as a GitHub Actions runner, SwiftShader draws this g
 1 fps. The sim advances at most 1/12 s of flight per rendered frame, so it runs much slower than
 real time. The e2e suite detects a software renderer (`detectGpu()`) and adapts:
 
-- every `waitForSim` timeout is multiplied by 60;
+- every `waitForSim` timeout is multiplied by 120;
 - the fps floor drops from 20 to "renders at all";
 - the take-off run only needs to gain 2 knots instead of 10.
 
-Every test still runs, and the suite takes minutes instead of seconds.
+Every test still runs, but the e2e file takes minutes instead of seconds: about 13 minutes on an
+M2 Max forced to SwiftShader (`TEST_SOFTWARE_GL=1`), and longer on a 4-core CI runner.
 
 | Variable | Effect |
 | --- | --- |

@@ -18,8 +18,9 @@ import {
 } from '../support/e2e';
 
 // Upper bounds only: pass/fail is decided by waitForSim's own (scaled) timeouts, which are seconds
-// on a GPU. The headroom is for CPU-only runners, where one rendered frame can take seconds.
-const STEP_TIMEOUT = 15 * 60_000;
+// on a GPU. The headroom is for CPU-only runners, where one rendered frame takes seconds (the whole
+// file took 13 min on SwiftShader on an M2 Max; a 4-core CI runner is slower).
+const STEP_TIMEOUT = 30 * 60_000;
 const angleDiff = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
 
 let server: E2EServer;
@@ -40,7 +41,7 @@ beforeAll(async () => {
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   gpu = await detectGpu(page);
   if (gpu.software) {
-    setE2ETimeScale(Math.max(e2eTimeScale(), 60));
+    setE2ETimeScale(Math.max(e2eTimeScale(), 120));
     minFps = 0;
     runSimSeconds = 0.3;
     accelKt = 2;

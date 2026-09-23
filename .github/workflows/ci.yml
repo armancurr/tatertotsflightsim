@@ -18,8 +18,8 @@ jobs:
     name: Node ${{ matrix.node-version }} · typecheck, test, build
     runs-on: ubuntu-latest
     # GitHub's Linux runners have no GPU: the browser tests draw WebGL on the CPU (SwiftShader) at
-    # well under 1 fps, detect it and stretch their waits, so they take minutes rather than seconds.
-    timeout-minutes: 60
+    # well under 1 fps, detect it and stretch their waits, so they take many minutes, not seconds.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

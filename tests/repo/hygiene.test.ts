@@ -41,11 +41,11 @@ const contents = new Map(textFiles.map((f) => {
 // Built from pieces so this file does not match its own patterns.
 const HOME = ['/Us', 'ers/'].join('');
 /** An absolute path inside someone's home directory or the OS temp tree. */
-export const PERSONAL_PATH = new RegExp(
+const PERSONAL_PATH = new RegExp(
   [`${HOME}(?!<)[A-Za-z0-9._-]+/`, '/home/(?!runner/|<)[A-Za-z0-9._-]+/', '[A-Z]:\\\\Users\\\\[^\\\\<]+\\\\', '/priv' + 'ate/(?:tmp|var)/', 'scratch' + 'pad'].join('|'),
 );
 /** Credential shapes worth refusing outright. */
-export const SECRET = new RegExp([
+const SECRET = new RegExp([
   'sbp_[A-Za-z0-9]{20,}', 'gh[pousr]_[A-Za-z0-9]{30,}', 'github_pat_[A-Za-z0-9_]{30,}', 'sk-[A-Za-z0-9_-]{24,}', 'sk-ant-[A-Za-z0-9_-]{20,}',
   'AKIA[0-9A-Z]{16}', 'AIza[0-9A-Za-z_-]{35}', 'xox[baprs]-[A-Za-z0-9-]{10,}', '-----BEGIN [A-Z ]*PRIVATE KEY-----',
   '(?:api[_-]?key|secret|password|passwd|token)\\s*[:=]\\s*[\'"][^\'"\\s]{12,}[\'"]',
@@ -59,6 +59,8 @@ const EMAIL_OK = /(^noreply@anthropic\.com$|@users\.noreply\.github\.com$|@examp
  * once that file is scrubbed — the test then guards it too.
  */
 const PENDING_SCRUB = new Set(['RESUME.md']);
+/** This file holds sample bad paths and fake credentials to test the detectors, so it skips the scans. */
+const SELF = 'tests/repo/hygiene.test.ts';
 
 describe('publishing hygiene (tracked text files)', () => {
   it('finds the repository files', () => {
@@ -66,10 +68,10 @@ describe('publishing hygiene (tracked text files)', () => {
     expect(textFiles).toContain('README.md');
   });
 
-  it('no absolute paths from a personal machine (home dirs, OS temp, agent scratchpads)', () => {
+  it('no absolute paths from a personal machine (home dirs, OS temp, agent scratch folders)', () => {
     const hits: string[] = [];
     for (const [f, text] of contents) {
-      if (PENDING_SCRUB.has(f)) continue;
+      if (PENDING_SCRUB.has(f) || f === SELF) continue;
       text.split('\n').forEach((line, i) => { if (PERSONAL_PATH.test(line)) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 120)}`); });
     }
     expect(hits).toEqual([]);
@@ -78,6 +80,7 @@ describe('publishing hygiene (tracked text files)', () => {
   it('no credentials or tokens', () => {
     const hits: string[] = [];
     for (const [f, text] of contents) {
+      if (f === SELF) continue;
       text.split('\n').forEach((line, i) => { if (SECRET.test(line)) hits.push(`${f}:${i + 1}`); });
     }
     expect(hits).toEqual([]);
@@ -86,6 +89,7 @@ describe('publishing hygiene (tracked text files)', () => {
   it('no personal e-mail addresses (only no-reply and example.com ones)', () => {
     const hits: string[] = [];
     for (const [f, text] of contents) {
+      if (f === SELF) continue;
       for (const m of text.matchAll(EMAIL)) {
         // Skip things like "three@0.186.0" or "@types/node@26" (package@version), not addresses.
         if (/@\d/.test(m[0]) || /\.(png|svg|ts|js|mjs|json)$/i.test(m[0])) continue;

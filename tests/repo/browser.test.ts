@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   browserArgs, isSoftwareRenderer, launchOptions, resolveTestBrowser, wantsSoftwareGl, type BrowserProbe,
 } from '../../scripts/test-browser.mjs';
-import { ROOT, testBrowserPath } from '../support/e2e';
+import { ROOT, e2eTimeScale, setE2ETimeScale, testBrowserPath } from '../support/e2e';
 import { fcParams } from '../support/fc';
 
 const MAC_HOME = '/Users/pilot';
@@ -68,7 +68,8 @@ describe('resolveTestBrowser — resolution order', () => {
 
   it('3. Linux and Windows always use Playwright\'s bundled Chromium (the macOS cache scan is macOS-only)', () => {
     for (const platform of ['linux', 'win32']) {
-      const r = resolveTestBrowser(probe({ platform, home: '/home/pilot', files: [`/home/pilot/Library/Caches/ms-playwright/chromium-1243/${CFT_ARM}`] }));
+      const home = '/home/<user>';
+      const r = resolveTestBrowser(probe({ platform, home, files: [`${home}/Library/Caches/ms-playwright/chromium-1243/${CFT_ARM}`] }));
       expect(r).toEqual({ executablePath: undefined, source: 'playwright' });
     }
   });
@@ -174,6 +175,26 @@ describe('resolveTestBrowser — fuzz over environments', () => {
       expect(o.args.includes('--use-angle=metal')).toBe(platform === 'darwin' && !software);
       expect(o.args.includes('--use-angle=swiftshader')).toBe(software);
     }), fcParams(300));
+  });
+});
+
+describe('e2e time scale (stretches waitForSim on slow renderers)', () => {
+  it('is at least 1 and ignores junk', () => {
+    const before = e2eTimeScale();
+    try {
+      expect(before).toBeGreaterThanOrEqual(1);
+      setE2ETimeScale(60);
+      expect(e2eTimeScale()).toBe(60);
+      fc.assert(fc.property(fc.oneof(fc.double(), fc.constant(Number.NaN), fc.constant(-Infinity)), (x) => {
+        setE2ETimeScale(x);
+        const t = e2eTimeScale();
+        expect(Number.isFinite(t)).toBe(true);
+        expect(t).toBeGreaterThanOrEqual(1);
+        if (Number.isFinite(x) && x >= 1) expect(t).toBe(x);
+      }), fcParams(200));
+    } finally {
+      setE2ETimeScale(before);
+    }
   });
 });
 

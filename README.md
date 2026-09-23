@@ -80,7 +80,8 @@ slowly:
 On a machine without a GPU, the browser draws WebGL on the CPU. The game still loads, but at less
 than one frame per second, so it isn't playable.
 
-Port 8092 already in use? Run `npx vite --port 5173` instead (any free port works).
+If port 8092 is already in use, run `npx vite --port 5173` instead (any free port works). To
+open the game from another device on your network, run `npx vite --host 0.0.0.0`.
 
 ## Flying
 
@@ -158,7 +159,7 @@ npm run check                     # typecheck + test + build
 
 On Linux, `npx playwright install --with-deps chromium` also installs the system libraries the
 browser needs. With a GPU, the whole suite takes about 30 seconds. On a machine without a GPU
-(like a CI runner), the browser tests draw on the CPU and take several minutes instead. They
+(like a CI runner), the browser tests draw on the CPU and take 15 minutes or more instead. They
 stretch their waits automatically.
 
 The browser tests never use your everyday Google Chrome. They use:

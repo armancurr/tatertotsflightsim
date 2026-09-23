@@ -81,7 +81,7 @@ export function launchChrome(): Promise<Browser> {
 export interface GpuInfo {
   /** WebGL renderer string, e.g. "ANGLE Metal Renderer: Apple M2 Max" or "…SwiftShader…". */
   renderer: string;
-  /** CPU rasteriser (SwiftShader, llvmpipe) or no WebGL2: expect single-digit fps. */
+  /** CPU rasteriser (SwiftShader, llvmpipe) or no WebGL2: this game then draws well under 1 fps. */
   software: boolean;
 }
 
