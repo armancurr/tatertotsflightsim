@@ -12,7 +12,9 @@
  *  - hollow diamonds over live vehicles within ~6 km (a targeting-pod cue);
  *  - the range cue: a caret on the heading tape toward the target range + "RANGE 7.2 km", and a
  *    steerpoint on the ground there;
- *  - stores block bottom-left of the HUD: "GUN 1150 CM" ("GUN 0" flashes), "65D ×4", "KILLS 2";
+ *  - stores block bottom-left of the HUD: "GUN 1150 CM" ("GUN 0" flashes), "65D ×4", "9M ×2", "KILLS 2";
+ *  - gun lead pipper on a locked aircraft: where to put the gun cross so the rounds meet it
+ *    (constant-velocity lead from the muzzle velocity, drag and drop — src/combat/air/lead.ts);
  *  - short messages ("NO LOCK", "RIFLE", "LOCK LOST").
  *
  * World points are projected with the real camera, so the symbols sit on the ground and on the
@@ -27,6 +29,7 @@ import { emptyWeaponsStatus } from '../combat/world';
 import type { Vec3 } from '../types';
 import { jetHeadingTape, jetHudCompact, jetHudOmitsGunCross } from './jetHud';
 import { hudGlassToBox, type HudGlass } from './hudGlass';
+import { gunLead, newLead } from '../combat/air/lead';
 import {
   ammoLabel, bearingDeg, clampToRect, createScreenPt, formatKm, formatSlantRange, gunAmmoText, gunLineDir, lockBox, missileStoresText,
   pipperArcFraction, projectPoint, relativeBearingDeg, weaponsVisibility, type LockBox, type Rect, type WeaponsVisibility,
@@ -76,6 +79,10 @@ export interface WeaponsHudFrame {
   qz: number;
   qw: number;
   headingDeg: number;
+  /** Aircraft velocity, world m/s (the gun lead). */
+  vx?: number;
+  vy?: number;
+  vz?: number;
   /** What the aircraft carries (its fleet config). */
   weapons: WeaponsConfig | null;
   status: WeaponsStatus;
@@ -125,6 +132,8 @@ export interface WeaponsHudModel {
   lw: number;
   gunCross: { show: boolean; x: number; y: number };
   pipper: { show: boolean; x: number; y: number; r: number; clamped: boolean; arc: number; inRange: boolean };
+  /** Gun lead pipper on a locked aircraft. */
+  lead: { show: boolean; x: number; y: number; r: number; clamped: boolean; inRange: boolean; rangeM: number };
   seekerCircle: { show: boolean; x: number; y: number; r: number };
   lock: {
     show: boolean; solid: boolean; fill: number; x: number; y: number; half: number; clamped: boolean; flashOn: boolean;
@@ -139,7 +148,7 @@ export interface WeaponsHudModel {
     steerShow: boolean; steerX: number; steerY: number;
   };
   /** Stores block (left, bottom row at y) and the right edge of that row (range text). */
-  stores: { x: number; y: number; right: number; gun: string; gunShow: boolean; gunEmpty: boolean; msl: string; mslShow: boolean; kills: string };
+  stores: { x: number; y: number; right: number; gun: string; gunShow: boolean; gunEmpty: boolean; msl: string; mslShow: boolean; aam: string; aamShow: boolean; kills: string };
   msg: { show: boolean; text: string; x: number; y: number };
   flashOn: boolean;
   /** On the combiner glass: positions are HUD-box px, drawn through `xform` and clipped to `quad` (viewport px). */
@@ -148,7 +157,7 @@ export interface WeaponsHudModel {
   quad: Float64Array;
   glassBox: Rect;
   /** Text caches (a string is rebuilt only when its number changes). */
-  cache: { rounds: number; label: string; gunName: string; msl: number; mslName: string; kills: number; rangeKey: number; lockKey: number };
+  cache: { rounds: number; label: string; gunName: string; msl: number; mslName: string; aam: number; aamName: string; kills: number; rangeKey: number; lockKey: number };
 }
 
 export function createWeaponsHudModel(cfg: Config = CONFIG): WeaponsHudModel {
@@ -159,19 +168,20 @@ export function createWeaponsHudModel(cfg: Config = CONFIG): WeaponsHudModel {
     font: 12, lw: 1.5,
     gunCross: { show: false, x: 0, y: 0 },
     pipper: { show: false, x: 0, y: 0, r: 0, clamped: false, arc: 0, inRange: false },
+    lead: { show: false, x: 0, y: 0, r: 0, clamped: false, inRange: false, rangeM: 0 },
     seekerCircle: { show: false, x: 0, y: 0, r: 0 },
     lock: { show: false, solid: false, fill: 0, x: 0, y: 0, half: 0, clamped: false, flashOn: false, type: '', range: '', inRange: false },
     markers: new Float32Array(Math.max(1, cfg.hud.weapons.maxTargetMarkers) * 2),
     markerCount: 0,
     rangeCue: { show: false, text: '', distanceM: 0, tapeShow: false, tapeX: 0, tapeY: 0, tapeDir: 0, tapeUp: true, steerShow: false, steerX: 0, steerY: 0 },
-    stores: { x: 0, y: 0, right: 0, gun: '', gunShow: false, gunEmpty: false, msl: '', mslShow: false, kills: 'KILLS 0' },
+    stores: { x: 0, y: 0, right: 0, gun: '', gunShow: false, gunEmpty: false, msl: '', mslShow: false, aam: '', aamShow: false, kills: 'KILLS 0' },
     msg: { show: false, text: '', x: 0, y: 0 },
     flashOn: true,
     glassOn: false,
     xform: new Float64Array([1, 0, 0, 1, 0, 0]),
     quad: new Float64Array(8),
     glassBox: { x: 0, y: 0, w: 0, h: 0 },
-    cache: { rounds: NaN, label: '', gunName: '', msl: NaN, mslName: '', kills: 0, rangeKey: NaN, lockKey: NaN },
+    cache: { rounds: NaN, label: '', gunName: '', msl: NaN, mslName: '', aam: NaN, aamName: '', kills: 0, rangeKey: NaN, lockKey: NaN },
   };
 }
 
@@ -181,6 +191,9 @@ const cl = createScreenPt();
 const dir: Vec3 = { x: 0, y: 0, z: 0 };
 const muz: Vec3 = { x: 0, y: 0, z: 0 };
 const box: LockBox = { show: false, solid: false, fill: 0 };
+const leadSol = newLead();
+const leadMuzzle: Vec3 = { x: 0, y: 0, z: 0 };
+const leadVel: Vec3 = { x: 0, y: 0, z: 0 };
 
 /** Rotate a body-frame vector by the aircraft quaternion into `out`. */
 function rotate(out: Vec3, f: WeaponsHudFrame, x: number, y: number, z: number): Vec3 {
@@ -222,6 +235,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   m.show = vis.any && W > 0 && H > 0;
   m.gunCross.show = false;
   m.pipper.show = false;
+  m.lead.show = false;
   m.seekerCircle.show = false;
   m.lock.show = false;
   m.markerCount = 0;
@@ -230,6 +244,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   m.rangeCue.steerShow = false;
   m.stores.gunShow = false;
   m.stores.mslShow = false;
+  m.stores.aamShow = false;
   m.msg.show = false;
   m.glassOn = false;
   if (!m.show) return m;
@@ -274,6 +289,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   const st = f.status ?? emptyWeaponsStatus();
   const gun = vis.gun ? f.weapons!.gun! : null;
   const msl = vis.missiles ? f.weapons!.missiles! : null;
+  const aam = vis.airMissiles ? f.weapons!.airMissiles! : null;
 
   // ── Gun cross: a point far out on the gun line (from the muzzle) ──
   if (gun) {
@@ -323,11 +339,12 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
   // ── Lock box on the target ──
   const lk = st.lock ?? emptyWeaponsStatus().lock;
   lockBox(lk, box);
-  const lockTarget = box.show && msl ? findTarget(f, lk.targetId) : null;
+  const lockTarget = box.show && (msl || aam) ? findTarget(f, lk.targetId) : null;
   if (lockTarget) {
     const cls = f.classOf(lockTarget.kind);
     const p = lockTarget.position;
-    projectPoint(sp, num(p.x), num(p.y) + num(cls?.height, 2) / 2, num(p.z), f.view, f.proj, W, H);
+    // aircraft: `position` is the centre of the box; vehicles: the footprint on the ground
+    projectPoint(sp, num(p.x), num(p.y) + (cls?.air ? 0 : num(cls?.height, 2) / 2), num(p.z), f.view, f.proj, W, H);
     toBox(gl, sp);
     const depth = sp.inFront ? sp.depth : 1e4;
     const half = clamp((num(cls?.length, 7) / 2 / Math.max(1, depth)) * focal * 1.25, 9, 60);
@@ -349,6 +366,35 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       L.range = formatSlantRange(rng);
     }
     L.inRange = !!lk.inRange;
+
+    // ── Gun lead pipper on a locked aircraft ──
+    const la = cfg.combat.air.hud;
+    if (gun && cls?.air && lockTarget.alive) {
+      rotate(muz, f, num(gun.muzzle.x), num(gun.muzzle.y), num(gun.muzzle.z));
+      leadMuzzle.x = ax + muz.x;
+      leadMuzzle.y = ay + muz.y;
+      leadMuzzle.z = az + muz.z;
+      leadVel.x = num(f.vx ?? 0);
+      leadVel.y = num(f.vy ?? 0);
+      leadVel.z = num(f.vz ?? 0);
+      gunLead(leadSol, leadMuzzle, leadVel, lockTarget.position, lockTarget.velocity, gun.muzzleVelocity, gun.dragK);
+      if (leadSol.ok && leadSol.rangeM <= la.leadMaxRangeM) {
+        projectPoint(sp, leadSol.x, leadSol.y, leadSol.z, f.view, f.proj, W, H);
+        toBox(gl, sp);
+        if (sp.inFront) {
+          const r = clamp(la.leadRadiusPx * (H / 900), 10, 30);
+          clampToRect(cl, sp.x, sp.y, d, r + 2);
+          const ld = m.lead;
+          ld.show = true;
+          ld.x = cl.x;
+          ld.y = cl.y;
+          ld.r = r;
+          ld.clamped = cl.clamped;
+          ld.rangeM = leadSol.rangeM;
+          ld.inRange = !cl.clamped && leadSol.rangeM <= la.leadInRangeM;
+        }
+      }
+    }
   }
 
   // ── Target markers (hollow diamonds over live vehicles nearby) ──
@@ -365,7 +411,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       const dz = num(p.z, 1e9) - az;
       if (dx * dx + dy * dy + dz * dz > r2) continue;
       const cls = f.classOf(t.kind);
-      projectPoint(sp, num(p.x), num(p.y) + num(cls?.height, 2) / 2, num(p.z), f.view, f.proj, W, H);
+      projectPoint(sp, num(p.x), num(p.y) + (cls?.air ? 0 : num(cls?.height, 2) / 2), num(p.z), f.view, f.proj, W, H);
       if (!sp.onScreen) continue;
       toBox(gl, sp);
       m.markers[2 * m.markerCount] = sp.x;
@@ -430,6 +476,15 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       S.msl = missileStoresText(msl.name, n);
     }
     S.mslShow = true;
+  }
+  if (aam) {
+    const n = st.hasAirMissiles ? num(st.airMissiles) : aam.stations.length;
+    if (n !== m.cache.aam || aam.name !== m.cache.aamName) {
+      m.cache.aam = n;
+      m.cache.aamName = aam.name;
+      S.aam = missileStoresText(aam.name, n);
+    }
+    S.aamShow = true;
   }
   const kills = Math.max(0, Math.round(num(f.kills)));
   if (kills !== m.cache.kills) {
@@ -501,11 +556,14 @@ export function weaponsHudChanged(m: WeaponsHudModel, key: Float64Array): boolea
   put(m.glassOn ? m.xform[1] * 1000 : 0);
   put(m.glassOn ? m.xform[2] * 1000 : 0);
   put(m.glassOn ? m.xform[3] * 1000 + m.glassBox.w * 1e4 + m.glassBox.h * 1e7 : 0);
+  put(m.lead.show ? m.lead.x : -9);
+  put(m.lead.y + (m.lead.inRange ? 1e4 : 0) + (m.lead.clamped ? 2e4 : 0) + m.lead.r * 1e5);
+  put(m.stores.aamShow ? m.cache.aam : -9);
   return changed;
 }
 
 /** Length of the key array for weaponsHudChanged. */
-export const WEAPONS_HUD_KEY_LENGTH = 39;
+export const WEAPONS_HUD_KEY_LENGTH = 42;
 
 // ─── Drawing ─────────────────────────────────────────────────────────────────
 
@@ -635,6 +693,38 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
     ctx.globalAlpha = 1;
   }
 
+  // Gun lead pipper (a locked aircraft): circle + dot with four diagonal ticks.
+  const ld = m.lead;
+  if (ld.show && fin(ld.x) && fin(ld.y)) {
+    const r = num(ld.r, 15);
+    if (ld.clamped) {
+      ctx.globalAlpha = 0.55;
+      ctx.setLineDash([r * 0.35, r * 0.3]);
+    }
+    ctx.beginPath();
+    ctx.arc(ld.x, ld.y, r, 0, Math.PI * 2);
+    stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(ld.x, ld.y, Math.max(1.6, lw * 1.2), 0, Math.PI * 2);
+    ctx.fillStyle = green;
+    ctx.fill();
+    if (!ld.clamped) {
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const a = Math.PI / 4 + (k * Math.PI) / 2;
+        const c = Math.cos(a), sn = Math.sin(a);
+        ctx.moveTo(ld.x + c * (r + lw), ld.y + sn * (r + lw));
+        ctx.lineTo(ld.x + c * (r + lw * 4.5), ld.y + sn * (r + lw * 4.5));
+      }
+      stroke();
+      // (the lock box right there already says IN RNG — don't stack two)
+      const nearBox = m.lock.show && Math.abs(m.lock.x - ld.x) < m.lock.half + F * 4 && Math.abs(m.lock.y - ld.y) < m.lock.half + F * 4;
+      if (ld.inRange && !nearBox) text('IN RNG', ld.x, ld.y + r + F * 1.3, F * 0.95);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // Maverick seeker circle.
   const sc = m.seekerCircle;
   if (sc.show && fin(sc.x) && fin(sc.y) && fin(sc.r)) {
@@ -745,6 +835,10 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
   y -= F * 1.3;
   if (S.mslShow) {
     text(S.msl, S.x, y, F, 'left', 800);
+    y -= F * 1.3;
+  }
+  if (S.aamShow) {
+    text(S.aam, S.x, y, F, 'left', 800);
     y -= F * 1.3;
   }
   if (S.gun && S.gunShow) text(S.gun, S.x, y, F, 'left', 800);

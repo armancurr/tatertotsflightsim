@@ -231,9 +231,9 @@ export function gunAmmoText(rounds: number, label: string): string {
   return label ? `GUN ${n} ${label}` : `GUN ${n}`;
 }
 
-/** "AGM-65D Maverick" → "65D". */
+/** "AGM-65D Maverick" → "65D", "AIM-9M Sidewinder" → "9M". */
 export function missileShortName(name: string): string {
-  const m = /AGM-(\d+[A-Z]?)/.exec(String(name));
+  const m = /A[GI]M-(\d+[A-Z]?)/.exec(String(name));
   return m ? m[1] : String(name).split(' ')[0] || 'MSL';
 }
 
@@ -257,6 +257,8 @@ export interface WeaponsVisibility {
   any: boolean;
   gun: boolean;
   missiles: boolean;
+  /** Air-to-air missiles (Sidewinders). */
+  airMissiles?: boolean;
   rangeCue: boolean;
   markers: boolean;
 }
@@ -266,7 +268,8 @@ export function weaponsVisibility(weapons: WeaponsConfig | null | undefined, hud
   const o = out ?? { any: false, gun: false, missiles: false, rangeCue: false, markers: false };
   o.gun = !!weapons?.gun;
   o.missiles = !!weapons?.missiles;
-  o.any = o.gun || o.missiles;
+  o.airMissiles = !!weapons?.airMissiles;
+  o.any = o.gun || o.missiles || o.airMissiles;
   o.rangeCue = o.any;
   o.markers = o.any && !!hud.targetMarkers;
   return o;

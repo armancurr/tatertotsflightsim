@@ -140,6 +140,7 @@ export function killToastText(kind: TargetKind, weapon: WeaponKind, weapons: Wea
   const name = cfg.combat.targets[kind]?.name ?? String(kind);
   let by: string;
   if (weapon === 'gun') by = weapons?.gun ? gunShortName(weapons.gun.name) : 'gun';
+  else if (weapon === 'missile' && cfg.combat.targets[kind]?.air && weapons?.airMissiles) by = missileLongName(weapons.airMissiles.name);
   else if (weapon === 'missile') by = weapons?.missiles ? missileLongName(weapons.missiles.name) : 'Maverick';
   else by = String(weapon) || 'gun';
   return `${name} destroyed — ${by}`;

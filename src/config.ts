@@ -1895,6 +1895,71 @@ export const CONFIG = {
       /** Mi-24 Hind: fuselage + stub wings (the rotor disc isn't solid). */
       helo: { name: 'Mi-24', length: 17.5, width: 6.5, height: 3.9, health: 80, armor: { front: 0.6, side: 0.8, rear: 0.9, top: 0.9 }, speed: 70, air: true } as TargetClassConfig,
     },
+    /**
+     * Enemy aircraft to shoot down (src/combat/air + the airTargets system): MiG-29 pairs on racetrack
+     * CAPs, a Su-25 pair making attack passes at the range, a Mi-24 pair circling low near it. Game
+     * targets — they never shoot back. Kinematic flight (coordinated banked turns, climbs, speed
+     * changes), deterministic from `seed`. Positions are relative to the range (world.range).
+     */
+    air: {
+      seed: 0x5a1729,
+      /** Flight envelopes per class (kinematic model, src/combat/air/flight.ts). Speeds m/s, rates deg/s. */
+      flight: {
+        fighter: { cruise: 190, min: 120, max: 290, accel: 6, decel: 9, maxG: 7, cruiseBankDeg: 55, breakBankDeg: 80, rollRateDeg: 160, maxClimbDeg: 22, maxDiveDeg: 22, aoaPerG: 1.4, minAglM: 180, noseDownDeg: 0, heloPitch: false },
+        attack: { cruise: 165, min: 105, max: 235, accel: 4, decel: 7, maxG: 6, cruiseBankDeg: 55, breakBankDeg: 75, rollRateDeg: 110, maxClimbDeg: 18, maxDiveDeg: 20, aoaPerG: 1.8, minAglM: 110, noseDownDeg: 0, heloPitch: false },
+        helo: { cruise: 55, min: 18, max: 80, accel: 2.5, decel: 3.5, maxG: 2.2, cruiseBankDeg: 25, breakBankDeg: 50, rollRateDeg: 40, maxClimbDeg: 12, maxDiveDeg: 12, aoaPerG: 0, minAglM: 35, noseDownDeg: 7, heloPitch: true },
+      },
+      /** Pure-pursuit path following: look-ahead = speed × lookaheadS (≥ minLookaheadM); altitude hold time constant, s. */
+      lookaheadS: 4,
+      minLookaheadM: 250,
+      altitudeTauS: 9,
+      /** Terrain avoidance: ground sampled this many seconds ahead; hard floor (never below ground + hardFloorM). */
+      terrainLookS: [0, 2, 4, 7, 11] as number[],
+      hardFloorM: 25,
+      /** MiG-29 pairs on racetrack CAPs: centre (bearing deg / distance m from the range), axis (deg), straight leg (m), altitude (ft MSL). */
+      caps: [
+        { bearingDeg: 355, distanceM: 4200, axisDeg: 80, legM: 5000, altFt: 6500 },
+        { bearingDeg: 290, distanceM: 4500, axisDeg: 20, legM: 4500, altFt: 3800 },
+      ] as { bearingDeg: number; distanceM: number; axisDeg: number; legM: number; altFt: number }[],
+      /** Wingman station: this far behind along the path (m) and to the side (m, + right). */
+      wingman: { trailM: 900, sideM: 350 },
+      /** Su-25 pair: run in from the IP (bearing/distance from the range), pull off pullOffM short, pattern at patternFt, run-in down to runInAglFt. */
+      attack: { ipBearingDeg: 25, ipDistanceM: 9500, pullOffM: 2600, turnRadiusM: 1700, patternFt: 3000, runInAglFt: 1000, trailM: 5200 },
+      /** Mi-24 pair circling near the range: circle centre (bearing/distance from the range), radius, heights AGL (ft). */
+      helo: { bearingDeg: 100, distanceM: 1500, radiusM: 1100, aglFt: [250, 420] as [number, number] },
+      /** Keep-outs: ≥ this from the runway centre (the circuit + 1 km); ≥ playerMinM from the player unless it chases from behind (rear cone, deg). */
+      airportKeepOutM: 3800,
+      playerMinM: 600,
+      chaseConeDeg: 70,
+      /** Evasive break: duration (s), cooldown before another lock-triggered break (s), gun rounds passing within gunNearM (at ≤ gunRangeM) trigger it. */
+      breakS: [5, 8] as [number, number],
+      breakCooldownS: 9,
+      gunNearM: 120,
+      gunRangeM: 2600,
+      /** Flares per salvo, seconds between flares, burn time. */
+      flares: { count: [4, 8] as [number, number], intervalS: 0.18, burnS: 3.2, ejectMs: 30 },
+      /** Replacement after a kill (s); it joins its path ≥ respawnMinDistM from the player. */
+      respawnS: 60,
+      respawnMinDistM: 5000,
+      /** Shoot-down: terminal speeds of the falling wreck and a separated part, spin, fire/smoke on the ground (s), how many wrecks stay. */
+      wreck: {
+        terminalMs: 105,
+        partTerminalMs: 38,
+        heloDescentMs: 17,
+        partChance: 0.6,
+        spinChance: 0.35,
+        fireS: [70, 120] as [number, number],
+        columnS: [200, 320] as [number, number],
+        maxWrecks: 10,
+        maxFires: 3,
+        /** Smoke puffs along the falling trail, every this many metres. */
+        trailStepM: 4.5,
+      },
+      /** Drawing: LOD distances (m, full < lod[0] ≤ low < lod[1] ≤ dot only), far dots from dotFromM, lights. */
+      render: { lod: [650, 5500] as [number, number], dotFromM: 1400, dotMinPx: 2.2, maxDrawM: 16000, lodHysteresis: 0.08 },
+      /** Weapons HUD: the gun lead pipper on a locked aircraft (shown inside leadMaxRangeM, "IN RNG" inside leadInRangeM), px radius at 900 px. */
+      hud: { leadMaxRangeM: 2400, leadInRangeM: 1200, leadRadiusPx: 15 },
+    },
     /** Destroyed vehicles come back after a reset (R) or after this long, s (0 = only on reset). */
     respawnS: 0,
     /** Live projectile pool (rounds in flight) and impact effects per frame, max. */
