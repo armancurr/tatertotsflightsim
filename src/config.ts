@@ -1090,6 +1090,8 @@ export const CONFIG = {
      * hour), 1 = fully neutralised. Estimated from the sunlit ground and the horizon haze colour.
      */
     whiteBalance: 0.35,
+    /** Look: warm tint when the sun is low (golden hour / sunrise, fades out by 25°), cool tint once it has set (blue hour). */
+    grade: { warmth: 0.1, blueHour: 0.1 },
     /** Top-of-atmosphere sun illuminance in three.js light units; the sun light, sky and haze all scale with it. */
     sunIntensity: 3.2,
     /** Sunlight colour above the atmosphere (linear RGB) — effectively the camera white balance. */
@@ -1216,6 +1218,12 @@ export const CONFIG = {
      * Off on the 'low' quality preset. ≈0.1–0.2 ms at 1440×900.
      */
     bloom: { intensity: 0.05, threshold: 1.2, knee: 0.6, clamp: 40 },
+    /**
+     * Eye adaptation (metering.ts): a view-dependent trim on the time-of-day exposure — (key / centre-weighted
+     * geometric-mean exposed luminance)^strength, clamped to [min, max], eased with tauDarken / tauBrighten (s).
+     * Looking into the sun stops down a little; a dark cockpit opens up a little. ?meter=0 turns it off.
+     */
+    metering: { enabled: true, key: 0.2, strength: 0.4, min: 0.7, max: 1.4, tauDarken: 0.6, tauBrighten: 1.5 },
     /**
      * Clouds: 'volumetric' (raymarched, falls back to billboards automatically when over budget),
      * 'billboard' (instanced puff sprites) or 'off'. URL override: ?clouds=volumetric|billboard|off.

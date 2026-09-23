@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { autoExposure, computeAtmosphereState, whiteBalanceGains } from '../../src/render/atmosphereState';
+import { autoExposure, computeAtmosphereState, lookTint, whiteBalanceGains } from '../../src/render/atmosphereState';
 import { defaultAtmosphereParams, luminance, type RGB } from '../../src/render/atmosphereModel';
 import { hazeColor } from '../../src/render/fog';
 import { sunDirectionFromAngles } from '../../src/render/sun';
@@ -137,7 +137,42 @@ describe('camera: auto exposure and white balance from the atmosphere (lookdev)'
     const noon = state(idx('Midday')).whiteBalance;
     expect(Math.abs(noon.b / noon.r - 1)).toBeLessThan(0.08);
     const dawn = state(idx('Dawn')).whiteBalance;
-    expect(dawn.b / dawn.r).toBeGreaterThan(1.1);
+    expect(dawn.b / dawn.r).toBeGreaterThan(1.02);
     expect(dawn.b / dawn.r).toBeLessThan(2);
+  });
+});
+
+describe('look: golden-hour warmth, blue-hour cool (lookdev)', () => {
+  const o = () => ({ r: 0, g: 0, b: 0 });
+  it('is neutral with the sun high, warm with it low, cool once it has set', () => {
+    for (const el of [30, 45, 62, 90]) {
+      const t = lookTint(el, o());
+      expect(t.r).toBeCloseTo(1, 9);
+      expect(t.b).toBeCloseTo(1, 9);
+    }
+    const gold = lookTint(8, o());
+    expect(gold.r).toBeGreaterThan(1.02);
+    expect(gold.b).toBeLessThan(0.97);
+    const blue = lookTint(-5, o());
+    expect(blue.b).toBeGreaterThan(1.02);
+    expect(blue.r).toBeLessThan(0.99);
+  });
+  it('keeps luminance, stays bounded and finite for any elevation (property)', () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.double(), fc.double({ min: -90, max: 90, noNaN: true })), (el) => {
+        const t = lookTint(el, o());
+        for (const x of [t.r, t.g, t.b]) {
+          expect(Number.isFinite(x)).toBe(true);
+          expect(x).toBeGreaterThan(0.75);
+          expect(x).toBeLessThan(1.25);
+        }
+        expect(0.2126 * t.r + 0.7152 * t.g + 0.0722 * t.b).toBeCloseTo(1, 9);
+      }),
+      { numRuns: 400 },
+    );
+  });
+  it('the golden-hour camera ends up warmer than neutral (the WB does not take the gold out)', () => {
+    const wb = state(idx('Golden hour')).whiteBalance;
+    expect(wb.r / wb.b).toBeGreaterThan(1.0);
   });
 });

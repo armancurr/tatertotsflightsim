@@ -16,6 +16,7 @@ import type { AtmosphereFrameData, CloudPassHook } from './frameData';
 import type { DepthMode } from './renderer';
 import type { QualityPlan } from './quality';
 import { createBloom, type BloomSettings } from './bloom';
+import { createMeter } from './metering';
 import { CONFIG } from '../config';
 
 export interface PostSettings {
@@ -30,6 +31,8 @@ export interface PostSettings {
   dither: boolean;
   /** Bloom intensity (0 = off; default config.render.bloom.intensity). The 'low' quality preset turns it off. */
   bloom?: number;
+  /** Eye adaptation (default config.render.metering.enabled; URL ?meter=0 turns it off). */
+  metering?: boolean;
 }
 
 /** Bloom intensity for a quality plan: off on the 'low' preset and on software renderers. */
@@ -65,6 +68,8 @@ uniform vec3 uGrade; // saturation, vignette, dither
 uniform vec3 uWB;    // camera white-balance gains
 uniform sampler2D tBloom;
 uniform float uBloom;
+uniform sampler2D tAdapt; // eye adaptation: R = log2 exposure trim
+uniform float uAdaptOn;
 uniform sampler2D tCloudA;
 uniform sampler2D tCloudB;
 uniform sampler2D tDepth;
@@ -156,6 +161,7 @@ void main() {
 	if ( uBloom > 0.0 ) c += texture2D( tBloom, vUv ).rgb * uBloom;
 	c = mix( c, uImmersion.rgb, uImmersion.a );
 	c *= uWB;
+	if ( uAdaptOn > 0.5 ) c *= exp2( texture2D( tAdapt, vec2( 0.5 ) ).r );
 	vec2 q = ( vUv - 0.5 ) * vec2( uFlareParams.w, 1.0 );
 	c *= 1.0 - uGrade.y * smoothstep( 0.3, 1.05, length( q ) );
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
@@ -195,6 +201,8 @@ export function createOutputPass(): OutputPass {
       uWB: { value: new THREE.Vector3(1, 1, 1) },
       tBloom: { value: null },
       uBloom: { value: 0 },
+      tAdapt: { value: null },
+      uAdaptOn: { value: 0 },
       uFlareSun: { value: new THREE.Vector4() },
       uFlareThreshold: { value: 1000 },
       uFlareSampleRadius: { value: 2 },
@@ -222,12 +230,28 @@ export function createOutputPass(): OutputPass {
   const bloomSettings: BloomSettings = { intensity: bc.intensity, threshold: bc.threshold, knee: bc.knee, clamp: bc.clamp };
   let bloomCloud: THREE.Texture | null = null;
   // Bloom runs right before this pass draws (nested renders into its own targets, like three's Reflector).
+  const meter = createMeter();
+  let meteringOn = CONFIG.render.metering.enabled && !(typeof location !== 'undefined' && new URLSearchParams(location.search).get('meter') === '0');
+  let lastTime = -1;
+  let lastExposure = -1;
   let lastRenderer: THREE.WebGLRenderer | null = null;
   mesh.onBeforeRender = (renderer) => {
     lastRenderer = renderer;
     const src = material.uniforms.tHDR.value as THREE.Texture | null;
-    if (!src || !(bloomSettings.intensity > 0)) return;
-    bloom.render(renderer, src, bloomCloud, renderer.toneMappingExposure, bloomSettings);
+    if (!src) return;
+    const now = performance.now();
+    const dt = lastTime < 0 ? 0 : (now - lastTime) / 1000;
+    lastTime = now;
+    const ex = renderer.toneMappingExposure;
+    if (meteringOn) {
+      // a new time of day (the base exposure jumps) or a long pause: adapt at once instead of easing
+      const reset = lastExposure < 0 || Math.abs(ex / lastExposure - 1) > 0.1 || dt > 1;
+      meter.render(renderer, src, bloomCloud, ex, dt, reset);
+      material.uniforms.tAdapt.value = meter.texture;
+    }
+    lastExposure = ex;
+    material.uniforms.uAdaptOn.value = meteringOn ? 1 : 0;
+    if (bloomSettings.intensity > 0) bloom.render(renderer, src, bloomCloud, ex, bloomSettings, meteringOn ? meter.texture : null);
   };
   // Profiling: window.__render.benchBloom(n) = GPU-synchronised ms of one bloom chain on the last frame.
   if (typeof window !== 'undefined') {
@@ -241,7 +265,7 @@ export function createOutputPass(): OutputPass {
       const run = (k: number) => {
         sync();
         const t0 = performance.now();
-        for (let i = 0; i < k; i++) bloom.render(r, src, bloomCloud, r.toneMappingExposure, { ...bloomSettings, intensity: 1 });
+        for (let i = 0; i < k; i++) bloom.render(r, src, bloomCloud, r.toneMappingExposure, { ...bloomSettings, intensity: 1 }, null);
         sync();
         return performance.now() - t0;
       };
@@ -251,7 +275,17 @@ export function createOutputPass(): OutputPass {
       return Math.round(((b - a) / n) * 1000) / 1000;
     };
     const w = window as unknown as { __render?: Record<string, unknown> };
-    w.__render = { ...(w.__render ?? {}), benchBloom, bloomLevels: () => bloom.levels };
+    const meterInfo = () => {
+      if (!lastRenderer) return null;
+      const m = meter.read(lastRenderer);
+      const ex = lastRenderer.toneMappingExposure;
+      return { on: meteringOn, trim: Math.round(Math.pow(2, m.trim) * 1000) / 1000, target: Math.round(Math.pow(2, m.target) * 1000) / 1000, exposedMean: Math.round(Math.pow(2, m.meanLog2) * ex * 10000) / 10000, exposure: ex };
+    };
+    const setMetering = (on: boolean) => {
+      meteringOn = on;
+    };
+    const postInfo = () => ({ bloom: bloomSettings.intensity, bloomLevels: bloom.levels, metering: meteringOn });
+    w.__render = { ...(w.__render ?? {}), benchBloom, bloomLevels: () => bloom.levels, meter: meterInfo, setMetering, post: postInfo };
   }
   material.uniforms.tBloom.value = bloom.texture;
   const scene = new THREE.Scene();
@@ -304,6 +338,7 @@ export function createOutputPass(): OutputPass {
       u.uFlareParams.value.set(s.flareGlare, s.flareGhosts, s.flareStarburst, aspect);
       u.uGrade.value.set(s.saturation, s.vignette, s.dither ? 1 : 0);
       bloomSettings.intensity = s.bloom ?? bc.intensity;
+      if (s.metering !== undefined) meteringOn = s.metering;
       u.uBloom.value = bloomSettings.intensity > 0 ? bloomSettings.intensity : 0;
       const wb = frame?.whiteBalance;
       if (wb) u.uWB.value.set(wb.r, wb.g, wb.b);
@@ -335,6 +370,7 @@ export function createOutputPass(): OutputPass {
       material.dispose();
       blank.dispose();
       bloom.dispose();
+      meter.dispose();
     },
   };
 }

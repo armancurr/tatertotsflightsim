@@ -105,7 +105,12 @@ uniform float uCloudOn;
 uniform vec2 uPx;
 uniform vec4 uKnee; // threshold, knee, clamp (all scene units = exposed / exposure), 1/exposure
 uniform float uKaris;
+uniform sampler2D tAdapt; // eye adaptation (metering.ts): R = log2 exposure trim
+uniform float uAdaptOn;
 varying vec2 vUv;
+float adaptGain() {
+	return uAdaptOn > 0.5 ? exp2( textureLod( tAdapt, vec2( 0.5 ), 0.0 ).r ) : 1.0;
+}
 vec3 fetchScene( sampler2D t, vec2 uv ) {
 	vec3 c = textureLod( t, uv, 0.0 ).rgb;
 	if ( uCloudOn > 0.5 ) {
@@ -114,19 +119,21 @@ vec3 fetchScene( sampler2D t, vec2 uv ) {
 	}
 	// clamp per tap (keeps the sun disc and single hot texels from flooding the frame)
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-	return c * min( 1.0, uKnee.z / max( l, 1e-6 ) );
+	return c * min( 1.0, uKnee.z / ( adaptGain() * max( l, 1e-6 ) ) );
 }
 void main() {
 	// 4 bilinear taps = a 4×4-texel box, each tap Karis-weighted (1/(1 + exposed luma)) so a single
 	// hot texel (a glint) cannot dominate and flicker
 	const vec3 Y = vec3( 0.2126, 0.7152, 0.0722 );
+	float ag = adaptGain();
 	vec3 a = fetchScene( tSrc, vUv + uPx * vec2( - 1.0, - 1.0 ) );
 	vec3 b4 = fetchScene( tSrc, vUv + uPx * vec2( 1.0, - 1.0 ) );
 	vec3 d = fetchScene( tSrc, vUv + uPx * vec2( - 1.0, 1.0 ) );
 	vec3 e = fetchScene( tSrc, vUv + uPx * vec2( 1.0, 1.0 ) );
-	vec4 kw = 1.0 / ( 1.0 + vec4( dot( a, Y ), dot( b4, Y ), dot( d, Y ), dot( e, Y ) ) * uKaris );
+	vec4 kw = 1.0 / ( 1.0 + vec4( dot( a, Y ), dot( b4, Y ), dot( d, Y ), dot( e, Y ) ) * uKaris * ag );
 	vec3 c = ( a * kw.x + b4 * kw.y + d * kw.z + e * kw.w ) / ( kw.x + kw.y + kw.z + kw.w );
-	float b = max( c.r, max( c.g, c.b ) );
+	// thresholds in the final exposed units: compare the adapted brightness
+	float b = max( c.r, max( c.g, c.b ) ) * ag;
 	float soft = clamp( b - uKnee.x + uKnee.y, 0.0, 2.0 * uKnee.y );
 	soft = soft * soft / ( 4.0 * uKnee.y + 1e-6 );
 	float w = max( soft, b - uKnee.x ) / max( b, 1e-6 );
@@ -176,7 +183,7 @@ export interface Bloom {
    * Run the chain from `source` (resolved HDR scene). `cloud` = the volumetric cloud buffer
    * (scene·a + rgb) or null. `exposure` converts the exposed-unit settings to scene units.
    */
-  render(renderer: THREE.WebGLRenderer, source: THREE.Texture, cloud: THREE.Texture | null, exposure: number, s: BloomSettings): void;
+  render(renderer: THREE.WebGLRenderer, source: THREE.Texture, cloud: THREE.Texture | null, exposure: number, s: BloomSettings, adapt?: THREE.Texture | null): void;
   dispose(): void;
 }
 
@@ -194,6 +201,8 @@ export function createBloom(maxLevels = 5): Bloom {
     uPx: { value: new THREE.Vector2() },
     uKnee: { value: new THREE.Vector4(1, 0.5, 50, 1) },
     uKaris: { value: 1 },
+    tAdapt: { value: blank },
+    uAdaptOn: { value: 0 },
   });
   const down = mk('BloomDown', DOWN, { tSrc: { value: null }, uPx: { value: new THREE.Vector2() }, uKaris: { value: 0 } });
   const up = mk('BloomUp', UP, { tSrc: { value: null }, uPx: { value: new THREE.Vector2() }, uWeight: { value: 1 } }, THREE.CustomBlending);
@@ -253,7 +262,7 @@ export function createBloom(maxLevels = 5): Bloom {
       return targets.length;
     },
     setSize,
-    render(renderer, source, cloud, exposure, s) {
+    render(renderer, source, cloud, exposure, s, adapt = null) {
       const n = targets.length;
       if (n === 0 || srcW === 0) return;
       const prevTarget = renderer.getRenderTarget();
@@ -264,6 +273,8 @@ export function createBloom(maxLevels = 5): Bloom {
       pu.tSrc.value = source;
       pu.tCloudA.value = cloud ?? blank;
       pu.uCloudOn.value = cloud ? 1 : 0;
+      pu.tAdapt.value = adapt ?? blank;
+      pu.uAdaptOn.value = adapt ? 1 : 0;
       pu.uPx.value.set(1 / srcW, 1 / srcH);
       pu.uKnee.value.set(s.threshold / ex, Math.max(1e-4, Math.min(s.knee, s.threshold) / ex), s.clamp / ex, 1 / ex);
       pu.uKaris.value = ex;

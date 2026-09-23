@@ -95,6 +95,32 @@ export function autoExposure(E: number, base: number, cfg: AutoExposureCfg = CON
   return Number.isFinite(k) ? Math.min(hi, Math.max(lo, k)) : hi;
 }
 
+const sstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * The look's colour tint for a sun elevation (degrees): warm (more red, less blue) while the sun is
+ * low — strongest at golden hour (8–12°), fading out by 25° and toward the horizon — and cool
+ * once it has set (blue hour).
+ * Luminance-preserving gains; neutral for a high sun or junk input.
+ */
+export function lookTint(sunElevationDeg: number, out: RGB, cfg: { warmth: number; blueHour: number } = CONFIG.atmosphere.grade): RGB {
+  const el = Number.isFinite(sunElevationDeg) ? sunElevationDeg : 90;
+  // peaks at golden hour (8–12°); a sunrise sun (≲ 4°) is orange enough already
+  const warm = Math.min(0.2, Math.max(0, cfg.warmth)) * (1 - sstep(12, 25, el)) * sstep(0, 8, el);
+  const cool = Math.min(0.2, Math.max(0, cfg.blueHour)) * (1 - sstep(-6, 0, el));
+  const r = 1 + warm - 0.6 * cool;
+  const g = 1 + 0.25 * warm - 0.1 * cool;
+  const b = 1 - warm + cool;
+  const n = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  out.r = r / n;
+  out.g = g / n;
+  out.b = b / n;
+  return out;
+}
+
 /**
  * Von Kries white-balance gains that move the colour `illuminant` part of the way (strength 0..1)
  * toward neutral, normalised so a white surface keeps its luminance; bounded to [0.6, 1.6].
@@ -244,5 +270,10 @@ export function computeAtmosphereState(
   _wb.g += (0.5 * s.groundRadiance.g) / lg;
   _wb.b += (0.5 * s.groundRadiance.b) / lg;
   whiteBalanceGains(_wb, ac.whiteBalance, s.whiteBalance);
+  // …and the look: golden-hour warmth / blue-hour cool on top
+  lookTint((Math.asin(Math.max(-1, Math.min(1, sunDir.y))) * 180) / Math.PI, _hz);
+  const wb = s.whiteBalance;
+  const n = 0.2126 * wb.r * _hz.r + 0.7152 * wb.g * _hz.g + 0.0722 * wb.b * _hz.b;
+  set(wb, (wb.r * _hz.r) / n, (wb.g * _hz.g) / n, (wb.b * _hz.b) / n);
   return s;
 }
