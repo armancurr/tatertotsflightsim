@@ -165,15 +165,48 @@ Calibration results against the pilot's handbook are in the comment block at the
 - `runway.ts` — runway coordinates shared by the physics (spawn, landing rating) and the world.
 
 ### 7.2 Drawing the world
+Heavy generation (terrain tiles, tree chunks, building placement, road meshes, detail textures,
+water depth maps) runs in **Web Workers**; the main thread only uploads results a few per frame, so
+flying fast never hitches.
+
 - **Terrain (`src/world/terrain`)** — a quadtree of tiles around the camera: small detailed tiles
-  near, big coarse ones far, out to ~60 km. Tiles are built in **Web Workers** from the same
-  heightfield and only uploaded on the main thread (a few per frame), with skirts to hide cracks,
-  pooled geometry and correct bounding spheres for culling. The terrain material extends three.js's
-  standard material, so lighting, shadows and fog all work.
-- **Water** — the sea, the lakes and the river with animated wave normals, sky reflections, sun
-  glitter and shallow-water colour.
-- **Airport, roads, towns, trees, traffic** — separate systems (see §9), each instanced, culled and
-  streamed around the camera.
+  near, big coarse ones far, out to ~60 km, with skirts to hide cracks, pooled geometry and correct
+  bounding spheres for culling. Heights **and colours** morph between detail levels so nothing
+  pops. The shader (built on three.js's standard material, so lighting, shadows and fog work)
+  paints the ground from the landcover: realistic farmland (ten crop types, drill rows, tractor
+  tramlines, ploughed furrows, hedges and farm tracks, soil patterns), forest floors, town lots
+  with lawns and driveways, rock with warped strata and scree, snow that lingers in gullies,
+  beaches. Close up, eight **procedurally generated detail textures** (grass, crop, soil, gravel,
+  rock, sand, snow, straw) are blended by height, with random per-tile offsets so nothing repeats.
+- **Water (`src/world/water`)** — twelve wind-driven wave trains (the same maths is exposed as
+  `waterSurfaceAt()` for boats), an FFT-generated ripple texture for sparkle and the sun's glitter
+  path, a depth/shore map baked in a worker around the camera (turquoise shallows over sand, dark
+  deep water, surf lines and foam), a continuous flowing river ribbon that coarse terrain can never
+  hide, and calm mirror-like lakes on still mornings.
+- **Airport (`src/world/airport`)** — pavement with aggregate, rubber marks, cracks and patches,
+  worn FAA paint, the control tower, five hangars (one open with an aircraft inside), the FBO with
+  its sign, fuel station, windsock, fence, 15 parked Cessnas and Pipers, cars, signs, and ~290
+  lights in one draw call: edge, threshold, taxiway, approach lights with the sequenced "rabbit",
+  the rotating beacon and two working **PAPIs**. Buildings are obstacles.
+- **Roads (`src/world/roads`)** — a junction network (2,000+ nodes) turned into road surfaces with
+  sidewalks, shoulders and soft verges, US-style markings (double yellow, dashed lines, crosswalks,
+  stop bars), dirt farm tracks, bridges with decks, piers and guard rails, and ~4,000 street lights
+  that glow at dusk. A small depth pull keeps roads from sinking into coarse terrain.
+- **Towns (`src/world/towns`)** — ~10,600 buildings: houses with gable/hip roofs, chimneys and
+  dormers, terraces, apartment blocks, glass towers, churches, industrial sheds, farmsteads with
+  barns and silos. One small mesh per building type is stretched per instance in the vertex shader;
+  a facade shader draws windows, doors, shopfronts and roof materials; windows light up at dusk.
+  Placement runs in a worker; far towns collapse into one self-culling mesh. Rooftops are obstacles.
+- **Trees (`src/world/vegetation`) and grass (`src/world/grass`)** — seven species built from leaf
+  cards (spruce, pine, broadleaf, birch, poplar, willow, bush) with back-lit leaves and wind sway;
+  multi-angle **impostors** (pre-rendered images) take over beyond ~210 m and fade out around
+  4.5 km. Forests, clearings, hedgerows on field edges, orchards, willows along the river. Grass
+  tufts and wildflowers appear near the camera when flying low. Trees are obstacles — flying into a
+  forest is a crash.
+- **Traffic (`src/world/traffic`)** — ship and boat routes (a marina, sailing yachts that tack,
+  a ferry, a container ship, a tanker, lake boats, wakes) and air traffic (runway-36 circuits,
+  crossing aircraft, a helicopter, airliners with contrails) are simulated and tested, with models
+  built — **but not yet drawn** (see RESUME.md).
 
 ## 8. Sky, light and rendering (src/render)
 
@@ -188,8 +221,16 @@ Calibration results against the pilot's handbook are in the comment block at the
 - **Aerial perspective (`fog.ts`)** — three.js's fog code is replaced for **every** material:
   height-based haze that is blue away from the sun and warm toward it, matched to the sky at the
   horizon, so distant hills fade like real ones. Any material with `fog: true` gets it for free.
-- **Clouds** — a field of cumulus around the camera, lit from the sun, with a soft whiteout when
-  you fly through one (see RESUME.md for the volumetric upgrade status).
+- **Clouds** — by default a field of instanced billboard cumulus around the camera, lit from the
+  sun, drifting with the wind, with a soft whiteout inside a cloud. An experimental **volumetric**
+  ray-marched cloud layer (half resolution, temporal accumulation, depth-aware compositing, a
+  budget controller that falls back to billboards) is built but off by default because it costs
+  3–5 ms (`?clouds=volumetric&cloudbudget=0`).
+- **Cloud shadows** — a cloud-shadow map, rendered from the same cloud field and drifting with the
+  wind, is applied inside the shared fog code, so every material (ground, buildings, trees, water,
+  the aircraft) gets moving cloud shadows.
+- **Shadows** — the sun's shadow map follows the aircraft (±160 m) with a smooth 3×3 filter; the
+  sky environment map re-bakes in slices over several frames as altitude changes.
 
 ## 9. The systems layer (src/game/systems)
 
@@ -205,8 +246,9 @@ default-exports `{ name, order, create(ctx) }`. `systems/index.ts` finds them au
 | `update(frame)` | every frame, after the camera moves, before rendering |
 | `onAction`, `onReset`, `onResize`, `stats`, `dispose` | as named |
 
-Current systems: terrain (10), water (20), airport (30), roads (40), towns (50), vegetation (60),
-traffic (ships, air traffic), fx (80), audio (90), hud (100). A system that throws is isolated and
+Current systems (order): loading (0, the start-up veil), camerafx (1, speed-dependent field of
+view), terrain (10), water (20), airport (30), roads (40), towns (50), vegetation (60), grass (61),
+fx (80), audio (90), hud (100). (Traffic has no system file yet.) A system that throws is isolated and
 logged; the rest keep running. `?no=trees,towns` in the URL switches systems off (handy for
 profiling), and each system's CPU time appears in `window.sim.perf.systems`.
 
@@ -218,8 +260,12 @@ the same wiring file.
 A procedural Cessna 172RG built entirely in code: a lofted fuselage (cross-sections joined into a
 smooth skin), a NACA 2412 wing with the constant-chord inner panel and tapered outer panel, struts,
 the swept fin with its dorsal fillet, retractable gear that swings into the belly, a two-blade
-propeller that blurs into a disc at speed, and separate pivoted ailerons, flaps, elevator, trim tab
-and rudder. The paint (white with a navy-and-gold stripe, registration **N172JT**) is drawn onto
+propeller that blurs into a faint disc at speed, and separate pivoted ailerons, flaps, elevator,
+trim tab and rudder. The **retractable gear** follows the real 172RG: the doors open, the main
+legs swing aft about tilted hinge axes so the wheels tuck almost flush into open belly wells (real
+holes in the skin with recessed liners), the nose leg folds aft on a drag brace, then the doors
+close; strut compression and nosewheel steering animate. After a crash the model shows a **wreck**
+(bent prop, folded wing, collapsed gear, soot spreading) until reset. The paint (white with a navy-and-gold stripe, registration **N172JT**) is drawn onto
 canvas textures. Nav lights, strobes, beacon and a landing light. The cockpit has the instrument
 panel — a live canvas texture drawn by the same gauge code as the HUD — yokes that move with the
 controls, seats and the windshield frame. **The wheels are exactly where the physics puts them**:
@@ -228,18 +274,25 @@ both read `aircraft.geometry` from the config, and a test checks they agree with
 ## 11. Instruments, HUD, audio and effects
 
 - **Instruments (`src/ui/instruments.ts`, pure)** — readings in display units with real-instrument
-  behaviour (the VSI lags, needles are smoothed), plus the stall warning, gear lights and warnings.
+  behaviour (the VSI lags, needles are smoothed), plus the stall warning and gear lights.
+- **Gear warning (`src/ui/gearWarning.ts`, pure)** — like the real 172RG: gear not down and locked
+  in flight with the power back or flaps ≥ 20° → intermittent horn + flashing GEAR; handle up on
+  the ground → "GEAR — SQUAT SWITCH" caution; gear-speed cautions.
+- **Loading veil (`src/ui/veil.ts`)** — title, a Cessna silhouette and progress while the world
+  streams in; dismissed by the first key or click (which also unlocks audio) — `?veil=0` skips it.
 - **Gauges (`gauges.ts`)** — the six-pack (airspeed, attitude, altimeter, turn coordinator,
   heading, VSI), tachometer and compact system displays, drawn on canvas; reused for the 3D panel.
 - **HUD (`hud.ts`)** — gauge clusters in the bottom corners, a compass tape at the top, a systems
   strip (throttle, flaps, gear lights, trim, brakes, engine), messages (STALL, CRASHED — reason,
-  landing rating, PAUSED) and the help screen (H). It scales for 1024–1440+ px wide and keeps the
-  middle of the screen clear.
+  landing rating, PAUSED, confirmations for mute/light/time of day) and the help screen (H). It
+  scales for 1024–1440+ px wide (simplified gauge faces below ~112 px) and keeps the middle of the
+  screen clear.
 - **Audio (`src/audio`)** — synthesised with Web Audio: the Lycoming engine (firing frequency from
   RPM, harmonics, prop buzz, exhaust rumble), wind, the stall horn, tyre chirps, gear and flap
   motors, the crash. Starts on the first key press or click (browser rule).
-- **Effects (`src/fx`)** — pooled GPU particles for the crash fireball, smoke column and debris,
-  and tyre smoke on touchdown.
+- **Effects (`src/fx`)** — pooled GPU particles for the crash fireball (blackbody colours), a
+  smoke column that drifts with the wind, burning debris and embers, and tyre smoke/dust/spray on
+  touchdown; sprites that would cover too much of the screen fade out.
 
 ## 12. `window.sim` — the page's state for tools
 

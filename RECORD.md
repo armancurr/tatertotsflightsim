@@ -139,3 +139,34 @@ Testing** (separate app bundle in `~/Library/Caches/ms-playwright/chromium-*`, o
 browser (which launches Google Chrome) is no longer used; automation instances were killed.
 (The shared node_modules copy of playwright-core also maps channel 'chrome' to Chrome for Testing
 as a stop-gap for agent worktrees still on the old scripts — it reverts on `npm install`.)
+
+## 2026-09-22 — Wave 3 merged; stop point #2
+
+JT asked for a stop point, full merge and clean-up. All ten wave-3 agents wrapped up and committed;
+every branch was merged into `main` (one conflict: `tests/world/towns/ribbon.test.ts` moved to
+`tests/world/roads/` by the roads agent — kept the move). Worktrees and `wt/*` branches deleted;
+the agents' working screenshots archived locally in `qa/tmp/wave3/` (git-ignored).
+
+- **aircraft** — retractable gear finished (the black belly slabs were the cabin floor poking
+  through the skin; now real well openings, recessed liners, flush stow, door sequence, drag
+  brace); faint photographic prop disc (no pink ring); wreck state (wired as `visual.crashed` /
+  `crashAge`); fin-top collision point 5.95 → 5.45. Not done: eye point, interior, build time.
+- **airport** — full renderer replaced the interim one (12 draw calls + 7 shadow casters).
+- **buildings** — archetype meshes + facade shader, ~10,650 buildings, worker placement.
+- **roads** — junction network, markings, bridges, street lights, worker streaming. No cars.
+- **traffic** — ships/boats/air traffic simulated and modelled; not rendered.
+- **terrain** — detail textures, realistic farmland, town lots, rock/snow shading; fixed the
+  "cobblestone" town ground (it was a shader-painted woodlot inside the airport clearance).
+- **water** — wave trains, FFT detail, worker bathymetry, continuous river, calm lakes.
+- **sky** — cloud shadows on every material, sliced env re-bake, smooth shadow filter; volumetric
+  clouds built but off by default (3–5 ms).
+- **trees** — worker-generated forests, 7 species, impostors, grass; CPU 5.4 → ~0.03 ms/frame.
+- **ux** — 172RG gear warning, simplified small gauges, loading veil, speed FOV, fire rework.
+
+Under ten parallel agents the machine hit a load average of ~90 and many 5 s test timeouts
+appeared; on the quiet merged `main` the whole suite passed: **142 files, 1,432 tests, 27 s**
+(one heavy terrain functional test got an explicit 60 s timeout). Typecheck clean, build OK.
+Headless check of the merged build (Chrome for Testing): clean console, 227 draw calls, ~2 M
+triangles, every system < 0.03 ms CPU. The main dev server had to be restarted after the merge
+(Vite cached the deleted `src/world/water.ts`). New docs: `README.md`, `ELEVATOR_PITCH.md`,
+`ARCHITECTURE.md`, generated `REPO_MAP.md` (`npm run repo-map`), rewritten `RESUME.md`.

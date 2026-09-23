@@ -47,10 +47,12 @@ fly-by and orbit — blend smoothly into each other, and a steam-gauge HUD shows
   workers and culling; it reports its own frame rate on `window.sim`.
 
 ## Where it stands (2026-09-22)
-The full flight works end to end and holds 60 fps on an Apple M2 Max. A wave of realism work
-(volumetric clouds, detailed buildings, moving cars, ships, other aircraft, better terrain,
-water and trees, the full airport, audio and effects polish) was in progress and is merged at the
-stop point; `RESUME.md` says exactly what is done and what is next.
+Playable end to end — take-off, climb, turns, stalls, crashes and landings — at 60 fps on an Apple
+M2 Max, with ~1,430 automated tests green. The world has real forests, farmland, a coastline with
+turquoise shallows, a flowing river, towns with detailed buildings, roads with bridges, and a full
+airport with working glide-slope lights. Still to do (see `RESUME.md`): drawing the ships, boats and
+other aircraft (already simulated), moving cars, making the volumetric clouds fast enough to be the
+default, sharper mountain shapes, the cockpit eye point, and a final visual-QA pass.
 
 ---
 

@@ -43,11 +43,35 @@ const FOLDERS = {
   'src/world/terrain': 'Drawing the ground: level-of-detail terrain tiles built in background workers, and the terrain shader.',
   'src/world/towns': 'Towns, the coastal city, villages and farms: where buildings go and how they are drawn.',
   'src/world/vegetation': 'Trees and forests: where each tree goes, the tree models, far-away tree images, and streaming them around the camera.',
+  'src/world/grass': 'Grass tufts and wildflowers drawn close to the camera when flying low.',
+  'src/world/traffic': 'Other traffic: boats, ships, the marina and wakes; circuit aircraft, crossing aircraft, a helicopter and airliners. Simulated and modelled — not drawn yet.',
+  'src/world/traffic/models': 'Procedural 3D models for traffic: boats, sails, ferry, container ship, tanker, marina, C172, PA-28, helicopter, airliner.',
+  'src/world/water': 'The sea, lakes and river: waves, ripples, water depth and shore foam, the river ribbon.',
   tests: 'The automated tests (Vitest). Folders mirror `src/`; plus cross-cutting fuzz, functional-flight and browser end-to-end tests.',
   'tests/e2e': 'End-to-end tests: start the real game in a headless test browser and drive it with the keyboard.',
   'tests/functional': 'Whole flights flown by a scripted pilot against the real physics: take-off, turns, stall, landing, crashes.',
   'tests/fuzz': 'Property ("fuzz") tests with fast-check: thousands of random inputs must never break the rules.',
   'tests/support': 'Shared test helpers: the scripted pilot, test worlds, the e2e browser/server harness.',
+  'tests/aircraft': 'Tests for the 3D aircraft: gear kinematics, prop disc, wreck, geometry anchors.',
+  'tests/audio': 'Tests for the sound system (with a fake Web Audio context).',
+  'tests/camera': 'Tests for the camera rig: modes, transitions, ground clearance, shake.',
+  'tests/fx': 'Tests for the particle effects: pooling, fire/smoke simulation, shake.',
+  'tests/game': 'Tests for the loop, FPS meter, interpolation, `window.sim` and the systems layer.',
+  'tests/input': 'Tests for control smoothing, key bindings and the DOM input adapters.',
+  'tests/math': 'Tests for the vector and quaternion helpers.',
+  'tests/physics': 'Tests for every rule of the flight model: lift, drag, thrust, stall, ground, landing, crash, reset.',
+  'tests/render': 'Tests for the renderer and atmosphere maths: sky, fog, clouds, shadows, budget controllers.',
+  'tests/ui': 'Tests for the instruments, gauges, HUD layout, gear warning, messages and loading veil.',
+  'tests/world': 'Tests for the world: noise, layout, heightfield, landcover, runway, environment, plus a whole-flight LOD test.',
+  'tests/world/airport': 'Tests for the airport plan, markings, lights/PAPI, obstacles and renderer.',
+  'tests/world/fixtures': 'Saved reference data for tests (the protected-ground snapshot).',
+  'tests/world/grass': 'Tests for grass placement and geometry.',
+  'tests/world/roads': 'Tests for the road plan, ribbons, markings and depth pull.',
+  'tests/world/terrain': 'Tests for terrain tiles, the quadtree, blending and detail textures.',
+  'tests/world/towns': 'Tests for building placement, archetypes, obstacles, LOD and the road network used by towns.',
+  'tests/world/traffic': 'Tests for traffic paths, sea routes, wakes, air circuits and models.',
+  'tests/world/vegetation': 'Tests for tree placement, species, obstacles, LOD, pooling and streaming.',
+  'tests/world/water': 'Tests for waves, bathymetry, river and the water system.',
 };
 
 const summaries = {
@@ -65,6 +89,9 @@ const summaries = {
   'PLAN.md': 'The build plan: architecture contracts, agent rules and the wave history.',
   'RECORD.md': 'The build log: what was done, decisions, bugs found and their causes.',
   'public/favicon.svg': 'The browser-tab icon (a small aircraft).',
+  'src/math/quat.ts': 'Quaternion helpers: multiply, rotate vectors, integrate angular velocity, slerp.',
+  'src/math/vec3.ts': 'Vector helpers plus clamp, lerp, smoothstep, moveToward and angle wrapping.',
+  'tests/world/fixtures/protected-snapshot.json': 'Terrain heights/landcover near towns, roads, river, lakes and the airport, frozen so realism work can never move them.',
 };
 
 function firstDocSentence(text) {
@@ -102,6 +129,9 @@ function describe(rel, full) {
     const d = firstDocSentence(readFileSync(full, 'utf8'));
     if (d) return d;
     if (rel.endsWith('.test.ts')) return 'Tests.';
+    const base = rel.slice(rel.lastIndexOf('/') + 1);
+    if (base === 'index.ts') return 'Public entry point of this folder (re-exports its API).';
+    if (base === 'types.ts') return 'Shared type definitions for this folder.';
   }
   if (ext === '.html') return 'Developer preview page.';
   if (ext === '.md') return 'Documentation.';

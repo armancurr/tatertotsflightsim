@@ -1,210 +1,204 @@
-# RESUME — Flight Simulator handoff
+# RESUME.md — Flight Simulator: where we are, what's left, how to continue
 
-> **Paste everything below this line into a fresh Claude Code session (Opus) to take over.**
+**Read this first if you are a new agent (or team) picking up this project.**
+Last updated: 2026-09-22 (evening) · stop point requested by the owner (JT) · `main` is the only
+branch, the tree is clean, no worktrees, **1,432 / 1,432 tests green**, typecheck clean, build OK.
+
+> **Paste this to start a new orchestrator session:**
+> You are the AI orchestrator for `/Users/jt/Code/Flight Simulator` (note the space in the path),
+> a browser 3D flight simulator (Cessna 172RG, Three.js r186, TypeScript, Vite 8, Vitest 5). The
+> spec is `/Users/jt/Code/coeus/EX_PROMPT_7_FLIGHT_SIM.md`. Read `RESUME.md` (this file),
+> `ELEVATOR_PITCH.md`, `ARCHITECTURE.md`, `PLAN.md` (agent rules) and skim `RECORD.md` and
+> `REPO_MAP.md`. Run `npm test` and `npx tsc --noEmit -p .`, start `npm start` (127.0.0.1:8092) in
+> the background, then work through §5 below in waves of up to 10 Opus sub-agents, each in its own
+> git worktree on file-disjoint modules, test-first (unit + fast-check fuzz + functional), merging
+> each branch into `main` when it reports. Fly and photograph the sim yourself in a **Google Chrome
+> for Testing** window — never the owner's own Chrome (§2).
 
 ---
 
-You are the **AI orchestrator** taking over a browser-based 3D flight simulator that is roughly
-two-thirds built. Your job: finish it to the spec, running a team of Opus sub-agents, verifying
-everything yourself in the on-screen Chrome window, TDD throughout. Work exactly from where the
-previous team stopped — do not restart or rewrite working modules.
+## 0. The 60-second version
 
-## 0. Orient yourself (first 10 minutes)
+- **It works end to end.** Load the page → the 172RG sits on runway 36 → take off, climb, turn,
+  stall and recover, crash (wreck + fire + smoke) and reset, fly the approach and land (rated
+  butter…hard). A keyboard-only QA flight in RECORD.md averaged **59.9 fps** with a clean console.
+- **The world is real-looking:** worker-streamed terrain with realistic farmland, forests of
+  individual trees (7 species + impostors), hedgerows, grass near the ground, a coastline with
+  turquoise shallows and surf, a flowing river, lakes, ~10,600 detailed buildings, a road network
+  with markings and bridges, a full airport with a working PAPI, a physically based sky with
+  cumulus, cloud shadows on everything, aerial haze, four times of day.
+- **Physics** is a pure 6-DOF Cessna 172RG model calibrated to the POH (stall 48/42 kt, Vy climb
+  ~700 fpm, glide ~9:1), with ground effect and a squat-switch gear interlock.
+- **Not finished** (§5): ships/boats/AI aircraft are simulated but **not drawn**; **no cars** yet;
+  volumetric clouds exist but are **off** (too slow); mountains not reshaped; cockpit eye point;
+  a GPU-budget pass (the terrain shader was ~4.8 ms before its rewrite and is unmeasured since);
+  final visual QA photos at 1440 and 1024; audio never listened to in a browser.
 
-1. The project: **`/Users/jt/Code/Flight Simulator`** (note the space — quote paths in shell). A git
-   repo on `main`, clean at the handoff commit. Owner: JT (jared@jaredtate.com).
-2. The spec (read it fully — it defines "done"): **`/Users/jt/Code/coeus/EX_PROMPT_7_FLIGHT_SIM.md`**.
-   JT's extra requirements on top of the spec:
-   - the aircraft must look like a **real Cessna 172** (we model the **172RG Cutlass RG** — the real
-     retractable-gear 172 — so the spec's gear control is authentic);
-   - everything in the world "as vivid and real as possible";
-   - code lives in the Code folder (not the Desktop folder the spec names) as a real git repo;
-   - **TDD with unit + fuzz (fast-check) + functional tests** for everything;
-   - act as orchestrator: parallel **Opus** sub-agents (JT allowed up to 10 at a time, each in its own
-     git worktree), and **visually QA and play it like a human** in the Chrome window.
-3. Read, in order: `PLAN.md` (architecture, contracts, agent rules), `RECORD.md` (build log, bugs and
-   causes), `docs/TESTING.md` (test layers), `src/types.ts` (contracts + **frame conventions**),
-   `src/config.ts` (every tunable; sections are owned by modules).
-4. Run: `cd "/Users/jt/Code/Flight Simulator" && npm test` → expect **99 files / 1017 tests green in
-   ~20–35 s** (includes e2e in headless Chrome). `npx tsc --noEmit -p .` → 0 errors.
-5. Start the dev server in the background: `npm start` → http://127.0.0.1:8092 (Vite, HMR).
-6. Open it in the Playwright MCP Chrome window (the "Chrome window on the screen" of the spec), resize
-   to 1440×900, wait until `window.sim.fps > 0`, and look. You should see the 172RG on runway 36 with
-   FAA markings, mountains north, cumulus, and the steam-gauge HUD, at 60 fps with no console errors.
-   Reference photos from the handoff flight: `qa/screenshots/01..05-*.png`.
+## 1. The bars (run ALL before calling anything done)
 
-## 1. Environment gotchas (learned the hard way)
+```sh
+cd "/Users/jt/Code/Flight Simulator"
+npm test                    # 142 files, 1,432 tests, ~30 s — unit, fuzz, functional, e2e (headless Chrome for Testing)
+npx tsc --noEmit -p .       # 0 errors
+npm run build               # vite build OK (one ~1.4 MB main chunk — known, fine)
+npm run repo-map            # regenerate REPO_MAP.md after adding/moving files
+```
 
-- **npm cache is root-owned** (`~/.npm` EACCES). Install with
-  `npm_config_cache=<your scratchpad>/npm-cache npm install -D <pkg>`. Everything needed is installed
-  (three 0.186, vite 8, vitest 5, typescript 5.9, fast-check, playwright 1.63, happy-dom).
-- **Playwright's bundled browsers are not downloaded**; `scripts/shot.mjs` and the e2e tests launch the
-  installed **Google Chrome** (`channel: 'chrome'`, `--use-angle=metal`) → real M2 Max GPU WebGL in
-  headless mode. `node scripts/shot.mjs <url> <png> --size 1440x900 --wait 8000 --eval "<js>"` prints
-  console errors/failed requests and exits 1 on any.
-- **Worktrees**: the Agent tool's built-in `isolation: "worktree"` needs the session cwd to be a git
-  repo; if your session starts in `~/Desktop` it won't work. Create them manually:
-  `git worktree add ".worktrees/<name>" -b "wt/<name>" && ln -s "$PWD/node_modules" ".worktrees/<name>/node_modules"`.
-  `.worktrees/` is git-ignored, Vite ignores it and Vitest excludes it. **Gotcha:** because
-  `vite.config.ts` ignores `**/.worktrees/**` for file watching, a Vite server started *inside* a
-  worktree doesn't hot-reload; worktree agents should run Vite with a scratch config
-  (`--config <scratch>/vite.wt.config.mjs` that omits `server.watch.ignored`) on their own port 81xx.
-  Also: in a worktree, imports of files missing from the snapshot can resolve to the main checkout via
-  the symlinked node_modules — test results there may mix trees.
-- **HMR full-reloads reset the sim.** Any edit to `src/config.ts` or a module imported by `main.ts`
-  reloads the page. Don't play-test in the main tree while agents are editing it; use worktrees for
-  agents and keep `main` stable while you fly.
-- **Playwright MCP**: `browser_run_code_unsafe` is the way to fly (hold keys with
-  `page.keyboard.down/up` + `waitForTimeout`, read `window.sim` between). Save photos with absolute
-  paths into `qa/screenshots/`. The MCP writes snapshot/console logs to `~/Desktop/.playwright-mcp/`
-  (outside the project — delete that folder at the end).
-- Foreground `sleep` is blocked in this harness; to wait for agents, end the turn (you are notified
-  when each finishes) or run `sleep N` with `run_in_background: true` as a fallback timer.
+- No `.skip`, `.only` or `todo` anywhere. Heavy functional tests set their own timeouts
+  (`vi.setConfig({ testTimeout: … })`) — the suite flakes if many test runs share the CPU (10
+  parallel agents pushed the load average to ~90 and dozens of 5 s timeouts appeared; every one
+  passed on a quiet machine). Run the final suite with the machine idle.
+- Fast-check failures print a seed: replay with `FC_SEED=… FC_PATH=… npx vitest run <file>`
+  (`docs/TESTING.md`).
 
-## 2. What exists (state at handoff)
+## 2. Environment gotchas (learned the hard way)
 
-~29.7k lines of TypeScript in `src/`, ~15.9k lines of tests, 1017 tests (unit, fast-check fuzz,
-scripted-flight functional, headless-Chrome e2e). Every module below is merged on `main`.
+- **Never automate the owner's Google Chrome.** On 2026-09-22 automation instances of
+  `/Applications/Google Chrome.app` (the Playwright MCP window, and agents' headless screenshots
+  with `channel: 'chrome'`) hijacked JT's Dock icon — his normal profile wouldn't open. All
+  automation now uses **Google Chrome for Testing** from `~/Library/Caches/ms-playwright/chromium-*`
+  (`scripts/shot.mjs` and `tests/support/e2e.ts` refuse to fall back; override with
+  `TEST_BROWSER=/path`). **Do not use the Playwright MCP browser tools** (they launch Google Chrome).
+  To show JT the sim, open a headed Chrome for Testing window with its own `--user-data-dir`.
+- **npm cache is root-owned** (`~/.npm` EACCES): install with
+  `npm_config_cache=<scratch>/npm-cache npm install -D <pkg>`.
+- **Worktrees:** the Agent tool's `isolation: "worktree"` needs the session cwd to be a git repo
+  (it isn't if the session starts in `~/Desktop`) — create them by hand:
+  `git worktree add ".worktrees/<n>" -b "wt/<n>" && ln -s "$PWD/node_modules" ".worktrees/<n>/node_modules"`.
+  `.worktrees/` is git-ignored; Vite's watch-ignores are anchored to each checkout's root, so a Vite
+  server inside a worktree hot-reloads (give each agent its own port 81xx; never 8092).
+- **Restart the main dev server after big merges** that delete/rename files — Vite's module graph
+  cached `src/world/water.ts` after it became a folder and 404'd.
+- **HMR full-reloads reset the sim**: don't play-test on `main` while someone edits it.
+- Foreground `sleep` is blocked in the harness: end the turn to wait for agents (you're notified),
+  or run `sleep N` with `run_in_background: true` as a fallback timer.
 
-| Module | Path | State |
+## 3. What exists (all merged on `main`)
+
+| Area | Where | State at the stop point |
 | --- | --- | --- |
-| Contracts | `src/types.ts`, `src/config.ts`, `src/math/*`, `src/physics/frames.ts`, `src/world/runway.ts` | ✅ final. World +X east, +Y up, +Z south (north = −Z); body = three.js object frame (−Z nose). |
-| Physics (pure) | `src/physics/*` — `step(state, controls, dt, env?)`, `createInitialState`, `createApproachState`, `approachControls`, `createTrimmedState`, `solveTrim`, `liftCoefficient`, `dragCoefficient`, `stallAlphaRad`, `classifyTouchdown`, `simStateLabel` | ✅ 6-DOF C172RG, calibrated to POH (Vs1 49.5, Vs0 42.4 KIAS, roll 230 m, Vy 679 fpm, cruise 127 KTAS, glide 9.6:1, roll rate 44°/s). Gear spring-dampers, friction, stall + wing drop, touchdown rating, crash reasons, over-G/overspeed failure. 115 tests. `step` ≈ 1–3 µs. |
-| Input (pure + DOM) | `src/input/*` — `createControlState`, `updateControls`, `resetControls`, `createInputManager` | ✅ smoothed keyboard/mouse-yoke/gamepad, actions (R, Shift+R, P, H, I, M, N, C, 1–4). |
-| Cameras (pure) | `src/camera/*` — `createCameraRig`, `setCameraMode`, `nextCameraMode`, `snapCamera`, `updateCameraRig`, `shakeTarget`, `applyCameraPose` | ✅ cockpit / chase / external fly-by / orbit, eased transitions, ground clearance, shake. |
-| Loop | `src/game/loop.ts` (FixedStepLoop 120 Hz), `fps.ts`, `interpolate.ts` | ✅ |
-| `window.sim` | `src/game/simApi.ts` | ✅ airspeed, altitude, heading, pitch, roll, throttle, gear, flaps, state, fps + verticalSpeed, altitudeAGL, aoa, rpm, engine, camera, paused, crash, lastLanding, perf{fps,avg,min,onePercentLow,longFrames,frames}, position, time; actions reset(), resetApproach(), setCamera(m), pause(), resume(). |
-| App wiring | `src/game/app.ts` (core frame), `src/game/extras.ts` (HUD, audio, fx, airport, trees, towns, roads; `?no=trees,towns,roads,audio,fx,hud,airport` disables systems for profiling), `src/main.ts` | ✅ integrated and running on `/`. |
-| World (pure) | `src/world/{noise,regional,polyline,layout,fields,heightfield,landcover,environment}.ts` — `getLayout()`, `terrainHeight`, `terrainNormal`, `landcoverAt`, `surfaceAt`, `treeDensity`, `createEnvironment()` (+ `registerObstacleSource`) | ✅ airport plateau at 30 m, mountains to 2.6 km north, coast/bay/islands south, 2 lakes, river, 26 towns, 27 roads, 2 bridges. |
-| Terrain + water | `src/world/terrain/*` (quadtree LOD, worker-built tiles, skirts, pooled), `src/world/water.ts`, entry `src/world/terrainIndex.ts` | ✅ 60 fps all views, ~80–115 draw calls, 0.3–1M tris. Realism TODOs below. |
-| Atmosphere / renderer | `src/render/*` — `createRenderer` (HDR, reversed depth, 4× MSAA, custom "Filmic Neutral" tone map, dynamic-resolution controller), `createAtmosphere` (physical sky, sun + shadows following the aircraft, global aerial-perspective fog on every `fog: true` material, PMREM env, ~420 instanced cumulus + cirrus, lens flare, 4 time-of-day presets) | ✅ ~4 ms/frame. |
-| Aircraft model | `src/aircraft/*` — `createAircraft()` → `{ root, setVisualState, setPanelDrawer, landingLight, dispose }` | ✅ lofted fuselage, NACA 2412 wing, struts, swept fin, retractable gear anim, prop + blur disc, pivoted surfaces, N172JT livery, glass, nav/strobe/beacon/landing lights, cockpit interior with live panel (HUD's `drawPanel`). ~128k tris, ≤60 draws. |
-| Instruments + HUD | `src/ui/*` — `createInstrumentModel`, `updateInstruments`, gauge drawers, `drawPanel`, `createHud` | ✅ six-pack + tach steam gauges (bottom corners), compass tape, systems strip (throttle, flaps, gear lights, trim, brakes, engine), stall/crash/landing/paused messages, help (H). 1440 & 1024 layouts. |
-| Audio | `src/audio/*` — `createAudio`, `createAudioInputTracker`, `runAudioSelfTest` | ⚠️ synthesised O-360 engine, wind, horn, tyres, motors, crash — **never listened to in a browser**. |
-| Effects | `src/fx/*` — `createEffects` (crash fireball/smoke/debris, touchdown smoke, pooled), `cameraShakeFor`, `speedFovOffset` | ⚠️ wired; **shaders never visually checked**; `speedFovOffset` not applied yet. |
-| Airport | `src/world/airport/{plan,markings,font,lights,obstacles,materials}.ts` (tested data layer) + **`interim.ts`** (orchestrator stop-gap: merged FAA paint mesh, box massing for hangars/terminal/tower, lights as screen-sized points) | ⚠️ the full `createAirport()` renderer is **not built** (see §4.1). Airport obstacles are **not registered** yet. |
-| Vegetation | `src/world/vegetation/*` — `createVegetation` (deterministic placement, 4 species, impostor atlas, pooled chunk streaming, LOD, obstacle hash) | ⚠️ wired and running, no console errors, but **never visually QA'd**; tree lines visible at distance only. |
-| Towns + roads | `src/world/towns/*`, `src/world/roads/*` — `createTowns`, `createRoads` (13k buildings, farmsteads, streets, draped ribbons, obstacles) | ⚠️ **interim renderers** (plain boxes, grey ribbons); no preview/screenshots yet. |
-| Tests | `tests/**` — unit per module, `tests/fuzz/*` (56 cross-cutting properties), `tests/functional/*` (12 scripted-pilot missions: takeoff/climb, turns, stall/recovery, terrain crash + reset, approach + landing + rollout, gear-up, ditching), `tests/e2e/app.e2e.test.ts` (11: title, no console errors/failed requests, window.sim fields, throttle, cameras 1–4/C, pause, Shift+R, R, gear/flaps, resize 1440→1024, fps) | ✅ `docs/TESTING.md` explains layers and fast-check seed replay (`FC_SEED`, `FC_PATH`, `FUZZ_RUNS`). |
+| Contracts | `src/types.ts`, `src/config.ts`, `src/math`, `src/physics/frames.ts`, `src/world/runway.ts` | ✅ World +X east, +Y up, +Z south; body −Z = nose. One config file for every tunable. |
+| Physics | `src/physics` | ✅ 6-DOF C172RG; POH-calibrated; ground effect; gear interlock (1.5 s airborne); crash reasons; trim solver. |
+| Input / cameras / loop / `window.sim` | `src/input`, `src/camera`, `src/game` | ✅ Smoothed keys (elevator relaxes slowly), mouse-yoke, gamepad; 4 cameras + transitions; 120 Hz fixed step; `window.sim` with teleport/debug/perf/render. |
+| Systems layer | `src/game/systems/*.ts` | ✅ Auto-discovered plug-ins: loading, camerafx, terrain, water, airport, roads, towns, vegetation, grass, fx, audio, hud. `?no=` switches. |
+| Terrain | `src/world/terrain`, `fields.ts`, `landcover.ts`, `heightfield.ts` | ✅ Worker quadtree; farmland/towns/rock/snow shader; 8 detail textures; colour geomorph. ⚠️ GPU cost unmeasured after rewrite; mountains not reshaped. |
+| Water | `src/world/water/` | ✅ Wave trains, FFT ripples, worker bathymetry (shallows/surf/foam), river ribbon, calm lakes, `waterSurfaceAt()`. ⚠️ River too dark; GPU unmeasured. |
+| Sky & rendering | `src/render` | ✅ Physical sky, HDR + reversed depth, filmic tone map, aerial fog, billboard cumulus, **cloud shadows on every material**, smooth shadow filter, sliced env re-bake. ⚠️ Volumetric clouds built but off (3–5 ms). |
+| Airport | `src/world/airport` | ✅ Full renderer: pavement, worn FAA paint, tower, hangars, FBO, fuel, windsock, fence, 15 parked aircraft, cars, signs, ~290 lights, 2 working PAPIs, obstacles. |
+| Roads | `src/world/roads` | ✅ Junction network, surfaces + markings, farm tracks, bridges + guard rails, ~4,100 street lights, worker streaming, depth pull. ❌ **No cars.** |
+| Towns | `src/world/towns` | ✅ ~10,600 buildings: roof archetypes, facade shader, glass towers, churches, farms, dusk windows, worker placement, far LOD. ⚠️ No building shadows from altitude. |
+| Trees & grass | `src/world/vegetation`, `src/world/grass` | ✅ 7 leaf-card species, back-lit leaves, impostors, hedgerows/orchards/riparian, grass + flowers near the ground; CPU 5.4 → 0.03 ms. ⚠️ Grass barely visible; some species polish. |
+| Traffic | `src/world/traffic` | ⚠️ **Simulated, not drawn**: marina + 214 moored boats, yachts that tack, ferry, container ship, tanker, lake boats, wakes; runway-36 circuits, crossers, helicopter, airliners + contrails; models built. No renderers, no system files. |
+| Aircraft | `src/aircraft` | ✅ Finished retractable gear (belly wells, flush stow, door sequence), faint prop disc, wreck state, live panel. ⚠️ Eye point too low, build 1.85 s, no exterior panel lines. |
+| HUD / UX | `src/ui` | ✅ Steam gauges (simplified faces < 112 px), compass tape, systems strip, 172RG gear warning (horn + GEAR + squat caution), messages, help, loading veil. |
+| Audio / FX | `src/audio`, `src/fx` | ⚠️ Synthesised engine/wind/horns/tyres/crash — **never listened to in a browser**. Fire/smoke reworked (blackbody fire) but sprites still look like discs/icons. |
+| Tests | `tests/**`, `docs/TESTING.md` | ✅ 1,432: unit, fast-check fuzz, scripted-pilot missions, keyboard take-off regression, e2e in headless Chrome for Testing. |
+| QA tools | `scripts/shot.mjs`, `scripts/qa-pilot.js`, `preview/*.html` | ✅ Headless screenshots; an in-page keyboard-only pilot (`takeoff`, `climbTo`, `turn`, `stallAndRecover`, `flyInto`, `approachAndLand`); per-module preview pages. |
 
-Previews (dev-only pages, great for focused visual work): `/preview/terrain.html?x=&y=&z=&heading=&pitch=&atmo=1`,
-`/preview/atmosphere.html?y=&heading=&pitch=&tod=`, `/preview/aircraft.html?view=front34|side|rear34|top|cockpit|belly&gear=&flaps=&rpm=`,
-`/preview/hud.html?ias=&alt=&hdg=&vs=&pitch=&roll=&stall=1&crash=1&landing=smooth&cam=cockpit&help=1`.
+Latest photos: `qa/screenshots/stop-01…04-*.png` (runway chase, cockpit, coast at 1,200 ft, forested
+mountains) and `qa/screenshots/airport-*.png`. The wave-3 agents' working screenshots are archived
+locally (git-ignored) in `qa/tmp/wave3/<area>/`.
 
-## 3. Done lines — honest status
+## 4. Done lines of the spec — honest status
 
-| # | Spec done line | Status |
+| # | Done line | Status |
 | --- | --- | --- |
-| 1 | Every test passes, none skipped (`npm test`) | ✅ now (1017/1017). Keep it that way after every change. |
-| 2 | Loads and shows the aircraft on the runway ("Flight Simulator" at http://127.0.0.1:8092) | ✅ |
-| 3 | Full flight flown in Chrome and photographed: take-off roll, climb, left turn, right turn, stall + recovery, crash into terrain + reset, airport approach, landing | ⏳ take-off roll + climb photographed (`qa/screenshots/01–05`). **Turns, stall/recovery, crash/reset, approach, landing still to fly and photograph.** |
-| 4 | Every camera view (cockpit, chase, external, orbit) works with smooth transitions, photographed | ⏳ all four work and were photographed once; cockpit needs fixes (§4.2); transitions not yet photographed mid-blend. |
-| 5 | Instruments readable at 1440 and 1024 without covering the view | ⏳ HUD built for both; verified in HUD preview; **not yet verified in the live app at 1024**. |
-| 6 | `window.sim` exposes the fields; after a full flight fps stayed smooth; console clean, no failed requests | ⏳ API ✅; steady 60 fps ✅; **startup hitch ~1.7 s** (min fps 0.6, 3 long frames) to fix; full-flight perf stats not yet recorded. |
-| 7 | Whole suite green after the last change of play testing, perf pass and visual QA | ⏳ (final step). |
+| 1 | Every test passes, none skipped (`npm test`) | ✅ 1,432/1,432 at the stop point |
+| 2 | Loads at http://127.0.0.1:8092 ("Flight Simulator") with the aircraft on the runway | ✅ |
+| 3 | Full flight flown in Chrome and photographed (take-off roll, climb, left & right turn, stall + recovery, crash + reset, approach, landing) | ⏳ Flown end to end on 2026-09-22 before the wave-3 merges (RECORD.md "Full-flight play test #1"; photos in the git-ignored `qa/tmp/fl-*.png`). **Re-fly and re-photograph with the final visuals into `qa/screenshots/`.** The QA pilot's flare is late (landing rated HARD) — improve `approachAndLand()`. |
+| 4 | Every camera view + smooth transitions, photographed | ⏳ All four work; photograph each + a mid-transition frame. |
+| 5 | Instruments readable at 1440 and 1024 without covering the view | ⏳ Built for both; 1440 checked live; **1024 live photo still owed**. |
+| 6 | `window.sim` fields; smooth fps after a full flight; clean console, no failed requests | ⏳ API ✅; clean console ✅; record `window.sim.perf` after the final full flight. |
+| 7 | Suite green after the last change of play testing, perf pass and visual QA | ⏳ Final step. |
 
-## 4. Remaining work, in priority order
+## 5. What's left — prioritized
 
-### 4.1 Airport renderer (replace `src/world/airport/interim.ts`)
-Build `src/world/airport/index.ts` → `createAirport(scene, env, { heightAt })` →
-`{ update(camera, time, sunElevationDeg), dispose(), papiState(end) }` per the airport agent's plan
-(see RECORD.md §"Wave 2 reports" and the shelved functional test
-`docs/pending/airport.functional.test.ts.txt` (move it to `tests/world/airport/airport.functional.test.ts`
-first and watch it fail — it expects meshes named `pavement`, `markings`, `parked-aircraft`, `cars`; draw calls ≤ ~40; nothing below
-ground). Pavement mesh from `plan` pieces + fillets draped on `heightAt`, paint from `runwayMarkings`/
-`taxiMarkings`, 3 m shoulders, merged structures (arched/gabled hangars, terminal with glass, tower
-with octagonal cab, fuel station, windsock mast, fence), instanced parked Cessnas + cars, windsock
-cloth, lights as one `THREE.Points` with screen-sized sprites and **working PAPIs** (`papiUnitWhiteness`)
-and the rabbit. Register `airportObstacles(plan)` with `env.registerObstacleSource`. Shaders in
-`materials.ts` have never compiled — expect small GLSL fixes. Then swap it into `extras.ts`.
+**A. Finish what's half-built (biggest visible gains)**
+1. **Traffic renderers** (`src/world/traffic/ships.ts`, `airTraffic.ts` → `createShips`,
+   `createAirTraffic`) and system files `src/game/systems/ships.ts`, `airTraffic.ts`: one batched
+   mesh for vessels + marina, dynamic wake mesh, spray points, lights; one batched mesh for
+   aircraft, prop/rotor discs, lights/far dots, contrail ribbons (~10 draw calls). Traffic clock
+   pauses with the sim, `?tt=` override, re-anchor on teleport. Time-slice the 160 ms sea-plan
+   validation. The API and plan are in the traffic commit messages (`git log -- src/world/traffic`).
+2. **Cars** (`src/world/cars/**`, `src/game/systems/cars.ts`, `world.cars` config): use the roads'
+   `activeRoads()` lane graph (pieces, nodes, speed limits) and `RoadSurface.height(piece, s,
+   across, hw)`; apply the same lift + depth pull (`DEPTH_GLSL`) in the car shader. Instanced
+   sedans/SUVs/pickups/vans/trucks/buses, right-hand traffic, parked cars, dusk headlights.
+3. **Volumetric clouds under ~2 ms**, then make them the default: quarter-pixel temporal updates,
+   fewer light samples, coarser steps inside clouds, distance LOD on detail noise; tune lighting
+   (darker bases, stronger cauliflower detail). Remove or fix `?clouddebug=1`.
 
-### 4.2 Cockpit and aircraft polish (seen in `qa/screenshots/03-climb-cockpit.png`)
-- The prop **blur disc renders as a bright pink/red ring** (the painted blade-tip stripes smeared) —
-  make the disc subtle (low alpha, tip ring barely visible), and nearly invisible from the cockpit.
-  Same ring is too visible from the chase camera.
-- **Pilot eye too low / too far left**: raise `aircraft.geometry.pilotEye.y` by ~0.1–0.15 m (the
-  aircraft agent flagged 0.52 as low) and re-check the view: cowling top + a sliver of spinner over
-  the glareshield, panel in the lower third, the left door post not dominating the left third.
-- HUD systems strip overlaps the lower 3D panel in cockpit mode — fine, but consider the compact
-  cluster option (`CONFIG.hud.cockpitGauges = 'compact'`) if the panel isn't legible at 1024.
-- Aircraft build takes ~1.8 s on the main thread (livery/window canvas textures ~1.2 s) → cache or
-  generate at lower resolution / in a worker. `verticalTailTop.z` (5.95) vs model fin top (~5.45) —
-  align the structural collision point.
-- External fly-by camera frames from rather high above — lower `camera.external.heightOffset` /
-  bring the anchor closer to the flight path so it looks like a spotter at the runway edge.
+**B. Performance (done line 6)**
+4. Measure GPU per system (terrain was 4.8 ms at 300–1,500 ft *before* its rewrite — budget 3 ms;
+   water budget 1.5 ms; towns 2.5 ms) with the GPU timer queries the sky agent added
+   (`?gpu=1`, `?waterGpu=1`). Optimise the worst offenders.
+5. **Start-up:** first frame took ~12 s headless because the terrain system's `ready()` runs into
+   the 8 s timeout; aircraft build is 1.85 s on the main thread (move livery painting to a worker
+   / OffscreenCanvas); airport build 60–68 ms; sea plan 160 ms. The loading veil hides it, but make
+   it fast.
 
-### 4.3 Play-test the full flight in Chrome (done line 3) and fix what it shows
-Fly like a human with keyboard holds (`page.keyboard.down/up`), reading `window.sim` between inputs;
-pause (P) to think. Sequence and photos into `qa/screenshots/` with descriptive names:
-take-off roll → rotate at 55 kt → climb at ~75 kt (retract gear with G after positive climb — the squat
-switch ignores G on the ground) → 30° left turn → 30° right turn → aggressive manoeuvres → power-off
-stall (hold ↓, throttle idle; `sim.state === 'stalled'`) → recovery (↑ + full power) → fly into a
-mountainside (crash + smoke/fire fx) → R reset → Shift+R approach → fly the approach (PAPI) → flare →
-landing (`sim.lastLanding`) → brake to stop. Attempt several landings. Test every control (F/V flaps,
-G gear, [ ] trim, E engine off/on, B parking brake, L light, N time of day, M mute, H help, I HUD,
-Y mouse yoke, P pause), resize to 1024×768, watch the console. Observations from the handoff flight:
-a 0.7 s tap of ↓ at 56 kt did not lift off (it rotated later near 70–80 kt as speed built) and the
-initial zoom climb showed ~1,300–1,600 fpm while trading speed — check the sustained climb at 75 kt is
-~700 fpm and that rotation with a normal ~1–1.5 s pull at Vr is natural.
+**C. Realism polish (owner priority: "as realistic as possible")**
+6. **Cockpit:** raise `aircraft.geometry.pilotEye.y` by 0.10–0.15 m; slimmer left door post;
+   interior detail (seat fabric, headliner, sun visors, fuel selector, breakers, placards, glass
+   reflections); check panel legibility at 1024.
+7. **Mountains:** sharper eroded ridges > 10 km north only (the protected-ground snapshot test
+   guards everything within 1.5 km of towns/roads/river/lakes/airport); rock texture still looks
+   like crazy paving; tri-planar rock on steep faces.
+8. **Buildings:** ground shadows for the city seen from altitude (projected footprint pass);
+   shadow-caster selection along the sun ray; harbour cranes and container stacks; rooftop masts
+   as obstacles; tune `world.towns.chunkSize` (~400) and add a near/far crossfade.
+9. **Water:** lighter, more reflective river; shoreline/mountain reflections in lakes; photos of
+   the river mouth, lakes, golden hour.
+10. **Trees & grass:** taller airfield tufts (0.15–0.3 m) so the grass reads from the chase
+    camera; pine pads, birch/poplar shapes, spruce gaps; octahedral impostors; keep trees out of
+    town building footprints.
+11. **Effects & audio:** regenerate soft, ragged smoke and flame sprites (`smokeTile`,
+    `flameTile` in `src/fx/sprites.ts` — two tests for this were removed, restore them first);
+    lengthen fireball `heatTau`; run `runAudioSelfTest()` in the live page and tune the mix
+    (engine, prop, wind, cabin filter, stall + gear horns, tyres, crash).
+12. **Airport:** larger daytime PAPI dots; terminal facade detail; runway overruns with chevrons;
+    registrations on parked aircraft; ground vehicles.
+13. **Aircraft exterior:** panel-line/rivet normal map, exhaust and oil streaks, wing walkway.
+14. **Physics feel:** the final-approach trim solves to ~53 % nose-down trim with flaps 20 at
+    72 kt and −3…−4° pitch — plausible with the flap model but unusual for a 172; review
+    `cmFlapsFull`/flap pitching. Full-power P-factor drift is realistic but strong for keyboard
+    pilots.
 
-### 4.4 Realism pass on the world (JT: "as vivid and real as possible")
-From the world agent: mountains read as smooth domes (add warped strata, scree, snow streaks in gullies,
-sharper ridges); farmland colours too pastel/pale with too many near-white stubble fields; forest blobs
-on the plains should shrink now that field-shaped woodlots exist; town ground is a saturated
-checkerboard (plots, streets, gardens); the river looks dashed at distance (depth-pull the ribbon,
-animate flow); confirm turquoise shallows + surf. Towns: real building geometry (gable/hip roofs,
-facade shader with window grids, churches, towers, barns, silos), road markings, bridge structures,
-optional moving cars. Trees: preview + screenshots at 60/150/600/2000 m, tune; hoist per-frame
-allocations. Atmosphere TODOs: shadow penumbra hatching, env-map re-bake hitch every 600 m, cloud
-billboard edges, cloud shadows on terrain (the terrain preview has them — check they're on in the app).
+**D. Close the spec (done lines 3–7)**
+15. Re-fly the full flight with `scripts/qa-pilot.js` in a **Chrome for Testing** window
+    (take-off → climb → left/right turns → stall/recover → crash into terrain → reset → Shift+R
+    approach → landing, several landings), photograph each at 1440 into `qa/screenshots/`, record
+    `window.sim.perf` in RECORD.md.
+16. Visual QA at **1440 and 1024**: aircraft, cockpit, terrain, horizon, sky, clouds, lighting and
+    shadows, runway/airport, water, HUD — and each camera plus a mid-transition frame; console
+    clean. Fix only what a done line names; `npm test` once more; commit.
+17. Keep `README.md`, `ARCHITECTURE.md`, `REPO_MAP.md` (`npm run repo-map`), `PLAN.md` and
+    `RECORD.md` current.
 
-### 4.5 Audio + effects verification
-Open the app, press a key (audio unlocks on first gesture), listen/measure with `runAudioSelfTest()`;
-check engine pitch follows RPM, stall horn, touchdown chirp, crash. Build `preview/fx.html` and
-photograph the crash fireball (0.5 s), smoke column (6 s, 15 s) and touchdown smoke; tune. Apply
-`speedFovOffset` in app.ts after `applyCameraPose` (skip in external mode).
+## 6. Where everything lives
 
-### 4.6 Performance pass (done line 6)
-Fix the startup hitch (move towns placement + road build + tree atlas bake + livery textures off the
-first frame: time-slice or worker; show a short loading veil instead of a frozen frame). Profile with
-`?no=` switches and `window.sim.perf`; check draw calls (`renderer.info`), triangle counts, per-frame
-allocations (Chrome performance panel / heap snapshots over a 5-minute flight), terrain worker
-throughput at 150 kt, physics stability. Record before/after fps for every graphics change in RECORD.md.
+- Entry `index.html` → `src/main.ts` → `src/game/app.ts` (`startApp`: renderer, scene, atmosphere,
+  aircraft, physics loop, input, cameras, systems, `window.sim`).
+- Plug-ins: `src/game/systems/<name>.ts` (`{ name, order, create(ctx) }`, see
+  `src/game/systems/types.ts`).
+- Every tunable: `src/config.ts` (sections owned by modules — `aircraft`, `controls`, `camera`,
+  `world.*`, `atmosphere`, `render`, `audio`, `hud`, `fx`).
+- Full file list with one-line descriptions: `REPO_MAP.md`.
+- History, decisions, bugs and their causes: `RECORD.md` (play-test bugs #1 tail-strike crash and
+  #2 keyboard take-off settle-back/gear-up, the Chrome hijack, the agent waves).
 
-### 4.7 Visual QA (done lines 4, 5) and docs
-Photograph once each at **1440 and 1024 wide**: aircraft, cockpit, terrain, horizon, sky, clouds,
-lighting/shadows, runway/airport, water, HUD/instruments, each camera + a mid-transition frame, the
-console. Fix only what a done line names. Write `README.md` (how to run, test, the controls table from
-PLAN.md, how the parts fit — architecture diagram), finish RECORD.md, update PLAN.md statuses.
+## 7. How the team worked (repeat what worked)
 
-### 4.8 Final regression (done line 7)
-`npm test` + `npx tsc --noEmit -p .` + `npm run build`, one more flight (take-off, stall, landing,
-every camera), console checked, commit. Delete `~/Desktop/.playwright-mcp/` (tool cache outside the
-project). (At handoff all `wt/*` branches were merged, their worktrees removed and branches deleted — `main` is the only branch.)
-
-## 5. How to run the team (what worked)
-
-- **Waves of parallel Opus sub-agents on file-disjoint work**, each with a self-contained brief: role,
-  files it owns, exact public API to export, what to build, tests required (unit + fast-check fuzz +
-  functional), preview page + screenshots to take and READ, performance budget, report format.
-  Tell each agent to read `PLAN.md` rules, `src/types.ts`, `src/config.ts` first.
-- **Worktree agents** get `WT="/Users/jt/Code/Flight Simulator/.worktrees/<name>"`, must `cd "$WT"` in
-  every command, never edit the main tree, run Vite on their own port with a scratch config, and
-  **commit on their branch** at the end; you merge (`git merge wt/<name>`), resolve `config.ts`
-  section conflicts by keeping both sections, run the full suite, commit.
-- Agents in the main tree must not commit; you commit after they report.
-- Ask agents for **exact wiring code** in their report; you own `src/game/app.ts` and `extras.ts`.
-- Forward play-test bugs to the owning agent as a failing-test-first request with concrete numbers
-  (e.g. RECORD.md "Play-test bug #1").
-- Keep `PLAN.md`'s wave table and orchestrator prompt current; log every failure + cause in RECORD.md.
-- Suggested next waves (≤10 agents, worktrees):
-  **W3a** airport renderer · **W3b** cockpit/aircraft polish + prop disc · **W3c** towns geometry +
-  road markings + bridges · **W3d** vegetation QA/tuning · **W3e** terrain realism (mountains,
-  farmland, towns ground, river) · **W3f** audio/fx verification + fx preview · **W3g** startup hitch +
-  perf instrumentation. Meanwhile YOU fly the full-flight sequence (§4.3) on `main` (keep main stable
-  while flying), then run perf pass (§4.6), visual QA (§4.7) and final regression (§4.8).
-
-## 6. Definition of finished
-All seven done lines met with evidence: photos in `qa/screenshots/` for every item of done lines 3–5
-at the required widths, `window.sim.perf` numbers after a full flight recorded in RECORD.md, console
-clean, `npm test` green after the last change, everything committed on `main`.
+- **Waves of up to 10 Opus sub-agents** on file-disjoint modules, each in its own git worktree
+  (`.worktrees/<name>`, branch `wt/<name>`, own Vite port), with a self-contained brief: role,
+  files owned, exact API, realism targets, tests required (unit + fast-check fuzz + functional),
+  screenshots to take and **read**, a performance budget, and a report format with the exact merge
+  steps.
+- Agents commit on their branch; the orchestrator merges into `main`, resolves `src/config.ts`
+  section conflicts by keeping both sides, runs the full suite on a quiet machine, and commits.
+- The systems layer means agents never edit the same wiring file; `window.sim.teleport` + URL
+  `?spawn=` let each agent photograph its subject in the live game.
+- The orchestrator flies the sim itself between waves (QA pilot) and forwards bugs to the owning
+  agent as failing-test-first requests with concrete numbers.
+- Ask agents to wrap up with: finish the step cleanly, suite green, typecheck, stop Vite, commit,
+  report (branch, hashes, done, NOT done, config sections touched, known bugs).

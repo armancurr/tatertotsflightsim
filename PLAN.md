@@ -7,7 +7,7 @@
 > `/Users/jt/Code/coeus/EX_PROMPT_7_FLIGHT_SIM.md`; this PLAN.md holds the architecture,
 > contracts and wave status, RECORD.md holds the build log. Read both, run `npm test`,
 > start `npm start` (port 8092) in the background, then continue with the first wave
-> that is not ✅ (start with RESUME.md). Work in waves of up to 10 Opus sub-agents (git worktrees) on file-disjoint tasks,
+> that is not ✅ (start with RESUME.md — it has the current paste-in prompt). Work in waves of up to 10 Opus sub-agents (git worktrees) on file-disjoint tasks,
 > test-first; integrate, fly the sim in the on-screen Chrome window (Playwright MCP),
 > photograph every done line into `qa/screenshots/`, commit after each wave.
 
@@ -95,8 +95,9 @@ Vite port 81xx) and commit there; the orchestrator merges each branch into `main
 | 1 (main tree) | PHYSICS ✅ · INPUT+CAMERA+LOOP ✅ · WORLD-TERRAIN ✅ · ATMOSPHERE ✅ · AIRCRAFT-MODEL ✅ | ✅ |
 | 2 (worktrees) | hud ✅ · audiofx ✅ (unverified in browser) · qatests ✅ · airport ⚠️ data layer only (interim renderer by orchestrator) · trees ✅ (unQA'd) · towns+roads ⚠️ interim renderers — all merged | ✅ merged |
 | — | **STOP POINT 2026-09-22 — see RESUME.md for the handoff prompt and prioritized remaining work** | |
-| 3 (worktrees, 10 agents) | aircraft (gear/prop/cockpit) · airport renderer · buildings · roads+cars · traffic (ships, boats, AI aircraft) · terrain realism · water · sky (volumetric clouds, cloud shadows) · trees+grass · ux (HUD, gear warning, loading, audio/fx) — orchestrator flies the full flight on main | ⏳ |
-| 4 | Visual QA at 1440 & 1024, docs, final regression | |
+| 3 (worktrees, 10 agents) | aircraft (gear ✅, prop ✅, wreck ✅, cockpit ⏳) · airport renderer ✅ · buildings ✅ · roads ✅ (cars ❌) · traffic (simulated ✅, rendering ❌) · terrain realism ✅ (mountains ⏳) · water ✅ · sky (cloud shadows ✅, volumetric opt-in ⏳) · trees+grass ✅ · ux (gear warning ✅, loading ✅, audio ⏳) — all merged | ✅ merged |
+| — | **STOP POINT #2 (2026-09-22 evening) — `RESUME.md` §5 lists the remaining work in priority order** | |
+| 4 | Traffic renderers, cars, volumetric perf, GPU budget pass, realism polish, re-fly + photograph the full flight, visual QA at 1440 & 1024, final regression (RESUME.md §5) | next |
 
 Testing layers (user requirement): unit · fuzz/property (fast-check) · functional (scripted
 flights in pure physics) · e2e (Vite + headless Chrome driving `window.sim` and the keyboard) —
@@ -113,7 +114,9 @@ all inside `npm test`.
    No `.skip`, no `.only`, no `todo`. If a test fails because of *another* agent's in-progress
    files, say so in your report — don't edit their files.
 3. **Typecheck** your files: `npx tsc --noEmit -p .` and fix errors in your files.
-4. **Don't start/stop the dev server.** It is already running on http://127.0.0.1:8092
+4. **Never launch the owner's Google Chrome** — automation uses Google Chrome for Testing
+   (`scripts/shot.mjs`, `tests/support/e2e.ts`); no Playwright MCP browser.
+   **Don't start/stop the main dev server.** It is already running on http://127.0.0.1:8092
    (Vite, hot reload). Visual modules get a preview page `preview/<name>.html` (root-level
    html, loads `src/preview/<name>.ts`) and are checked with `scripts/shot.mjs`. Look at every
    screenshot you take (Read the png) and judge it honestly against the brief.
