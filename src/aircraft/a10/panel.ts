@@ -637,8 +637,24 @@ export function drawDashDynamic(ctx: Ctx, g: A10Gauges): void {
   ENGINE.rows.forEach((row, i) => {
     const y = PY(ENGINE.y0 + i * ENGINE.dy);
     const v = row === 'FAN' ? g.fanPct / 100 : row === 'ITT' ? (g.ittC - 100) / 1000 : row === 'CORE' ? g.corePct / 104 : row === 'FF' ? g.ffPph / 5000 : g.oilPsi / 100;
-    for (const [k, x] of [ENGINE.x0, ENGINE.x1].entries()) needle(ctx, PX(x), y, R(ENGINE.r), sweep(v + (k ? 0.006 : 0)), 0.86, 1.8);
+    for (const [k, x] of [ENGINE.x0, ENGINE.x1].entries()) {
+      needle(ctx, PX(x), y, R(ENGINE.r), sweep(v + (k ? 0.006 : 0)), 0.86, 1.8);
+      glare(ctx, PX(x), y, R(ENGINE.r));
+    }
   });
+  for (const k of Object.keys(GAUGE) as (keyof typeof GAUGE)[]) glare(ctx, PX(G[k].x), PY(G[k].y), R(G[k].r));
+}
+
+/** Glass over a dial: a soft highlight up-left and a darker rim (the cover glass catching the sky). */
+function glare(ctx: Ctx, cx: number, cy: number, rp: number): void {
+  const g = ctx.createRadialGradient(cx - rp * 0.4, cy - rp * 0.45, rp * 0.05, cx - rp * 0.2, cy - rp * 0.2, rp);
+  g.addColorStop(0, 'rgba(255,255,255,0.16)');
+  g.addColorStop(0.45, 'rgba(255,255,255,0.04)');
+  g.addColorStop(1, 'rgba(0,0,0,0.12)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rp, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /** Whole dash: the cached background (or a fresh paint) + the moving parts. */
