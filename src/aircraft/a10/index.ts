@@ -19,7 +19,7 @@ import type { AircraftVisualState } from '../types';
 import type { AircraftModelHandle, BreakupPart } from '../../fleet/types';
 import { A10_AIRCRAFT, A10_WEAPONS } from '../../config';
 import { createA10Anim, stepA10Anim, A10_LIMITS } from './animate';
-import { buildCockpit, drawScreens, SCREEN_ATLAS } from './cockpit';
+import { buildCockpit, drawScreens, HUD, SCREEN_ATLAS } from './cockpit';
 import { buildEngine } from './engines';
 import { buildFuselage } from './fuselage';
 import { buildGear } from './gear';
@@ -82,6 +82,7 @@ export const A10_PART = {
   gunCluster: 'a10.gun.cluster',
   gunBlur: 'a10.gun.blur',
   gunMuzzle: 'a10.gunMuzzle',
+  hudCombiner: 'a10.cockpit.hud',
   store: (i: number) => `a10.store.${i}`,
   landingLight: 'a10.landingLight',
 } as const;
@@ -200,7 +201,10 @@ export function createA10Model(): AircraftModelHandle {
   const head = mesh(pit.pilotHead, mats.parts, A10_PART.pilotHead, cockpit, false);
   mesh(pit.screens, mats.screens, 'a10.cockpit.screens', cockpit, false);
   mesh(pit.panelFace, mats.panel, 'a10.cockpit.panel', cockpit, false);
-  const hudGlass = mesh(pit.hudGlass, mats.hud, 'a10.cockpit.hud', cockpit, false);
+  // HUD combiner: its geometry is the glass rectangle; the mesh transform places and tilts it.
+  const hudGlass = mesh(pit.hudGlass, mats.hud, A10_PART.hudCombiner, cockpit, false);
+  hudGlass.position.copy(pit.hudPosition);
+  hudGlass.rotation.x = HUD.tilt;
   hudGlass.renderOrder = 2;
 
   // ── Canopy ──
@@ -313,8 +317,8 @@ export function createA10Model(): AircraftModelHandle {
   const glowPos = new THREE.BufferAttribute(gpos, 3);
   glowPos.setUsage(THREE.DynamicDrawUsage);
   glowGeo.setAttribute('position', glowPos);
-  glowGeo.setAttribute('glowColor', new THREE.BufferAttribute(new Float32Array([1.6, 0.08, 0.04, 0.1, 1.5, 0.35, 1.1, 1.1, 1.05, 9, 9, 9.5, 9, 9, 9.5, 5, 4.7, 4.3, 3.5, 3.3, 3]), 3));
-  glowGeo.setAttribute('size', new THREE.BufferAttribute(new Float32Array([0.22, 0.22, 0.16, 1.1, 1.1, 0.55, 0.45]), 1));
+  glowGeo.setAttribute('glowColor', new THREE.BufferAttribute(new Float32Array([1.6, 0.08, 0.04, 0.1, 1.5, 0.35, 1.1, 1.1, 1.05, 5, 5, 5.3, 5, 5, 5.3, 5, 4.7, 4.3, 3.5, 3.3, 3]), 3));
+  glowGeo.setAttribute('size', new THREE.BufferAttribute(new Float32Array([0.22, 0.22, 0.16, 0.42, 0.42, 0.55, 0.45]), 1));
   glowGeo.setAttribute('aDir', new THREE.BufferAttribute(new Float32Array([-0.6, 0, -0.8, 0.6, 0, -0.8, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, -0.1, -1, 0, -0.1, -1]), 3));
   const glowIntensity = new THREE.BufferAttribute(new Float32Array(glowCount), 1);
   glowIntensity.setUsage(THREE.DynamicDrawUsage);
@@ -437,9 +441,12 @@ export function createA10Model(): AircraftModelHandle {
       lastMode = v.cameraMode;
       const inCockpit = v.cameraMode === 'cockpit';
       head.visible = !inCockpit;
-      mats.canopy.opacity = inCockpit ? 0.1 : 0.26;
-      mats.canopy.envMapIntensity = inCockpit ? 0.35 : 1.2;
+      // From inside, the bubble is seen at grazing angles all round: keep its reflections faint.
+      mats.canopy.opacity = inCockpit ? 0.06 : 0.26;
+      mats.canopy.envMapIntensity = inCockpit ? 0.06 : 1.2;
+      mats.canopy.specularIntensity = inCockpit ? 0.25 : 1;
       mats.interior.color.setScalar(inCockpit ? 1.25 : 0.75);
+      mats.hud.opacity = inCockpit ? 0.2 : 0.16;
     }
   }
 
@@ -459,6 +466,7 @@ export function createA10Model(): AircraftModelHandle {
     root,
     setVisualState,
     landingLight,
+    hudCombiner: hudGlass,
     getBreakupParts: () => breakup,
     restoreBreakupParts() {
       for (const h of home) {

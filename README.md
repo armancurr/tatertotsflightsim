@@ -19,11 +19,15 @@ only runtime dependency is [Three.js](https://threejs.org).
 
 - **Three aircraft.** Pick them from the dropdown at the top right. The **Cessna 172RG Cutlass** is a
   forgiving four-seat trainer with retractable gear. The **F-16C Fighting Falcon** is a supersonic
-  fighter with an afterburner, a speed brake, a jet HUD and an M61A1 20 mm gun. The **A-10C
+  fighter with fly-by-wire, an afterburner, a speed brake, a jet HUD, an M61A1 20 mm gun and two
+  AGM-65 Mavericks. The **A-10C
   Thunderbolt II** ("Warthog") is a slow, tough tank killer built around the 30 mm GAU-8/A Avenger
   gun, with four AGM-65D Maverick missiles. The fleet registry is built so that more aircraft can
   be added.
-- **Tank busting.** A range of tanks and other armour sits north of the airport. The weapons HUD
+- **Tank busting.** A range of 23 vehicles (T-72B tanks, BMP-2s, BTR-80s, Ural trucks and ZSU-23-4
+  Shilkas) sits north of the airport. Gun rounds fly real ballistic paths; tank armour is thick at
+  the front and thin on top and behind; wrecks burn, and T-72 turrets can be blown off. The
+  Mavericks are deliberately arcade: pick a target, lock, fire. The weapons HUD
   gives you a gun cross, a CCIP pipper that shows where your rounds will land (with a range arc and
   "IN RNG" inside 4,000 ft), a Maverick lock box, your ammunition and kills, and a cue that points
   to the range. A picture-in-picture Maverick view shows the locked target in black-and-white IR.
@@ -39,9 +43,13 @@ only runtime dependency is [Three.js](https://threejs.org).
   gets a head-up display.
 - **A HUD, a help overlay and a menu** (<kbd>Esc</kbd>) that lists every control and has a restart
   button.
-- **Sound** made in the browser with WebAudio: engine, wind, stall horn, gear-warning horn, tyres
-  and crash.
-- **More than 1,400 automated tests**: unit, property-based fuzz, scripted whole flights and
+- **A G meter** for every aircraft, with max/min needles and red marks at that aircraft's limits.
+- **A living world:** cars on the roads, boats in the marina, ships with wakes, other aircraft
+  with contrails, volumetric clouds.
+- **Sound** made in the browser with WebAudio: piston, jet and turbofan engines, wind, horns,
+  tyres, crashes, the GAU-8's "BRRRT" (heard late from outside, at the speed of sound) and
+  explosions.
+- **Thousands of automated tests**: unit, property-based fuzz, scripted whole flights and
   browser end-to-end tests.
 
 ## Quick start
