@@ -162,7 +162,8 @@ describe('fires that follow burning parts, and the smoke column', () => {
     sim.moveFire(h, 20, 30, 0, 30);
     run(sim, 10);
     const s = visible(sim.smoke);
-    expect(s.length).toBeGreaterThan(80);
+    // a steady stream: at least a third of the (decaying) emission rate × 10 s of puffs still in the air
+    expect(s.length).toBeGreaterThan(CONFIG.fx.crash.smokeRate * 10 * 0.35 * 0.9);
     expect(Math.max(...s.map((i) => sim.smoke.py[i]))).toBeGreaterThan(90);
     run(sim, 40);
     expect(visible(sim.smoke)).toHaveLength(0);

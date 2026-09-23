@@ -1029,9 +1029,9 @@ export const CONFIG = {
       fireballSpeed: 14,
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
-      smokeRate: 18,
+      smokeRate: 12,
       smokeLife: [10, 16] as [number, number],
-      smokeSize: [4, 26] as [number, number],
+      smokeSize: [4, 22] as [number, number],
       smokeRise: 9.5,
       smokeBuoyancy: 3.2,
       smokeBuoyancyTau: 8,
@@ -1046,7 +1046,7 @@ export const CONFIG = {
       groundFireRate: 55,
       /** Fires on burning parts: flame licks per second (× intensity, grows with the part's size) and smoke puffs per second. */
       partFireRate: 26,
-      partSmokeRate: 9,
+      partSmokeRate: 4,
       debrisCount: 30,
       emberCount: 80,
     },

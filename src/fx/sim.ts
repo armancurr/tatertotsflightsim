@@ -731,9 +731,9 @@ export class FxSim {
     t.vx = this.sym(0.6);
     t.vy = 2.5 + 2 * this.rnd();
     t.vz = this.sym(0.6);
-    t.life = 7 + 5 * this.rnd();
+    t.life = 6 + 4 * this.rnd();
     t.size0 = 1.5 + 0.6 * e.radius;
-    t.size1 = (8 + 6 * this.rnd()) * (0.6 + 0.4 * Math.min(1, e.intensity)) * (0.8 + 0.15 * e.radius);
+    t.size1 = (6 + 4 * this.rnd()) * (0.6 + 0.4 * Math.min(1, e.intensity)) * (0.8 + 0.15 * e.radius);
     t.growTau = 2.5;
     t.drag = 0.5;
     t.buoyancy = 2.5;
