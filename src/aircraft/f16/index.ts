@@ -24,7 +24,8 @@ import { paintLivery } from './livery';
 import { createF16Materials, type F16Textures } from './materials';
 import { buildNozzle, buildPlume } from './nozzle';
 import { ANCHOR, GUN_MUZZLE } from './shape';
-import { F16_AIRCRAFT } from '../../config';
+import { F16_AIRCRAFT, F16_WEAPONS } from '../../config';
+import { buildMaverick } from '../a10/stores';
 import { buildSurfaces, type HingedPart } from './surfaces';
 
 export { createF16Anim, stepF16Anim, F16_LIMITS } from './animate';
@@ -216,6 +217,23 @@ export function createF16Model(): AircraftModelHandle {
   const wl = wingGroup(F16_PART.leftWing, surf.wingLeft, 'left');
   const wr = wingGroup(F16_PART.rightWing, surf.wingRight, 'right');
 
+  // ── Stores: a pylon + LAU-117 rail under stations 3 and 7, each with an AGM-65 (hidden once fired) ──
+  const mavGeo = buildMaverick();
+  const storeMeshes: THREE.Mesh[] = [];
+  (F16_WEAPONS.missiles?.stations ?? []).forEach((st, i) => {
+    const wing = st.x < 0 ? wl.g : wr.g;
+    const top = -0.33; // wing lower surface at this station
+    const railY = st.y + 0.2;
+    const pylonGeo = merge([
+      tint(box(0.1, top - railY - 0.04, 1.5, V(st.x, (top + railY) / 2, st.z + 0.15)), 0x8e969c, 0.55, 0.15),
+      tint(box(0.16, 0.1, 2.0, V(st.x, railY, st.z)), 0x6b7176, 0.6, 0.15),
+    ]);
+    mesh(pylonGeo, mats.parts, `f16.pylon.${i}`, wing, false);
+    const mav = mesh(mavGeo, mats.parts, `f16.store.${i}`, wing);
+    mav.position.set(st.x, st.y, st.z);
+    storeMeshes.push(mav);
+  });
+
   // ── Tail: fin, rudder, fin details and lights ──
   const tail = group(F16_PART.tail, root);
   mesh(surf.fin, mats.paint, 'f16.fin', tail);
@@ -382,6 +400,7 @@ export function createF16Model(): AircraftModelHandle {
 
   function setVisualState(v: AircraftVisualState, dt: number) {
     stepF16Anim(v, anim, dt);
+    for (let i = 0; i < storeMeshes.length; i++) storeMeshes[i].visible = v.stores?.[i] ?? true;
     const crashed = v.crashed === true;
     mats.char.value = crashed ? Math.min(1, Math.max(0, Number(v.crashAge ?? 0)) / 6) : 0;
     if (crashed !== wrecked) {

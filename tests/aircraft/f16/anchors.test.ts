@@ -193,11 +193,15 @@ describe('F-16 model anchors match F16_AIRCRAFT.geometry', () => {
     expect(inFuselage).toBe(true);
   });
 
-  it('with the gear up nothing hangs below the belly and the ventral fins', () => {
+  it('with the gear up nothing but the underwing stores hangs below the belly and the ventral fins', () => {
     m.root.position.set(0, 0, 0);
     m.root.quaternion.identity();
-    apply(m, state({ gearPos: 0 }), 3);
+    // The Mavericks on their pylons hang lower, as on the real jet (checked in stores.test.ts); fire them off here.
+    apply(m, { ...state({ gearPos: 0 }), stores: [false, false] }, 3);
+    const pylons = [0, 1].map((i) => m.root.getObjectByName(`f16.pylon.${i}`)!);
+    pylons.forEach((p) => (p.visible = false));
     const b = bounds(m, m.root);
+    pylons.forEach((p) => (p.visible = true));
     expect(b.min.y).toBeGreaterThan(-1.05);
     for (const name of [F16_PART.axleNose, F16_PART.axleLeft, F16_PART.axleRight]) {
       const a = bodyPos(m, name);

@@ -2615,7 +2615,7 @@ export const A10_WEAPONS: WeaponsConfig = {
   },
 };
 
-/** F-16C: M61A1 Vulcan, 511 rounds of 20 mm in the left strake. No air-to-ground missiles (yet). */
+/** F-16C: M61A1 Vulcan, 511 rounds of 20 mm in the left strake, and 2 × AGM-65D on LAU-117 rails (stations 3 and 7). */
 export const F16_WEAPONS: WeaponsConfig = {
   gun: {
     name: 'M61A1 Vulcan',
@@ -2639,5 +2639,12 @@ export const F16_WEAPONS: WeaponsConfig = {
     damage: 3,
     splashRadiusM: 1.5,
   },
-  missiles: null,
+  missiles: {
+    ...A10_WEAPONS.missiles!,
+    /** LAU-117 single rails under stations 3 and 7 (3.0 m out, under mid-chord); fired left, right. */
+    stations: [
+      { x: -3.0, y: -0.89, z: 1.35 },
+      { x: 3.0, y: -0.89, z: 1.35 },
+    ],
+  },
 };

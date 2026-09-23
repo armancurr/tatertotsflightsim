@@ -106,11 +106,11 @@ describe('visibility', () => {
     expect(t).toContain('KILLS 5');
   });
 
-  it('F-16: gun only (no Maverick text); in the cockpit its jet HUD keeps the fixed cross, outside the conformal one shows', () => {
+  it('F-16: gun + 2 Mavericks; in the cockpit its jet HUD keeps the fixed cross, outside the conformal one shows', () => {
     const s = setup({ cfg: F16 });
     s.run();
     expect(s.m.show).toBe(true);
-    expect(texts(s.g).some((x) => x.includes('65D'))).toBe(false);
+    expect(texts(s.g).some((x) => x.includes('65D ×2'))).toBe(true);
     expect(texts(s.g)).toContain('GUN 511 PGU');
     expect(jetHudOmitsGunCross(F16)).toBe(false);
     expect(s.m.gunCross.show).toBe(false);

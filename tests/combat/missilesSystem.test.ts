@@ -127,6 +127,9 @@ describe('missiles system (arcade Mavericks)', () => {
     expect(a.world.status.stores).toEqual([false, false, false, false]);
     sys.onAircraftChange!(getAircraftDef('f16'), {} as never);
     sys.update!({ ...a.frame(), def: getAircraftDef('f16') });
+    expect(a.world.status.missiles).toBe(2);
+    sys.onAircraftChange!(getAircraftDef('c172rg'), {} as never);
+    sys.update!({ ...a.frame(), def: getAircraftDef('c172rg') });
     expect(a.world.status.hasMissiles).toBe(false);
     sys.onAircraftChange!(getAircraftDef('a10'), {} as never);
     sys.update!(a.frame());
