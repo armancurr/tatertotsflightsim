@@ -1061,7 +1061,8 @@ export const drawThrottle: CellDrawer = (c, x, y, w, h, r) => {
 
 export const drawFlaps: CellDrawer = (c, x, y, w, h, r) => {
   if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
-  const notches = CONFIG.aircraft.flaps.notchesDeg;
+  // The flown aircraft's gates (F-16 0/10/20, A-10 0/7/20…); the Cessna's when the readings don't say.
+  const notches = r.flapNotchesDeg && r.flapNotchesDeg.length > 1 ? r.flapNotchesDeg : CONFIG.aircraft.flaps.notchesDeg;
   const max = notches[notches.length - 1] || 30;
   const deg = clamp(fin(r.flapsDeg), 0, max);
   const tgt = clamp(fin(r.flapsTargetDeg), 0, max);

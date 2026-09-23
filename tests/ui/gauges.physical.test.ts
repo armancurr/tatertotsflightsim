@@ -212,6 +212,28 @@ describe('system cells (drawn)', () => {
     expect(markX(dn, '#f7d37a')).toBeLessThan(100);
   });
 
+  it('the flap cell uses the flown aircraft\'s own notches: ticks at its gates, full flaps at the right end (F-16 20°, A-10 7° gate lit)', () => {
+    const ticks = (g: GeoCtx) => g.segments.filter((sg) => Math.abs(sg.a.x - sg.b.x) < 1e-6 && (sg.style === '#8fd3ff' || sg.style === 'rgba(255,255,255,0.45)'));
+    const cessnaFull = geoCtx();
+    drawFlaps(cessnaFull.ctx, 0, 0, 200, 60, makeReadings({ flapsDeg: 30, flapsTargetDeg: 30 }));
+    const f16Full = geoCtx();
+    drawFlaps(f16Full.ctx, 0, 0, 200, 60, { ...makeReadings({ flapsDeg: 20, flapsTargetDeg: 20 }), flapNotchesDeg: [0, 10, 20] });
+    expect(ticks(cessnaFull).length).toBe(4);
+    expect(ticks(f16Full).length).toBe(3);
+    expect(markX(f16Full, '#eef3fa')).toBeCloseTo(markX(cessnaFull, '#eef3fa'), 0);
+    const a10 = geoCtx();
+    drawFlaps(a10.ctx, 0, 0, 200, 60, { ...makeReadings({ flapsDeg: 7, flapsTargetDeg: 7 }), flapNotchesDeg: [0, 7, 20] });
+    expect(ticks(a10).filter((t) => t.style === '#8fd3ff').length).toBe(1);
+  });
+
+  it('the instruments pass the aircraft\'s flap notches to the strip', async () => {
+    const { CONFIG, F16_AIRCRAFT } = await import('../../src/config');
+    const f16 = { ...CONFIG, aircraft: F16_AIRCRAFT };
+    const t = trimmed({ iasKt: 300 }, f16);
+    const r = updateInstruments(createInstrumentModel(), t.state, t.controls, 0.016, f16);
+    expect(r.flapNotchesDeg).toEqual(F16_AIRCRAFT.flaps.notchesDeg);
+  });
+
   it('gear cell says DOWN/UP/TRANSIT; throttle knob moves right with power', () => {
     for (const [gear, word] of [['down', 'DOWN'], ['up', 'UP'], ['transit', 'TRANSIT']] as const) {
       const g = geoCtx();

@@ -245,6 +245,8 @@ export interface InstrumentReadings {
   engineStatus: EngineStatus;
   flapsDeg: number;
   flapsTargetDeg: number;
+  /** The flown aircraft's flap notches, deg (the strip's flap cell draws its gates); absent = the Cessna's. */
+  flapNotchesDeg?: readonly number[];
   gear: GearState;
   /** Gear position lights like the real 172RG panel: green = down & locked, red = in transit, off = up. */
   gearLight: 'green' | 'red' | 'off';

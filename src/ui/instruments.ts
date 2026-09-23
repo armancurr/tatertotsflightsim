@@ -255,6 +255,7 @@ export function updateInstruments(
     engineStatus: engineStatusOf(state.engine),
     flapsDeg,
     flapsTargetDeg: notches[notch],
+    flapNotchesDeg: notches,
     gear,
     gearLight: gw.lights,
     brakes: fin(controls.brake) > h.brakeLampThreshold,
