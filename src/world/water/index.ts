@@ -21,10 +21,11 @@ import { CONFIG, type Config } from '../../config';
 import { getLayout, type WorldLayout } from '../layout';
 import { getHeightfield } from '../heightfield';
 import { createWaveSpectrum, getSeaSpectrum, packWaveUniforms, waterSurfaceAt, type WaveSpectrum, type WaterSurfaceSample } from './waves';
-import { bakeBathymetry, makeWaterDepthFn, newBathyLevel, packBathymetryHalf, shoreDistanceTransform } from './bathymetry';
+import { bakeWaterLevel, makeWaterTexelFn, newBathyLevel, packBathymetryHalf, shoreDistanceTransform, type WaterTexel } from './bathymetry';
+import { getLandcover } from '../landcover';
 import { bakeDetailTile, toHalf } from './detail';
 import { buildRiverRibbon, riverPiers, RIVER_STRIDE } from './river';
-import { createWaterMaterial, type SharedWaterUniforms, type WaterKind, type WaterMaterial, type WaterMaterialUniforms } from './material';
+import { createWaterMaterial, RIVER_TILES, type SharedWaterUniforms, type WaterKind, type WaterMaterial, type WaterMaterialUniforms } from './material';
 
 export { waterSurfaceAt, newWaterSurfaceSample, createWaveSpectrum, getSeaSpectrum, type WaterSurfaceSample, type WaveSpectrum } from './waves';
 export { riverPiers } from './river';
@@ -110,7 +111,7 @@ function radialGrid(R: number, rings: number, segs: number, r0 = 1): THREE.Buffe
 }
 
 function makeBathyTexture(res: number): THREE.DataTexture {
-  const t = new THREE.DataTexture(new Uint16Array(res * res * 2), res, res, THREE.RGFormat, THREE.HalfFloatType);
+  const t = new THREE.DataTexture(new Uint16Array(res * res * 4), res, res, THREE.RGBAFormat, THREE.HalfFloatType);
   t.minFilter = THREE.LinearFilter;
   t.magFilter = THREE.LinearFilter;
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
@@ -198,7 +199,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
   const seaLayers = detailLayers(seaSpec.windDirX, seaSpec.windDirZ, [9.3, 2.9], [12, -23], [Math.sqrt((rest * 0.4) / 2), Math.sqrt((rest * 0.33) / 2)]);
   mats.sea.uniforms.uBaseVar.value = rest * 0.27;
   const lakeLayers = detailLayers(lakeSpec.windDirX, lakeSpec.windDirZ, [4.1, 1.3], [18, -15], [0.05, 0.045]);
-  const riverTiles = [3.4, 1.25];
+  const riverTiles = RIVER_TILES;
   const riverRot = [
     [1, 0],
     [0.94, 0.34],
@@ -210,6 +211,13 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
   setLayerUniforms(mats.sea, seaLayers);
   setLayerUniforms(mats.lake, lakeLayers);
   const rv = mats.river.uniforms;
+  // the river's sediment plume off its mouth
+  if (L.rivers.length) {
+    const pts = L.rivers[0].points;
+    const k = Math.max(0, pts.findIndex((q) => q.z > L.coast.zAt(q.x)));
+    const m = pts[Math.min(pts.length - 1, k + 4)]; // ~160 m out into the bay
+    mats.sea.uniforms.uMouth.value.set(m.x, m.z, 480, 0.85);
+  }
   rv.uMargin.value = 3;
   rv.uMinPx.value = wc.riverMinPixels;
   rv.uLiftPerM.value = wc.riverLiftPerKm / 1000;
@@ -283,6 +291,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
     const ib = new THREE.InterleavedBuffer(rib.attrs, RIVER_STRIDE);
     g.setAttribute('aRiver', new THREE.InterleavedBufferAttribute(ib, 4, 0));
     g.setAttribute('aRiver2', new THREE.InterleavedBufferAttribute(ib, 4, 4));
+    g.setAttribute('aRiver3', new THREE.InterleavedBufferAttribute(ib, 4, 8));
     g.setIndex(new THREE.BufferAttribute(rib.index, 1));
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, mats.river.material);
@@ -371,7 +380,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       worker = null;
     }
   }
-  let depthAt: ((x: number, z: number) => number) | null = null;
+  let texelAt: ((x: number, z: number, gx: number, gz: number, out: WaterTexel) => WaterTexel) | null = null;
   if (!worker) {
     const tile = bakeDetailTile(tileSize, wc.waveSeed);
     applyDetail(
@@ -398,11 +407,11 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       return;
     }
     const t0 = performance.now();
-    if (!depthAt) depthAt = makeWaterDepthFn(getHeightfield());
-    const lv = bakeBathymetry(depthAt, cx, cz, extent, bathyRes);
+    if (!texelAt) texelAt = makeWaterTexelFn(getHeightfield(), getLandcover());
+    const lv = bakeWaterLevel(texelAt, cx, cz, extent, bathyRes);
     shoreDistanceTransform(lv);
     lastBakeMs = performance.now() - t0;
-    applyBathy(level, cx, cz, extent, bathyRes, packBathymetryHalf(lv, new Uint16Array(bathyRes * bathyRes * 2)));
+    applyBathy(level, cx, cz, extent, bathyRes, packBathymetryHalf(lv, new Uint16Array(bathyRes * bathyRes * 4)));
   };
   const pollBathy = (x: number, z: number) => {
     for (let level = 0; level < 2; level++) {
@@ -505,6 +514,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       packOffsets(lakeLayers, mats.lake.uniforms.uDetailOff.value, ox, oz, t);
       // river: advect along the flow coordinate at the reference speed
       const vt = wc.riverSpeed * t;
+      rv.uRiverFlow.value = wc.riverSpeed * shared.uTime.value;
       rv.uDetailOff.value.set(
         wrap(-vt / riverTiles[0], 1),
         0,
@@ -513,7 +523,7 @@ export function createWater(scene: THREE.Scene, opts: WaterOptions = {}): Water 
       );
       // lakes: mirror calm on still mornings, a breeze later in the day
       const tod = env?.timeOfDay ?? 0;
-      const target = tod === 0 || tod === 3 ? wc.lakeMorningCalm : 0.1;
+      const target = tod === 0 || tod === 3 ? wc.lakeMorningCalm : wc.lakeDayCalm;
       calm += (target - calm) * (dt > 0 ? Math.min(1, dt * 0.7) : 1);
       mats.lake.uniforms.uWaveGain.value = Math.min(1, Math.max(0, 1 - calm));
       // hairline rivers: radians per pixel
