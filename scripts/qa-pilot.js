@@ -144,7 +144,7 @@
       // A conventional (non fly-by-wire) jet — the calibrated A-10 — wants firmer hands in pitch.
       if (p.jet && 'fbw' in ac) {
         p.fbw = !!ac.fbw;
-        if (!p.fbw) { p.pitchKp = 0.2; p.pitchKd = 0.06; }
+        if (!p.fbw) { p.pitchKp = 0.2; p.pitchKd = 0.06; p.pitchSpeedScale = true; p.autoTrim = true; }
       }
       const stall = fin(lim.vsoKt);
       if (key === 'a10' && stall > 0) p.approachKt = Math.max(p.approachKt, Math.round(stall * 1.3));
@@ -325,6 +325,7 @@
     const track = (s) => (rates.trackDeg === null ? s.heading : rates.trackDeg);
 
     const throttleRatePct = 45; // config.controls.throttleRate × 100 (%/s)
+    let trimI = 0;
     /** The speed-brake switch as this pilot last set it (X toggles it; it starts retracted). */
     let speedBrakeOn = false;
     /**
@@ -334,8 +335,10 @@
     async function controlWindow(t, ms) {
       const s = sim();
       updateRates(s);
-      const kp = t.fine ? P.flareKp : P.pitchKp;
-      const kd = t.fine ? P.flareKd : P.pitchKd;
+      // A conventional jet's elevator gets stronger with dynamic pressure: scale the hands with (V_ref / IAS)².
+      const ps = P.pitchSpeedScale ? clamp(Math.pow((P.approachKt * 1.1) / Math.max(80, fin(s.airspeed, 150)), 2), 0.35, 1.3) : 1;
+      const kp = (t.fine ? P.flareKp : P.pitchKp) * (t.fine && s.altitudeAGL < 100 ? 1 : ps);
+      const kd = (t.fine ? P.flareKd : P.pitchKd) * (t.fine && s.altitudeAGL < 100 ? 1 : ps);
       // Jets: ask for at most ±5° of attitude change at a time (no violent bunts or yanks).
       if (P.jet && t.pitch !== null && t.pitch !== undefined && !t.fine) t = { ...t, pitch: clamp(t.pitch, s.pitch - 5, s.pitch + 5) };
       const up = t.g !== undefined && t.g !== null
@@ -345,6 +348,12 @@
       const rs = t.rollScale ?? (P.rollSpeedScale ? clamp(250 / Math.max(80, fin(s.airspeed, 250)), 0.3, 1.5) : 1);
       const ur = t.roll === null || t.roll === undefined ? 0 : rs * (P.rollKp * (t.roll - s.roll) - P.rollKd * rates.p);
       const uy = t.yaw === null || t.yaw === undefined ? 0 : P.yawKp * wrap180(t.yaw - s.heading) - P.yawKd * rates.r;
+      // Trim like a pilot: a pitch error that persists one way gets a blip of nose-up / nose-down trim.
+      let trimKey = null;
+      if (P.autoTrim && !s.onGround && t.pitch !== null && t.pitch !== undefined && !t.fine) {
+        trimI = clamp(trimI + (t.pitch - s.pitch) * (ms / 1000), -20, 20);
+        if (Math.abs(trimI) > 2.5) { trimKey = trimI > 0 ? 'BracketRight' : 'BracketLeft'; trimI *= 0.5; }
+      }
       const tp = Math.min(ms, Math.abs(up) * ms);
       const tr = Math.min(ms, Math.abs(ur) * ms);
       const ty = Math.min(ms, Math.abs(uy) * ms);
@@ -355,6 +364,8 @@
       if (tr > minPulse) key(ur > 0 ? 'ArrowRight' : 'ArrowLeft', true);
       if (ty > minPulse) key(uy > 0 ? 'KeyD' : 'KeyA', true);
       if (tt > 0) key(dthr > 0 ? 'KeyW' : 'KeyS', true);
+      const tTrim = trimKey ? 60 : 0;
+      if (trimKey) key(trimKey, true);
       if (t.brake) key('Space', true);
       else if (t.brake === false) key('Space', false);
       if (t.speedBrake !== undefined && t.speedBrake !== null && !!t.speedBrake !== speedBrakeOn) { speedBrakeOn = !!t.speedBrake; drv.key('KeyX', true); drv.key('KeyX', false); }
@@ -367,6 +378,7 @@
         if (el >= tr) { key('ArrowRight', false); key('ArrowLeft', false); }
         if (el >= ty) { key('KeyD', false); key('KeyA', false); }
         if (el >= tt) { key('KeyW', false); key('KeyS', false); }
+        if (el >= tTrim) { key('BracketRight', false); key('BracketLeft', false); }
         if (el >= ms) break;
         await sleep(16);
       }
@@ -961,7 +973,8 @@
        * slant range for o.burstS, then pull off wings level and climb out above o.minPullOutFt AGL.
        */
       async gunRun(targetId, o = {}) {
-        const diveDeg = o.diveDeg ?? 25;
+        const diveDeg = o.diveDeg ?? 20;
+        const runKt = Math.min(P.cruiseKt, 280);
         const openFireM = (o.openFireFt ?? 4000) / M_FT;
         const burstMs = (o.burstS ?? 1.8) * 1000;
         const pullOutFt = o.minPullOutFt ?? 500;
@@ -971,17 +984,22 @@
         const s0 = sim();
         const gun = P.gun || { boresightDownDeg: 0, muzzleVelocity: 1000 };
         // Attack axis: from our side of the target, biased toward its rear (attack from behind/above).
-        const toTgt = bearingTo(s0.position.x, s0.position.z, t.x, t.z);
-        const rearAxis = wrap360(t.headingDeg);
-        const axis = o.attackHeadingDeg ?? (Math.abs(wrap180(rearAxis - toTgt)) < 70 ? wrap360(toTgt + clamp(wrap180(rearAxis - toTgt), -35, 35)) : toTgt);
+        // Attack axis: from behind the target (its rear arc), swung at most 60° toward the side we are on.
+        const rearIp = wrap360(t.headingDeg + 180);
+        const ourSide = bearingTo(t.x, t.z, s0.position.x, s0.position.z);
+        let ipBrg = wrap360(rearIp + clamp(wrap180(ourSide - rearIp), -60, 60));
+        // Keep the IP on the low ground toward the airfield (the terrain rises beyond the range).
+        const home = o.ipSectorCenterDeg ?? bearingTo(t.x, t.z, RW.thrX, RW.thrZ);
+        ipBrg = wrap360(home + clamp(wrap180(ipBrg - home), -(o.ipSectorHalfDeg ?? 70), o.ipSectorHalfDeg ?? 70));
+        const axis = o.attackHeadingDeg ?? wrap360(ipBrg + 180);
         const fireSlantM = openFireM;
         const fireH = fireSlantM * Math.sin(diveDeg * D2R);
-        const rollInH = fireH + (o.trackTimeS ?? 6) * (P.cruiseKt * KT_MS) * Math.sin(diveDeg * D2R);
-        const rollInAgl = clamp(rollInH * M_FT, 2500, 6000);
+        const rollInH = fireH + (o.trackTimeS ?? 5) * (runKt * KT_MS) * Math.sin(diveDeg * D2R);
+        const rollInAgl = clamp(rollInH * M_FT, 2000, 6000);
         const rollInD = (rollInAgl / M_FT) / Math.tan(diveDeg * D2R);
         const tgtAltFt = t.y * M_FT;
-        const ax = t.x - Math.sin(axis * D2R) * (rollInD + 4000);
-        const az = t.z + Math.cos(axis * D2R) * (rollInD + 4000);
+        const ax = t.x - Math.sin(axis * D2R) * (rollInD + 2500);
+        const az = t.z + Math.cos(axis * D2R) * (rollInD + 2500);
         const res = { result: 'aborted', rounds: 0, fired: false, pipperErrM: null, minAglFt: Infinity, slantAtFireM: null, killsBefore: api.combat().stats.kills };
         api.phase = 'gun run: to the IP';
         note('gun run setup', { target: targetId, axis: Math.round(axis), rollInAgl: Math.round(rollInAgl), rollInD: Math.round(rollInD) });
@@ -989,14 +1007,21 @@
         // IP: behind the target on the attack axis, at roll-in height. Skip if already on the axis.
         const lc0 = lineCoords(s0.position.x, s0.position.z, t.x, t.z, axis);
         if (!(lc0.along < -rollInD - 1500 && Math.abs(lc0.cross) < 800 && Math.abs(wrap180(s0.heading - axis)) < 45)) {
-          await api.gotoPoint(ax, az, { altFt: tgtAltFt + rollInAgl, speedKt: o.speedKt ?? P.cruiseKt, arriveM: 1500, phase: 'gun run: to the IP', maxVs: 4000 });
+          await api.gotoPoint(ax, az, { altFt: tgtAltFt + rollInAgl, speedKt: o.speedKt ?? runKt, arriveM: 1200, phase: 'gun run: to the IP', maxVs: 4000, bank: 45, throttle: P.maxThrottle });
         }
-        // Run-in on the axis at roll-in height until the target is diveDeg below the horizon.
-        await api.trackLine(t.x, t.z, axis, (s) => {
+        // Run-in: straight at the target at roll-in height until it sits diveDeg below the horizon.
+        api.phase = 'gun run: run-in';
+        const runHold = speedHold(o.speedKt ?? runKt, sim().throttle, 30, P.maxThrottle);
+        await fly((s) => {
+          const T = find() || t;
+          const brg = bearingTo(s.position.x, s.position.z, T.x, T.z);
+          return { pitch: clamp(pitchForVs(s, altHoldVs(s, tgtAltFt + rollInAgl, 2500)), -10, 12), roll: rollFor(s, brg, 45), thr: runHold.throttle(s) };
+        }, (s) => {
           const T = find() || t;
           const los = api.lineOfSight(s, T.x, T.y + 1, T.z);
-          return los.el <= -(diveDeg - gun.boresightDownDeg * 0.5);
-        }, { altFt: tgtAltFt + rollInAgl, speedKt: o.speedKt ?? P.cruiseKt, phase: 'gun run: run-in', kDegPerM: 0.05, maxInterceptDeg: 45, timeoutMs: 90000 });
+          return (los.el <= -(diveDeg - gun.boresightDownDeg * 0.5) && Math.abs(los.az) < 6) || los.ground < 900;
+        }, 90000);
+        note('run-in end');
         if (sim().state === 'crashed') return { ...res, result: 'crashed' };
         // Roll in: push to put the gun line on the target; track with the pipper.
         api.phase = 'gun run: tracking';
@@ -1031,7 +1056,7 @@
               res.fired = true;
               note('open fire', { slantM: Math.round(los.range), elErr: +elErr.toFixed(2), azErr: +azErr.toFixed(2), pipperErrM: res.pipperErrM });
             }
-            const stop = firing && (drv.now() - fireStart >= burstMs || los.range < 450 || s.altitudeAGL < pullOutFt + 600);
+            const stop = firing && (drv.now() - fireStart >= burstMs || los.range < 450 || s.altitudeAGL < pullOutFt + 250);
             if (stop) done = true;
             return {
               pitch: s.pitch + clamp(elErr, -6, 6),
@@ -1042,7 +1067,7 @@
               fine: true,
             };
           },
-          (s) => done || s.altitudeAGL < pullOutFt + 400 || (!firing && api.lineOfSight(s, t.x, t.y, t.z).range < 700),
+          (s) => done || s.altitudeAGL < pullOutFt + 250 || (!firing && api.lineOfSight(s, t.x, t.y, t.z).range < 700),
           60000,
           100,
         );
@@ -1091,23 +1116,32 @@
             const lk = api.combat() && api.combat().lock;
             const cone = M.selectConeDeg * 0.5;
             // Press T when the nose is on it; again if the lock went to another target.
-            if (Math.abs(los.az) < cone && Math.abs(los.el - x.pitch) < cone && drv.now() - tryLockAt.t > (M.lockTimeS + 0.5) * 1000) {
+            if (Math.abs(los.az) < cone && Math.abs(los.el - x.pitch) < M.selectConeDeg * 0.8 && drv.now() - tryLockAt.t > (M.lockTimeS + 0.5) * 1000) {
               if (!lk || lk.state === 'off' || (lk.targetId !== null && lk.targetId !== targetId)) {
                 tryLockAt.t = drv.now();
                 presses++;
                 tap('KeyT');
               }
             }
-            return { pitch: clamp(los.el, -20, 10), roll: clamp(los.az * 2.5, -30, 30), thr: P.cruiseThrottle };
+            return { pitch: clamp(los.el + 1, -12, 8), roll: clamp(los.az * 2.5, -30, 30), thr: P.cruiseThrottle };
           },
           (x) => {
             const lk = api.combat() && api.combat().lock;
-            return !!lk && lk.state === 'locked' && lk.targetId === targetId && lk.inRange !== false;
+            if (!!lk && lk.state === 'locked' && lk.inRange !== false && (lk.targetId === targetId || (presses >= (o.acceptOtherAfter ?? 4) && lk.targetId !== null))) return true;
+            // Too low or too close: abort (the caller can come round again).
+            const T = find() || t;
+            return x.altitudeAGL < 500 || api.lineOfSight(x, T.x, T.y, T.z).range < M.minRangeM * 1.5;
           },
           o.timeoutMs ?? 60000,
         );
-        if (r !== 'done') { note('mav: no lock', { presses }); return { ...res, result: r === 'crashed' ? 'crashed' : 'no lock', presses }; }
+        const lk1 = api.combat() && api.combat().lock;
+        if (r !== 'done' || !(lk1 && lk1.state === 'locked' && lk1.targetId !== null)) {
+          note('mav: no lock', { presses });
+          await fly((x) => ({ pitch: 8, roll: 0, thr: P.maxThrottle }), (x) => x.altitudeAGL > 1000 && x.verticalSpeed > 0, 20000);
+          return { ...res, result: r === 'crashed' ? 'crashed' : 'no lock', presses };
+        }
         res.locked = true;
+        if (lk1.targetId !== targetId) { targetId = lk1.targetId; res.retargeted = targetId; }
         note('mav locked', { presses, rangeM: Math.round(api.combat().lock.rangeM || 0) });
         await tap('KeyZ', 80);
         await sleep(300);
@@ -1148,7 +1182,7 @@
   G.qaPilotLib = lib;
 
   if (typeof window !== 'undefined' && typeof document !== 'undefined' && window.dispatchEvent) {
-    const KEYS = { KeyW: 'w', KeyS: 's', KeyA: 'a', KeyD: 'd', KeyG: 'g', KeyF: 'f', KeyV: 'v', KeyQ: 'q', KeyZ: 'z', KeyT: 't', KeyX: 'x', KeyR: 'r', Space: ' ' };
+    const KEYS = { BracketLeft: '[', BracketRight: ']', KeyW: 'w', KeyS: 's', KeyA: 'a', KeyD: 'd', KeyG: 'g', KeyF: 'f', KeyV: 'v', KeyQ: 'q', KeyZ: 'z', KeyT: 't', KeyX: 'x', KeyR: 'r', Space: ' ' };
     const browserDriver = {
       read: () => window.sim,
       key(code, down, shift = false) {
