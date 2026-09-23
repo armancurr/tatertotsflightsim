@@ -72,6 +72,8 @@ export interface AirTrafficStats {
   drawCalls: number;
   /** Where they are (QA): role/kind, [x, y, z], render mode. */
   aircraft: string[];
+  /** The runway end the circuit uses (into the surface wind), e.g. '36'. */
+  circuitRunway: string;
 }
 
 export interface AirTraffic {
@@ -452,6 +454,7 @@ export function createAirTraffic(opts: AirTrafficOptions): AirTraffic {
         entities: sim ? sim.entities.length : 0,
         ...counts,
         drawCalls: vis(batch) + vis(discs) + vis(pointsObj) + vis(trailMesh),
+        circuitRunway: sim?.circuit?.runway.designator ?? '',
         aircraft: sim ? sim.entities.map((e, i) => `${e.role}/${e.kind} ${Math.round(e.pose.x)},${Math.round(e.pose.y)},${Math.round(e.pose.z)} ${slots[i]?.mode ?? ''}${e.role === 'circuit' && sim!.circuit ? ' ' + sim!.circuit.aircraft[i].leg : ''}`) : [],
       };
     },

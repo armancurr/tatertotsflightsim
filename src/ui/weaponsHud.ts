@@ -30,6 +30,7 @@ import type { Vec3 } from '../types';
 import { jetHeadingTape, jetHudCompact, jetHudOmitsGunCross } from './jetHud';
 import { hudGlassToBox, type HudGlass } from './hudGlass';
 import { gunLead, newLead } from '../combat/air/lead';
+import { createPlaced, JET_KEEP_OUT_MAX, jetHudKeepOut, lineRect, placeOptions, TextPlacer, type Box, type FixedSpot, type LineSpec, type Placed } from './weaponsHudLayout';
 import {
   ammoLabel, bearingDeg, clampToRect, createScreenPt, formatKm, formatSlantRange, gunAmmoText, gunLineDir, lockBox, missileStoresText,
   pipperArcFraction, projectPoint, relativeBearingDeg, weaponsVisibility, type LockBox, type Rect, type WeaponsVisibility,
@@ -79,6 +80,9 @@ export interface WeaponsHudFrame {
   qz: number;
   qw: number;
   headingDeg: number;
+  /** The jet HUD's conditional cues (SPD BRK; AB or ENG OFF), when known — the text layout keeps their room otherwise. */
+  speedBrake?: boolean;
+  abOrEngine?: boolean;
   /** Aircraft velocity, world m/s (the gun lead). */
   vx?: number;
   vy?: number;
@@ -158,7 +162,45 @@ export interface WeaponsHudModel {
   glassBox: Rect;
   /** Text caches (a string is rebuilt only when its number changes). */
   cache: { rounds: number; label: string; gunName: string; msl: number; mslName: string; aam: number; aamName: string; kills: number; rangeKey: number; lockKey: number };
+  /**
+   * Every text, laid out so none overlaps another, the heading tape or the jet HUD's own text
+   * (src/ui/weaponsHudLayout.ts); indexed by the TX_* slots. `rects` holds each shown one's box.
+   */
+  texts: HudText[];
+  rects: Float64Array;
+  /** The jet HUD's text/scale areas this frame (x0, y0, x1, y1 each; the last JET_TAPE_RECTS are the heading tape). */
+  keepOut: Float64Array;
+  nKeepOut: number;
+  /** Layout memory (last frame's spots) per block. */
+  layout: { stores: Placed; stores2: Placed; range: Placed; msg: Placed; lock: Placed; pipper: Placed; lead: Placed };
 }
+
+/** One HUD text: string, centre-line position (x by `align`), size, weight; `blink` = drawn only on the flash. */
+export interface HudText {
+  show: boolean;
+  blink: boolean;
+  s: string;
+  x: number;
+  y: number;
+  px: number;
+  weight: number;
+  align: 'left' | 'right' | 'center';
+}
+
+/** Text slots in WeaponsHudModel.texts. */
+export const TX_LOCK = 0;
+export const TX_TYPE = 1;
+export const TX_RANGE = 2;
+export const TX_LOCK_IN_RNG = 3;
+export const TX_PIPPER_IN_RNG = 4;
+export const TX_LEAD_IN_RNG = 5;
+export const TX_RANGE_CUE = 6;
+export const TX_GUN = 7;
+export const TX_AAM = 8;
+export const TX_MSL = 9;
+export const TX_KILLS = 10;
+export const TX_MSG = 11;
+export const TX_COUNT = 12;
 
 export function createWeaponsHudModel(cfg: Config = CONFIG): WeaponsHudModel {
   return {
@@ -182,6 +224,11 @@ export function createWeaponsHudModel(cfg: Config = CONFIG): WeaponsHudModel {
     quad: new Float64Array(8),
     glassBox: { x: 0, y: 0, w: 0, h: 0 },
     cache: { rounds: NaN, label: '', gunName: '', msl: NaN, mslName: '', aam: NaN, aamName: '', kills: 0, rangeKey: NaN, lockKey: NaN },
+    texts: Array.from({ length: TX_COUNT }, () => ({ show: false, blink: false, s: '', x: 0, y: 0, px: 12, weight: 700, align: 'center' as const })),
+    rects: new Float64Array(TX_COUNT * 4),
+    keepOut: new Float64Array(JET_KEEP_OUT_MAX * 4),
+    nKeepOut: 0,
+    layout: { stores: createPlaced(), stores2: createPlaced(), range: createPlaced(), msg: createPlaced(), lock: createPlaced(), pipper: createPlaced(), lead: createPlaced() },
   };
 }
 
@@ -499,8 +546,291 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
     m.msg.x = hb ? hb.x + hb.w / 2 : W / 2;
     m.msg.y = hb ? hb.y + hb.h * 0.7 : H * 0.62;
   }
+
+  layoutTexts(m, f, hb, gl, cfg);
   return m;
 }
+
+// ─── Text layout ─────────────────────────────────────────────────────────────
+
+const placer = new TextPlacer();
+const specs: LineSpec[] = Array.from({ length: 6 }, () => ({ chars: 0, px: 12 }));
+const slots: number[] = [];
+const symBox: Box = { x0: 0, y0: 0, x1: 0, y1: 0 };
+const spots: FixedSpot[] = Array.from({ length: 24 }, () => ({ x: 0, y: 0, align: 'left' as const }));
+const NO_DROP: readonly number[] = [];
+const storesDrop: number[] = [];
+const optsStores = placeOptions({ fixed: spots, dropOrder: [] });
+const optsRange = placeOptions({ fixed: spots });
+const optsMsg = placeOptions({ fixed: spots });
+const optsLock = placeOptions({ prefer: 'below', split: true, fixed: spots, far: 12 });
+const optsSmall = placeOptions({ prefer: 'below', far: 8 });
+const lockDrop: number[] = [];
+
+function hideTexts(m: WeaponsHudModel): void {
+  for (const t of m.texts) t.show = false;
+}
+
+/** Queue a line for the next block: slot, string, size. */
+function queue(n: number, slot: number, s: string, px: number): number {
+  specs[n].chars = s.length;
+  specs[n].px = px;
+  slots[n] = slot;
+  return n + 1;
+}
+
+/** Copy a placed block into the text slots. */
+function commitBlock(m: WeaponsHudModel, p: Placed, n: number, texts: readonly string[], weights: readonly number[], blinks: readonly boolean[]): void {
+  for (let k = 0; k < n; k++) {
+    const t = m.texts[slots[k]];
+    t.show = p.ok && p.shown[k] === 1;
+    if (!t.show) continue;
+    t.s = texts[k];
+    t.x = p.x[k];
+    t.y = p.y[k];
+    t.px = specs[k].px;
+    t.weight = weights[k];
+    t.blink = blinks[k];
+    t.align = p.align;
+  }
+}
+
+const bTexts: string[] = ['', '', '', '', '', ''];
+const bWeights: number[] = [700, 700, 700, 700, 700, 700];
+const bBlinks: boolean[] = [false, false, false, false, false, false];
+function line(n: number, s: string, weight: number, blink = false): void {
+  bTexts[n] = s;
+  bWeights[n] = weight;
+  bBlinks[n] = blink;
+}
+
+/**
+ * Lay out every text of the weapons HUD (stores, range cue, message, lock data, IN RNG cues) so no
+ * two overlap and none touches the heading tape or the jet HUD's own text: fixed blocks first,
+ * then the ones that follow a symbol, most important first (src/ui/weaponsHudLayout.ts).
+ */
+function layoutTexts(m: WeaponsHudModel, f: WeaponsHudFrame, hb: Rect | null, gl: HudGlass | null, cfg: Config): void {
+  hideTexts(m);
+  const F = m.font;
+  const lw = m.lw;
+  const d = m.display;
+  placer.reset(d.x, d.y, d.x + d.w, d.y + d.h);
+  m.nKeepOut = 0;
+  if (hb) {
+    m.nKeepOut = jetHudKeepOut(m.keepOut, {
+      x: hb.x, y: hb.y, w: hb.w, h: hb.h, glass: !!gl,
+      boreY: gl ? gl.boreY : hb.h * cfg.hud.jet.boresightY, gearUp: f.gearUp, font: F, speedBrake: f.speedBrake, abOrEngine: f.abOrEngine, caret: m.rangeCue.show && m.rangeCue.tapeShow,
+    }, cfg);
+    placer.addHardRects(m.keepOut, m.nKeepOut);
+    // the jet HUD's boresight cross and (on the glass) flight-path marker: avoided when possible
+    const bx = gl ? gl.boreX : hb.x + hb.w / 2;
+    const by = gl ? gl.boreY : hb.y + hb.h * cfg.hud.jet.boresightY;
+    const c = Math.max(hb.h * 0.02, F * 0.7) + lw;
+    placer.addSoft(bx - c, by - c, bx + c, by + c);
+    if (gl && gl.fpmOk) {
+      const r = Math.max(hb.h * 0.017, 4.4) * 2.7 + lw;
+      placer.addSoft(gl.fpmX - r, gl.fpmY - r * 0.8, gl.fpmX + r, gl.fpmY + r * 0.5);
+    }
+  }
+  // Soft obstacles: the conformal symbols (text avoids them when it can).
+  if (m.gunCross.show) {
+    const c = Math.max(8, F * 0.95) + lw;
+    placer.addSoft(m.gunCross.x - c, m.gunCross.y - c, m.gunCross.x + c, m.gunCross.y + c);
+  }
+  const pp = m.pipper;
+  if (pp.show) {
+    const r = pp.r + lw * 3.5;
+    placer.addSoft(pp.x - r, pp.y - r, pp.x + r, pp.y + r);
+  }
+  const ld = m.lead;
+  if (ld.show) {
+    const r = ld.r + lw * 4.5;
+    placer.addSoft(ld.x - r, ld.y - r, ld.x + r, ld.y + r);
+  }
+  const L = m.lock;
+  if (L.show) placer.addSoft(L.x - L.half - lw, L.y - L.half - lw, L.x + L.half + lw, L.y + L.half + lw);
+  const rc = m.rangeCue;
+  if (rc.show && rc.steerShow) placer.addSoft(rc.steerX - F * 0.7, rc.steerY - F, rc.steerX + F * 0.7, rc.steerY + lw);
+
+  const S = m.stores;
+  // (the fixed blocks stay by the HUD: its box bottom, not the viewport's)
+  const boxBottom = Math.min(d.y + d.h, hb ? hb.y + hb.h : d.y + d.h);
+  // ── Stores block: bottom-left, stacked upward (GUN, 9M, 65D, KILLS from the top) ──
+  {
+    let n = 0;
+    if (S.gun) {
+      n = queue(n, TX_GUN, S.gun, F);
+      line(n - 1, S.gun, 800, S.gunEmpty);
+    }
+    if (S.aamShow) {
+      n = queue(n, TX_AAM, S.aam, F);
+      line(n - 1, S.aam, 800);
+    }
+    if (S.mslShow) {
+      n = queue(n, TX_MSL, S.msl, F);
+      line(n - 1, S.msl, 800);
+    }
+    n = queue(n, TX_KILLS, S.kills, F * 0.95);
+    line(n - 1, S.kills, 700);
+    // spots: the usual corner, a little higher, as low as the HUD box goes, then higher and higher
+    let k = 0;
+    for (let j = -1; j < 12; j++) {
+      const sp = spots[k++];
+      sp.x = S.x;
+      sp.y = j < 0 ? S.y : j === 0 ? S.y - F * 0.5 : j === 1 ? boxBottom - F * 0.6 : S.y - (j - 0.5) * F * 0.5 - F * 0.5;
+      sp.align = 'left';
+    }
+    optsStores.nFixed = k;
+    optsStores.dropOrder = NO_DROP;
+    let p = placer.placeBlock(m.layout.stores, specs, n, F * 1.3, null, optsStores);
+    if (!p.ok) {
+      // tighter lines, then drop the least important ones (KILLS first)
+      storesDrop.length = 0;
+      for (let i = n - 1; i >= 1; i--) storesDrop.push(i);
+      optsStores.dropOrder = storesDrop;
+      p = placer.placeBlock(m.layout.stores, specs, n, F * 1.15, null, optsStores);
+    }
+    commitBlock(m, p, n, bTexts, bWeights, bBlinks);
+    // Lines that didn't fit on the left (a small combiner) go bottom-right, right-aligned.
+    let r = 0;
+    for (let i = 0; i < n; i++) {
+      if (m.texts[slots[i]].show) continue;
+      specs[r].chars = specs[i].chars;
+      specs[r].px = specs[i].px;
+      slots[r] = slots[i];
+      bTexts[r] = bTexts[i];
+      bWeights[r] = bWeights[i];
+      bBlinks[r] = bBlinks[i];
+      r++;
+    }
+    if (r > 0) {
+      k = 0;
+      for (let j = -1; j < 12; j++) {
+        const sp = spots[k++];
+        sp.x = S.right;
+        sp.y = j < 0 ? S.y : j === 0 ? boxBottom - F * 0.6 : S.y - j * F * 0.5;
+        sp.align = 'right';
+      }
+      optsStores.nFixed = k;
+      storesDrop.length = 0;
+      for (let i = r - 1; i >= 0; i--) storesDrop.push(i);
+      optsStores.dropOrder = storesDrop;
+      commitBlock(m, placer.placeBlock(m.layout.stores2, specs, r, F * 1.15, null, optsStores), r, bTexts, bWeights, bBlinks);
+    }
+  }
+  // ── Range cue: bottom-right ──
+  if (rc.show && rc.text) {
+    const n = queue(0, TX_RANGE_CUE, rc.text, F);
+    line(0, rc.text, 700);
+    let k = 0;
+    for (let j = -1; j < 14; j++) {
+      const sp = spots[k++];
+      sp.x = S.right;
+      sp.y = j < 0 ? S.y : j === 0 ? boxBottom - F * 0.6 : S.y - j * F * 0.5;
+      sp.align = 'right';
+    }
+    optsRange.nFixed = k;
+    commitBlock(m, placer.placeBlock(m.layout.range, specs, n, F, null, optsRange), n, bTexts, bWeights, bBlinks);
+  }
+  // ── Message: centred low in the HUD, moved up/down to a clear line ──
+  if (m.msg.show) {
+    const n = queue(0, TX_MSG, m.msg.text, F * 1.2);
+    line(0, m.msg.text, 800);
+    let k = 0;
+    for (let j = 0; j < 23 && k < spots.length; j++) {
+      const sp = spots[k++];
+      const off = j === 0 ? 0 : (j % 2 === 1 ? -1 : 1) * Math.ceil(j / 2) * 0.6 * F;
+      sp.x = m.msg.x;
+      sp.y = m.msg.y + off;
+      sp.align = 'center';
+    }
+    optsMsg.nFixed = k;
+    commitBlock(m, placer.placeBlock(m.layout.msg, specs, n, F, null, optsMsg), n, bTexts, bWeights, bBlinks);
+  }
+  // ── Lock data: LOCK over the box, type / range / IN RNG under it — or wherever is clear ──
+  if (L.show) {
+    let n = 0;
+    lockDrop.length = 0;
+    if (L.solid) {
+      n = queue(n, TX_LOCK, 'LOCK', F * 1.05);
+      line(n - 1, 'LOCK', 800, true);
+    }
+    const iType = n;
+    n = queue(n, TX_TYPE, L.type, F * 0.95);
+    line(n - 1, L.type, 700);
+    n = queue(n, TX_RANGE, L.range, F * 0.95);
+    line(n - 1, L.range, 700);
+    let iRng = -1;
+    if (L.inRange) {
+      iRng = n;
+      n = queue(n, TX_LOCK_IN_RNG, 'IN RNG', F * 0.95);
+      line(n - 1, 'IN RNG', 700);
+    }
+    // dropped when there is no room: the type, then LOCK (the solid box says it), then IN RNG
+    lockDrop.push(iType);
+    if (L.solid) lockDrop.push(0);
+    if (iRng >= 0) lockDrop.push(iRng);
+    optsLock.dropOrder = lockDrop;
+    optsLock.split = L.solid;
+    symBox.x0 = L.x - L.half - lw;
+    symBox.y0 = L.y - L.half - lw;
+    symBox.x1 = L.x + L.half + lw;
+    symBox.y1 = L.y + L.half + lw;
+    optsLock.gap = F * 0.35;
+    // last resort: a data block over the range cue, bottom-right of the HUD
+    let k = 0;
+    if (hb) {
+      for (let j = 1; j <= 6; j++) {
+        const sp = spots[k++];
+        sp.x = S.right;
+        sp.y = S.y - j * F * 1.3;
+        sp.align = 'right';
+      }
+    }
+    optsLock.nFixed = k;
+    commitBlock(m, placer.placeBlock(m.layout.lock, specs, n, F * 1.15, symBox, optsLock), n, bTexts, bWeights, bBlinks);
+  } else m.layout.lock.spot = -1;
+  // ── IN RNG under the CCIP pipper ──
+  if (pp.show && pp.inRange && !pp.clamped) {
+    const n = queue(0, TX_PIPPER_IN_RNG, 'IN RNG', F);
+    line(0, 'IN RNG', 700);
+    const r = pp.r + lw * 3.5;
+    symBox.x0 = pp.x - r;
+    symBox.y0 = pp.y - r;
+    symBox.x1 = pp.x + r;
+    symBox.y1 = pp.y + r;
+    optsSmall.gap = F * 0.3;
+    commitBlock(m, placer.placeBlock(m.layout.pipper, specs, n, F, symBox, optsSmall), n, bTexts, bWeights, bBlinks);
+  }
+  // ── IN RNG by the gun lead pipper (not when the lock box right there already says it) ──
+  if (ld.show && ld.inRange && !ld.clamped) {
+    const nearBox = L.show && Math.abs(L.x - ld.x) < L.half + F * 4 && Math.abs(L.y - ld.y) < L.half + F * 4;
+    if (!nearBox) {
+      const n = queue(0, TX_LEAD_IN_RNG, 'IN RNG', F * 0.95);
+      line(0, 'IN RNG', 700);
+      const r = ld.r + lw * 4.5;
+      symBox.x0 = ld.x - r;
+      symBox.y0 = ld.y - r;
+      symBox.x1 = ld.x + r;
+      symBox.y1 = ld.y + r;
+      optsSmall.gap = F * 0.3;
+      commitBlock(m, placer.placeBlock(m.layout.lead, specs, n, F, symBox, optsSmall), n, bTexts, bWeights, bBlinks);
+    }
+  }
+  // Boxes of the shown texts (for tests / QA).
+  const one: LineSpec = lineSpecScratch;
+  for (let i = 0; i < TX_COUNT; i++) {
+    const t = m.texts[i];
+    if (!t.show) {
+      m.rects[4 * i] = m.rects[4 * i + 1] = m.rects[4 * i + 2] = m.rects[4 * i + 3] = NaN;
+      continue;
+    }
+    one.chars = t.s.length;
+    one.px = t.px;
+    lineRect(m.rects, i, one, t.x, t.y, t.align);
+  }
+}
+const lineSpecScratch: LineSpec = { chars: 0, px: 12 };
 
 /** Quantised snapshot of what is drawn — redraw only when it changes. Returns true if it did. */
 export function weaponsHudChanged(m: WeaponsHudModel, key: Float64Array): boolean {
@@ -559,11 +889,25 @@ export function weaponsHudChanged(m: WeaponsHudModel, key: Float64Array): boolea
   put(m.lead.show ? m.lead.x : -9);
   put(m.lead.y + (m.lead.inRange ? 1e4 : 0) + (m.lead.clamped ? 2e4 : 0) + m.lead.r * 1e5);
   put(m.stores.aamShow ? m.cache.aam : -9);
+  // where the texts went
+  let tx = 0;
+  let ty = 0;
+  let bits = 0;
+  for (let k = 0; k < m.texts.length; k++) {
+    const t = m.texts[k];
+    if (!t.show) continue;
+    bits += 1 << k;
+    tx += t.x * (k + 1);
+    ty += t.y * (k + 1);
+  }
+  put(bits);
+  put(tx);
+  put(ty);
   return changed;
 }
 
 /** Length of the key array for weaponsHudChanged. */
-export const WEAPONS_HUD_KEY_LENGTH = 42;
+export const WEAPONS_HUD_KEY_LENGTH = 45;
 
 // ─── Drawing ─────────────────────────────────────────────────────────────────
 
@@ -688,7 +1032,6 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
         ctx.arc(pp.x, pp.y, r + lw * 2, -Math.PI / 2, -Math.PI / 2 + a * Math.PI * 2);
         stroke(lw * 1.9);
       }
-      if (pp.inRange) text('IN RNG', pp.x, pp.y + r + F * 1.2, F);
     }
     ctx.globalAlpha = 1;
   }
@@ -718,9 +1061,6 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
         ctx.lineTo(ld.x + c * (r + lw * 4.5), ld.y + sn * (r + lw * 4.5));
       }
       stroke();
-      // (the lock box right there already says IN RNG — don't stack two)
-      const nearBox = m.lock.show && Math.abs(m.lock.x - ld.x) < m.lock.half + F * 4 && Math.abs(m.lock.y - ld.y) < m.lock.half + F * 4;
-      if (ld.inRange && !nearBox) text('IN RNG', ld.x, ld.y + r + F * 1.3, F * 0.95);
     }
     ctx.globalAlpha = 1;
   }
@@ -788,12 +1128,6 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
       }
     }
     ctx.setLineDash([]);
-    if (L.solid && L.flashOn) text('LOCK', L.x, y0 - F * 0.95, F * 1.05, 'center', 800);
-    let ty = y0 + 2 * s + F * 1.05;
-    text(L.type, L.x, ty, F * 0.95);
-    ty += F * 1.15;
-    text(L.range, L.x, ty, F * 0.95);
-    if (L.inRange) text('IN RNG', L.x, ty + F * 1.15, F * 0.95);
   }
 
   // Range cue: caret on the heading tape + the distance.
@@ -825,26 +1159,15 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
         ctx.fill();
       }
     }
-    text(rc.text, m.stores.right, m.stores.y, F, 'right');
   }
 
-  // Stores block: gun, missiles, kills (bottom-left, stacked upward).
-  const S = m.stores;
-  let y = S.y;
-  text(S.kills, S.x, y, F * 0.95, 'left', 700);
-  y -= F * 1.3;
-  if (S.mslShow) {
-    text(S.msl, S.x, y, F, 'left', 800);
-    y -= F * 1.3;
+  // Every text — stores, range cue, message, lock data, IN RNG — where the layout put it
+  // (nothing overlaps: layoutTexts). Blinking ones (LOCK, "GUN 0") show on the flash.
+  for (let i = 0; i < m.texts.length; i++) {
+    const t = m.texts[i];
+    if (!t.show || (t.blink && !m.flashOn)) continue;
+    text(t.s, t.x, t.y, num(t.px, F), t.align, t.weight);
   }
-  if (S.aamShow) {
-    text(S.aam, S.x, y, F, 'left', 800);
-    y -= F * 1.3;
-  }
-  if (S.gun && S.gunShow) text(S.gun, S.x, y, F, 'left', 800);
-
-  // Message.
-  if (m.msg.show) text(m.msg.text, m.msg.x, m.msg.y, F * 1.2, 'center', 800);
 
   ctx.restore();
 }

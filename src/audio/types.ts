@@ -1,6 +1,7 @@
 import type { CameraMode, SurfaceType } from '../types';
 import type { EngineSound } from '../fleet/types';
 import type { CombatAudioApi } from './combat';
+import type { AirAudioApi } from './airTargets';
 
 /** Everything the sound engine needs each frame (see createAudioInputTracker for the adapter from AircraftState). */
 export interface AudioInputs {
@@ -69,6 +70,8 @@ export interface AudioSystem {
   reset(): void;
   /** Combat sound: the gun, impacts, missiles, explosions (src/audio/combat.ts); no-op before the context exists. */
   readonly combat: CombatAudioApi;
+  /** The enemy aircraft's engines (src/audio/airTargets.ts); no-op before the context exists. */
+  readonly air: AirAudioApi;
   /** Output meter (creates the analyser on first use); null before the context exists. */
   meter(): AudioMeter | null;
   /** The AudioContext once created (null before resume() or when WebAudio is unavailable). */
@@ -150,4 +153,9 @@ export interface AudioLevels {
   impactsPlayed: number;
   booms: number;
   launches: number;
+  // ── Enemy aircraft ──
+  /** Voices heard, the loudest one's level (after the canopy) and its Doppler factor. */
+  airVoices: number;
+  airLevel: number;
+  airDoppler: number;
 }

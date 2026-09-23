@@ -49,7 +49,8 @@ describe('building shaders (e2e)', () => {
     expect(st.ready).toBe(true);
     expect(st.nearInstances).toBeGreaterThan(30);
     expect(st.drawCalls).toBeGreaterThanOrEqual(4);
-    expect(st.night).toBeGreaterThan(0.5);
+    // tod=3 is the dawn preset (sun +4°): some windows still lit (~22 %; all of them below −3°).
+    expect(st.night).toBeGreaterThan(0.15);
     // the renderer issued the draws (colour + shadow passes)
     expect(st.calls).toBeGreaterThan(st.drawCalls);
     await page.close();

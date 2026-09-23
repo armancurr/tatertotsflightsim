@@ -11,10 +11,12 @@ import { combatWorld } from '../../combat/world';
 import { secondaryPlan, isAirBurst } from '../../combat/fx/plan';
 import { motorLevel, missilePosition } from '../../audio/combatMapping';
 import type { CombatAudioFrame } from '../../audio/combat';
+import type { AirAudioFrame } from '../../audio/airTargets';
+import type { AirSoundKind, AirSoundSource } from '../../audio/airTargetsMapping';
 import type { HudReadings } from '../../ui/instruments';
 import type { EngineSound } from '../../fleet/types';
 import type { Vec3 } from '../../types';
-import type { SystemModule } from './types';
+import type { SystemFrame, SystemModule } from './types';
 
 type Win = {
   addEventListener?: (type: string, fn: (e: Event) => void) => void;
@@ -138,6 +140,67 @@ const mod: SystemModule = {
     });
     const cf: CombatAudioFrame = { gunRateRps: 0, gunCaliberMm: 30, gunSpin: 0, gunFiring: false, gunDistanceM: 0, cockpit: false, motor: 0, motorDistanceM: 0 };
 
+    // ── Enemy aircraft: the combat world's live air targets → the engine voices (nearest few) ──
+    const AIR_MAX = 32;
+    const airSources: AirSoundSource[] = Array.from({ length: AIR_MAX }, () => ({ id: -1, kind: 'fighter' as AirSoundKind, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 }));
+    const af: AirAudioFrame = {
+      listener: { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, rx: 1, ry: 0, rz: 0, cockpit: false },
+      sources: airSources,
+      count: 0,
+      dt: 0,
+    };
+    /** The camera's velocity (the listener's), from its motion, smoothed; a jump (reset, view change) is ignored. */
+    const camPrev = { x: 0, y: 0, z: 0, set: false };
+    const updateAir = (f: SystemFrame) => {
+      if (!world) return;
+      const c = f.camera.position;
+      const L = af.listener;
+      const dt = f.paused ? 0 : Math.max(0, f.dt);
+      if (camPrev.set && dt > 1e-4) {
+        const vx = (c.x - camPrev.x) / dt;
+        const vy = (c.y - camPrev.y) / dt;
+        const vz = (c.z - camPrev.z) / dt;
+        if (Math.hypot(vx, vy, vz) < 700) {
+          const k = Math.min(1, dt / 0.15);
+          L.vx += (vx - L.vx) * k;
+          L.vy += (vy - L.vy) * k;
+          L.vz += (vz - L.vz) * k;
+        }
+      }
+      camPrev.x = c.x;
+      camPrev.y = c.y;
+      camPrev.z = c.z;
+      camPrev.set = true;
+      L.x = c.x;
+      L.y = c.y;
+      L.z = c.z;
+      const e = (f.camera as { matrixWorld?: { elements?: ArrayLike<number> } }).matrixWorld?.elements;
+      if (e && Number.isFinite(e[0]) && Number.isFinite(e[1]) && Number.isFinite(e[2])) {
+        L.rx = e[0];
+        L.ry = e[1];
+        L.rz = e[2];
+      }
+      L.cockpit = f.cameraMode === 'cockpit';
+      let n = 0;
+      const ts = world.targets;
+      for (let i = 0; i < ts.length && n < AIR_MAX; i++) {
+        const t = ts[i];
+        if (!t.alive || !world.isAir(t)) continue;
+        const s = airSources[n++];
+        s.id = t.id;
+        s.kind = t.kind === 'helo' || t.kind === 'attack' ? t.kind : 'fighter';
+        s.x = t.position.x;
+        s.y = t.position.y;
+        s.z = t.position.z;
+        s.vx = t.velocity?.x ?? 0;
+        s.vy = t.velocity?.y ?? 0;
+        s.vz = t.velocity?.z ?? 0;
+      }
+      af.count = n;
+      af.dt = dt;
+      audio.air.update(af);
+    };
+
     w.runAudioSelfTest = runAudioSelfTest;
     w.simAudio = {
       levels: () => audio.levels(),
@@ -208,6 +271,7 @@ const mod: SystemModule = {
           if (best === 0) cf.motor = 0;
           cf.motorDistanceM = bestD;
           audio.combat.update(cf);
+          updateAir(f);
         }
       },
       onAction(a) {
@@ -216,6 +280,8 @@ const mod: SystemModule = {
       onReset() {
         audio.reset();
         for (const m of motors) m.live = false;
+        camPrev.set = false;
+        af.listener.vx = af.listener.vy = af.listener.vz = 0;
       },
       onAircraftChange(def) {
         audio.setEngine(soundOf(def.sound));

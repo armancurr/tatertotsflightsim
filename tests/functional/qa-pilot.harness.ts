@@ -16,6 +16,9 @@ import { createEnvironment } from '../../src/world/environment';
 import { createControlState, emptyInputFrame, resetControls, updateControls, type ControlState, type KeyPress } from '../../src/input/controlSystem';
 import { buildSimSnapshot } from '../../src/game/simApi';
 import { getAircraftDef } from '../../src/fleet/index';
+import { createCombatWorld, type CombatWorld } from '../../src/combat/world';
+import { createGunnery, type Gunnery } from '../../src/combat/gunnery';
+import type { NewTarget, RangeInfo } from '../../src/combat/types';
 
 /** What scripts/qa-pilot.js puts on globalThis (typed loosely: it is plain JS). */
 export interface QaPilotLib {
@@ -84,6 +87,12 @@ export interface HeadlessOpts {
   env?: Environment;
   /** Give up after this much sim time, s (the pilot's `sleep` then throws). */
   maxSimS?: number;
+  /**
+   * A combat world with these vehicles on the ground (y from the terrain) and the aircraft's gun
+   * (the pure gun core, src/combat/gunnery.ts, as the weapons system runs it): `window.sim.combat`
+   * then shows the weapons status, the CCIP, the stats and list() exactly as in the browser.
+   */
+  combat?: { targets: NewTarget[]; range?: RangeInfo | null };
 }
 
 export interface HeadlessRun {
@@ -95,6 +104,9 @@ export interface HeadlessRun {
   readonly t: number;
   /** Every touchdown record seen (bounces included), in order. */
   touchdowns: NonNullable<AircraftState['touchdown']>[];
+  /** The combat world and the gun (with `combat`). */
+  world: CombatWorld | null;
+  gunnery: Gunnery | null;
   /** Max |vs| (fpm) sampled in the 0.3 s before each wheel contact. */
   trace: { t: number; agl: number; vs: number; pitch: number; ias: number; el: number; thr: number; roll: number; x: number; z: number; hdg: number }[];
 }
@@ -143,6 +155,28 @@ export function createHeadlessRun(o: HeadlessOpts): HeadlessRun {
     cs = resetControls(cs, tr.controls);
   }
 
+  // ── Combat: the world, the vehicles, the gun ──
+  let world: CombatWorld | null = null;
+  let gunnery: Gunnery | null = null;
+  if (o.combat) {
+    world = createCombatWorld(cfg);
+    world.range = o.combat.range ?? null;
+    for (const t of o.combat.targets) world.addTarget({ ...t, position: { ...t.position, y: env.groundHeight(t.position.x, t.position.z) } });
+    gunnery = createGunnery(world, env, { seed: 0x5eed });
+    gunnery.setGun(cfg.weapons?.gun ?? null, 0);
+  }
+  const combatSnapshot = () => {
+    const w = world!;
+    return {
+      ...w.status,
+      stats: { ...w.stats },
+      range: w.range,
+      targets: w.targets.length,
+      alive: w.targets.filter((t) => t.alive).length,
+      list: () => w.targets.map((t) => ({ id: t.id, kind: t.kind, alive: t.alive, health: t.health, x: t.position.x, y: t.position.y, z: t.position.z, headingDeg: t.headingDeg, group: t.group })),
+    };
+  };
+
   const held = new Set<string>();
   let pressed: KeyPress[] = [];
   let shift = false;
@@ -159,12 +193,15 @@ export function createHeadlessRun(o: HeadlessOpts): HeadlessRun {
     get controls() { return cs.controls; },
     get t() { return state.time; },
     touchdowns: [],
+    world,
+    gunnery,
     trace: [],
   };
   let snap: Record<string, unknown> = {};
   const refresh = () => {
     snap = buildSimSnapshot({ state, controls: cs.controls, fps, cameraMode: 'chase', paused: false }) as unknown as Record<string, unknown>;
     snap.aircraft = def.id;
+    if (world) snap.combat = combatSnapshot();
   };
   refresh();
   let lastTd: unknown = null;
@@ -172,10 +209,12 @@ export function createHeadlessRun(o: HeadlessOpts): HeadlessRun {
   const frame = () => {
     cs = updateControls(cs, { ...emptyInputFrame(), held, pressed, shift }, frameS, cfg).state;
     pressed = [];
+    // The gun (like the weapons system's adjustControls): barrels, ammo, gunFiring → recoil.
+    const controls = gunnery ? gunnery.adjustControls(cs.controls, state.phase === 'crashed', frameS) : cs.controls;
     const n = Math.round(frameS / physDt);
     for (let i = 0; i < n; i++) {
       if (state.phase === 'crashed') break;
-      state = step(state, cs.controls, physDt, env, cfg);
+      state = step(state, controls, physDt, env, cfg);
       if (state.touchdown && state.touchdown !== lastTd) {
         lastTd = state.touchdown;
         run.touchdowns.push(state.touchdown);
@@ -183,6 +222,8 @@ export function createHeadlessRun(o: HeadlessOpts): HeadlessRun {
     }
     simMs += frameS * 1000;
     fps.frames++;
+    // The rounds fly, hit, and the CCIP is solved (like the weapons system's update).
+    gunnery?.update({ position: state.position, orientation: state.orientation }, state.velocity, frameS, state.time, false);
     if (state.time - lastTraceT >= 0.25) {
       lastTraceT = state.time;
       const d = state.derived;

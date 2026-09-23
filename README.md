@@ -20,20 +20,18 @@ you play, and the only runtime dependency is [Three.js](https://threejs.org).
 
 | | |
 | --- | --- |
+| ![A Boeing 747-400 in Tater Airways colours on final approach over the coast at golden hour](docs/screenshots/b747-final.jpg) | ![The 747-400 flight deck on final: PFDs, NDs and EICAS live, flaps 30, gear down](docs/screenshots/b747-cockpit.jpg) |
+| **Boeing 747-400** on final over the coast. | **The 747 flight deck**: six live glass displays, levers that move. |
+| ![An F-16C fires a Sidewinder at a locked MiG-29: FOX 2 on the HUD](docs/screenshots/f16-fox2.jpg) | ![The MiG-29 explodes after the Sidewinder hit](docs/screenshots/f16-mig-kill.jpg) |
+| **Fox 2.** Lock an enemy jet with T, fire a Sidewinder with Z. | **Splash one.** Enemy aircraft break, burn and fall. |
 | ![A-10 Maverick lock: the HUD lock box on a BTR-80 at 1.9 NM and the missile's IR view](docs/screenshots/a10-maverick-lock.jpg) | ![A Maverick hits the lead vehicle of a truck column](docs/screenshots/a10-maverick-hit.jpg) |
-| **Lock and launch.** Pick a target, get a lock, fire a Maverick. | **Direct hit.** Fireball, debris, and the blast takes out a neighbour. |
-| ![An F-16C in afterburner over snow-capped mountains and cumulus](docs/screenshots/f16-afterburner-mountains.jpg) | ![The Cessna 172RG cockpit over the coast, with a real-size panel](docs/screenshots/cessna-cockpit-coast.jpg) |
-| **F-16C in afterburner** over the mountains, volumetric clouds. | **Cessna 172RG cockpit** with a real 1980s panel, heading for the coast. |
-| ![The A-10 cockpit with the HUD drawn on its combiner glass](docs/screenshots/a10-cockpit-hud.jpg) | ![A Cessna following the river to the sea at golden hour](docs/screenshots/cessna-river-coast.jpg) |
-| **A-10 cockpit.** The HUD sits on the combiner glass. | **Low and slow** down the river to the sea. |
-
-<!-- screenshot: Boeing 747-400 on final approach to runway 36 (docs/screenshots/b747-final.jpg) -->
-<!-- screenshot: an enemy aircraft shot down — a MiG-29 falling in flames after a Sidewinder hit (docs/screenshots/f16-mig-kill.jpg) -->
-<!-- screenshot: the crosswind runway 03/21 crossing 36/18, seen on approach (docs/screenshots/runway-03-21.jpg) -->
-<!-- screenshot: F-16C cockpit — HUD, MFDs and side-stick (docs/screenshots/f16-cockpit.jpg) -->
-<!-- screenshot: Boeing 747-400 flight deck (docs/screenshots/b747-cockpit.jpg) -->
-<!-- screenshot: Cessna 172RG cockpit, current interior (docs/screenshots/cessna-cockpit.jpg) -->
-<!-- screenshot: A-10C cockpit, current interior (docs/screenshots/a10-cockpit.jpg) -->
+| **Tank busting.** Lock and launch a Maverick. | **Direct hit.** Fireball, debris, and the blast takes out a neighbour. |
+| ![The F-16C cockpit: the HUD on its combiner glass, MFDs, keypad and gauges over the mountains](docs/screenshots/f16-cockpit.jpg) | ![The A-10C cockpit: three-piece windscreen, HUD on the glass, map and targeting-pod screens](docs/screenshots/a10-cockpit.jpg) |
+| **F-16C cockpit**: HUD on the glass, live MFDs. | **A-10C cockpit**: HUD on the glass, TAD map and targeting pod. |
+| ![The Cessna 172RG cockpit over the coast, with a real-size 1980s panel](docs/screenshots/cessna-cockpit.jpg) | ![Tater Field from above: runway 36/18 crossed by runway 03/21, the apron, hangars and fire station](docs/screenshots/runway-03-21.jpg) |
+| **Cessna 172RG cockpit**: a real 172RG panel. | **Tater Field**: two runways, a busy ramp. |
+| ![An F-16C in afterburner over snow-capped mountains and cumulus](docs/screenshots/f16-afterburner-mountains.jpg) | ![A Cessna following the river to the sea at golden hour](docs/screenshots/cessna-river-coast.jpg) |
+| **F-16C in afterburner** over the mountains. | **Low and slow** down the river to the sea. |
 
 ## Quick start
 
@@ -75,11 +73,10 @@ another device on your network, run `npx vite --host 0.0.0.0`.
 | **Cessna 172RG Cutlass** | A forgiving four-seat trainer with a 180 hp engine and retractable gear. Steam gauges, flaps, trim, P-factor, ground effect. The one to learn on. | Lifts off ~55 kt, stalls ~48 kt clean, cruises ~125 kt, never exceed 163 kt | Nothing |
 | **F-16C Fighting Falcon** | A supersonic fighter. Fly-by-wire (9 g, 25° angle-of-attack limit, 300°/s rolls), afterburner, speed brake, jet HUD. Fast and unforgiving. | Rotates ~150 kt, lands ~145 kt, Mach 2 at 40,000 ft | M61A1 20 mm gun (511 rounds), 2 AGM-65 Mavericks, 2 AIM-9 Sidewinders |
 | **A-10C Thunderbolt II** "Warthog" | A slow, tough tank killer with a big straight wing and two slow-spooling turbofans. Split "deceleron" speed brakes; the gun's recoil slows the jet down. | Rotates ~120 kt, stalls ~116 kt, tops out ~370 kt | GAU-8/A 30 mm gun (1,150 rounds), 4 AGM-65 Mavericks, 2 AIM-9 Sidewinders |
-| **Boeing 747-400** | The "Queen of the Skies", flown light (~220 t) so it just fits the 1,600 m runway. Four engines, 64 m of wing, heavy and stately. Steam-gauge style instruments. | Rotates ~150 kt, approach ~150 kt with flaps 30, limit 365 kt | Nothing |
+| **Boeing 747-400** | The "Queen of the Skies" in Tater Airways colours, flown light (~220 t) so it fits the 1,600 m runway. Four engines, 64 m of wing, 18 wheels, heavy and stately. A full glass flight deck (PFD, ND, EICAS) and an airliner-style on-screen display. | Rotates ~145 kt with flaps 10 after ~1 km, cruises Mach 0.85 at FL350, lands ~130 kt with flaps 30, limit 365 kt | Nothing |
 
 All four have a 6-degrees-of-freedom flight model tuned against published numbers (the
-calibration tables are at the top of `src/physics/aircraft.ts`). The 747's flight model and
-flight deck are still being tuned.
+calibration tables are at the top of `src/physics/aircraft.ts`).
 
 ## What you can do
 
@@ -135,8 +132,11 @@ the throttle and raise the nose gently to flare. If the gear is up with the powe
 150 knots. <kbd>X</kbd> toggles the **speed brake**. Keep an eye on the angle of attack when you
 pull hard.
 
-**747.** Everything happens slowly: full power, rotate at about 150 knots, and fly it with gentle
-inputs. Use the whole runway.
+**747.** Everything happens slowly. Set flaps 10 (two presses of F), full power, and rotate
+gently at about 145 knots: yank the yoke and you'll scrape the tail. Raise the gear, clean up the
+flaps as it accelerates, and fly it with small, early inputs. To land, Shift+R puts you on final
+with flaps 30; aim for about 130 knots over the threshold. The spoilers deploy by themselves on
+touchdown. Use the whole runway.
 
 ### Combat (F-16 and A-10)
 

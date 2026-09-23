@@ -1,7 +1,8 @@
 /**
- * Other aircraft (owned by src/world/traffic): runway-36 circuit traffic (touch-and-goes, full
- * stops, go-arounds), GA crossing the area, a helicopter over Port Chateau, airliners at cruise
- * with contrails. Always ≥ `world.traffic.playerClearance` from the player; re-anchored on every
+ * Other aircraft (owned by src/world/traffic): circuit traffic on the runway end most into the
+ * surface wind (36 with the windsocks' 330°/8 kt; touch-and-goes, full stops, go-arounds — held
+ * off while the player is on that runway or one crossing it), GA crossing the area, a helicopter
+ * over Port Chateau, airliners at cruise with contrails. Always ≥ `world.traffic.playerClearance` from the player; re-anchored on every
  * reset, teleport and aircraft change. Traffic time stops while paused; `?tt=<s>` sets its start.
  */
 import * as THREE from 'three';

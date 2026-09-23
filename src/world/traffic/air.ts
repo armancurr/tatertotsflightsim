@@ -1,11 +1,14 @@
 /**
  * Air traffic (PURE, visual only — no collision with the player):
  *
- *  - Circuit traffic: GA aircraft flying left-hand circuits for runway 36 at
- *    1,000 ft AGL: upwind, crosswind, downwind, base, final; touch-and-go, or a
- *    full stop with rollout, taxi-back via taxiway A and a new take-off; a
- *    go-around (side-stepping west) when the runway is occupied by the player
- *    or another aircraft; a 360 on the downwind for spacing. A small state
+ *  - Circuit traffic: GA aircraft flying left-hand circuits at 1,000 ft AGL on
+ *    the runway end most into the surface wind (36 for the default 330°/8 kt; 3,
+ *    18 or 21 for other winds — `activeCircuitRunway`): upwind, crosswind,
+ *    downwind, base, final; touch-and-go, or (on 36/18, which have the parallel
+ *    taxiway A) a full stop with rollout, taxi-back and a new take-off; a
+ *    go-around (side-stepping to the pattern side) when the runway — or a runway
+ *    crossing it — is occupied by the player, or by another aircraft; a 360 on
+ *    the downwind for spacing. A small state
  *    machine stepped at a fixed 0.1 s, so the schedule is a pure function of
  *    (seed, time, the player's positions at the decision points).
  *  - Crossing GA: straight tracks at 2,500–6,500 ft through the player's area,
@@ -21,7 +24,7 @@
  */
 import { CONFIG, type Config } from '../../config';
 import type { WorldLayout } from '../layout';
-import { fromRunwayCoords, type RunwayFrame } from '../runway';
+import { fromRunwayCoords, runwayCrossing, runwayEnds, runwayFrame, runwayFrames, type RunwayFrame } from '../runway';
 import { createPath, samplePath, filletPath, smoothLoop, newPathSample, arcAtTime, type Path, type PathSample, type Waypoint } from './path';
 import { h01, hRange, KT, FT, clamp, smooth, DEG } from './rng';
 
@@ -90,6 +93,65 @@ export function keepClear(p: { x: number; y: number; z: number }, player: { x: n
 
 // ─── Circuit ─────────────────────────────────────────────────────────────────
 
+/** The runway end the circuit uses. */
+export interface CircuitRunway {
+  /** Designator of the end ('36', '18', '3', '21'). */
+  designator: string;
+  /** Its departure frame: threshold where they land and take off, `dir` = the landing direction. */
+  frame: RunwayFrame;
+  /** Side of the parallel taxiway A (+1 right of `dir`, −1 left); 0 = none (touch-and-goes only). */
+  taxiSide: 1 | -1 | 0;
+  /** Head-wind component on it, kt (negative = tail wind). */
+  headwindKt: number;
+}
+
+const DEG_R = Math.PI / 180;
+
+/**
+ * The runway end most into the surface wind (`world.airportRender.wind`, what the windsocks show):
+ * the largest head-wind component, the main runway 36/18 winning near-ties (longer, with a parallel
+ * taxiway) and a calm (< 3 kt); `world.traffic.air.circuitRunway` names an end to force one.
+ */
+export function activeCircuitRunway(cfg: Config = CONFIG): CircuitRunway {
+  const main = runwayFrame(cfg);
+  const ends = runwayEnds(cfg);
+  const wind = (cfg.world as { airportRender?: { wind?: { fromDeg: number; speedKt: number } } }).airportRender?.wind ?? { fromDeg: 0, speedKt: 0 };
+  const from = Number.isFinite(wind.fromDeg) ? wind.fromDeg : 0;
+  const kt = Number.isFinite(wind.speedKt) ? Math.max(0, wind.speedKt) : 0;
+  const forced = String((cfg.world.traffic.air as { circuitRunway?: string }).circuitRunway ?? 'auto').replace(/^0/, '');
+  const isMain = (f: RunwayFrame) => f.name === main.name;
+  const head = (f: RunwayFrame) => kt * Math.cos((from - f.headingDeg) * DEG_R);
+  let best = ends[0];
+  let bestScore = -Infinity;
+  for (const e of ends) {
+    const score = forced !== 'auto' ? (e.designator === forced ? 1 : 0) : head(e.frame) + (isMain(e.frame) ? 0.75 : 0) + (kt < 3 && e.frame.headingDeg === main.headingDeg ? 10 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = e;
+    }
+  }
+  const f = best.frame;
+  // taxiway A runs along the right of runway 36 (east): right of `dir` flying 36, left flying 18
+  const diff = Math.abs(((((f.headingDeg - main.headingDeg) % 360) + 540) % 360) - 180);
+  const taxiSide: 1 | -1 | 0 = isMain(f) ? (diff < 90 ? 1 : -1) : 0;
+  return { designator: best.designator, frame: f, taxiSide, headwindKt: head(f) };
+}
+
+/** Runways (other than the circuit's own) whose centreline crosses it. */
+export function crossingRunways(rw: RunwayFrame, cfg: Config = CONFIG): RunwayFrame[] {
+  return runwayFrames(cfg).filter((f) => f.name !== rw.name && runwayCrossing(rw, f) !== null);
+}
+
+/** Is the player (≤ 150 m up) on, or lined up with either end of, runway `f` (its pavement ± 600 m)? */
+export function playerOnRunwayZone(f: RunwayFrame, player: PlayerRef | null): boolean {
+  if (!player || player.agl > 150) return false;
+  const dx = player.x - f.threshold.x;
+  const dz = player.z - f.threshold.z;
+  const along = dx * f.dir.x + dz * f.dir.z;
+  const across = dx * f.right.x + dz * f.right.z;
+  return along > -600 && along < f.length + 600 && Math.abs(across) < 120;
+}
+
 export type LegName = 'up' | 'down' | 'orbit' | 'final' | 'tng' | 'full' | 'hold' | 'to' | 'ga';
 
 export interface CircuitLegs {
@@ -104,8 +166,11 @@ export interface CircuitLegs {
 
 const rc = (rw: RunwayFrame, along: number, across: number) => fromRunwayCoords(along, across, rw);
 
-export function buildCircuit(layout: WorldLayout, cfg: Config = CONFIG, kind: AirKind = 'c172'): CircuitLegs {
-  const rw = layout.airport.runway;
+export function buildCircuit(layout: WorldLayout, cfg: Config = CONFIG, kind: AirKind = 'c172', active: CircuitRunway = activeCircuitRunway(cfg)): CircuitLegs {
+  void layout;
+  const rw = active.frame;
+  // the taxi-back (full stops) runs on taxiway A, on this side of the runway
+  const TS = active.taxiSide === -1 ? -1 : 1;
   const E = rw.elevation;
   const ac = cfg.world.traffic.air;
   const PA = ac.patternAltitudeFt * FT;
@@ -136,9 +201,12 @@ export function buildCircuit(layout: WorldLayout, cfg: Config = CONFIG, kind: Ai
     tng: path([wp(B.along, 0, B.h, V.final), ...glideTail, wp(430, 0, g, V.tngMin), wp(760, 0, g, V.vr), ...lift(760, sTng)]),
     full: path([
       wp(B.along, 0, B.h, V.final), ...glideTail,
-      wp(650, 0, g, V.taxi + 2), wp(L / 2, 0, g, V.taxiTurn, 22), wp(L / 2, 104, g, V.taxiTurn, 20), wp(25, 104, g, V.taxi, 18), wp(25, 44, g, 0.5),
+      wp(650, 0, g, V.taxi + 2), wp(L / 2, 0, g, V.taxiTurn, 22), wp(L / 2, 104 * TS, g, V.taxiTurn, 20), wp(25, 104 * TS, g, V.taxi, 18), wp(25, 44 * TS, g, 0.5),
     ]),
-    to: path([wp(25, 44, g, 0.8), wp(25, 0, g, V.taxiTurn, 16), wp(70, 0, g, 3), wp(450, 0, g, V.vr), ...lift(450, sTo)]),
+    // from the hold short of taxiway A — or, without it (3/21), lined up at the threshold
+    to: path(active.taxiSide !== 0
+      ? [wp(25, 44 * TS, g, 0.8), wp(25, 0, g, V.taxiTurn, 16), wp(70, 0, g, 3), wp(450, 0, g, V.vr), ...lift(450, sTo)]
+      : [wp(20, 0, g, 0.8), wp(70, 0, g, 3), wp(450, 0, g, V.vr), ...lift(450, sTo)]),
     ga: path([wp(B.along, 0, B.h, V.final), wp(-420, 0, B.h + 30, V.vy, 380, 'linear'), wp(-60, -400, 150, V.vy, 380, 'linear'), wp(L + 750, -400, 240, V.vy, 280, 'linear'), wp(L + 750, OFF, 295, V.vy + 3, 300, 'linear'), wp(D.along, D.across, PA, V.down, 0, 'out')]),
     orbit: orbitPath(rw, D.along, D.across, E + PA, V.down, 330),
   };
@@ -158,8 +226,8 @@ export function buildCircuit(layout: WorldLayout, cfg: Config = CONFIG, kind: Ai
     if (start >= 0) ranges.push([start, p.length]);
     if (ranges.length) ground[name] = ranges;
   }
-  const h = rc(rw, 25, 44);
-  return { legs, ground, hold: { x: h.x, z: h.z, heading: (rw.headingDeg + 270) % 360 }, elevation: E, rw };
+  const h = rc(rw, 25, 44 * TS);
+  return { legs, ground, hold: { x: h.x, z: h.z, heading: (rw.headingDeg + (TS > 0 ? 270 : 90)) % 360 }, elevation: E, rw };
 }
 
 /** A right-hand 360 starting and ending at the downwind entry point, heading down the downwind. */
@@ -196,6 +264,9 @@ export interface CircuitAircraft {
 }
 
 export interface CircuitState {
+  /** The runway end in use, and the runways crossing it (the player on one of them blocks it too). */
+  runway: CircuitRunway;
+  crossing: RunwayFrame[];
   legs: Record<AirKind, CircuitLegs>;
   aircraft: CircuitAircraft[];
   /** Accumulated time not yet stepped (s), and total stepped time. */
@@ -211,7 +282,8 @@ export const CIRCUIT_STEP = 0.1;
 export function createCircuitState(layout: WorldLayout, cfg: Config = CONFIG): CircuitState {
   const seed = cfg.world.traffic.seed;
   const n = cfg.world.traffic.air.circuit;
-  const legs = { c172: buildCircuit(layout, cfg, 'c172'), pa28: buildCircuit(layout, cfg, 'pa28') } as Record<AirKind, CircuitLegs>;
+  const runway = activeCircuitRunway(cfg);
+  const legs = { c172: buildCircuit(layout, cfg, 'c172', runway), pa28: buildCircuit(layout, cfg, 'pa28', runway) } as Record<AirKind, CircuitLegs>;
   const aircraft: CircuitAircraft[] = [];
   const starts: [LegName, number][] = [['down', 0.35], ['final', 0.25], ['up', 0.45], ['down', 0.9]];
   for (let i = 0; i < n; i++) {
@@ -220,7 +292,15 @@ export function createCircuitState(layout: WorldLayout, cfg: Config = CONFIG): C
     const p = legs[kind].legs[leg as Exclude<LegName, 'hold'>];
     aircraft.push({ id: i, kind, livery: Math.floor(h01(seed, 9100, i) * 2), leg, t: p.duration * f, laps: 0, n: 0 });
   }
-  return { legs, aircraft, acc: 0, time: 0, seed, log: [] };
+  return { runway, crossing: crossingRunways(runway.frame, cfg), legs, aircraft, acc: 0, time: 0, seed, log: [] };
+}
+
+/** The player is on (or lined up on) the circuit's runway or on a runway crossing it: nobody lands, rolls or takes off. */
+export function circuitBlockedByPlayer(s: CircuitState, player: PlayerRef | null): boolean {
+  if (!player) return false;
+  if (runwayOccupiedByPlayer(s.runway.frame, player)) return true;
+  for (const f of s.crossing) if (playerOnRunwayZone(f, player)) return true;
+  return false;
 }
 
 const legPath = (s: CircuitState, a: CircuitAircraft, leg: LegName): Path | null => (leg === 'hold' ? null : s.legs[a.kind].legs[leg]);
@@ -326,11 +406,11 @@ function nextLeg(s: CircuitState, a: CircuitAircraft, player: PlayerRef | null):
     case 'down':
       return 'final';
     case 'final': {
-      if (runwayOccupiedByPlayer(rw, player) || othersOnRunway(s, a)) {
+      if (circuitBlockedByPlayer(s, player) || othersOnRunway(s, a)) {
         s.log.push(`${a.id}:ga`);
         return 'ga';
       }
-      const wantFull = h01(s.seed, 9200 + a.id, a.n) < 0.34;
+      const wantFull = s.runway.taxiSide !== 0 && h01(s.seed, 9200 + a.id, a.n) < 0.34;
       return wantFull && !playerNearField(rw, player) ? 'full' : 'tng';
     }
     case 'tng':
@@ -345,7 +425,7 @@ function nextLeg(s: CircuitState, a: CircuitAircraft, player: PlayerRef | null):
 }
 
 function canTakeOff(s: CircuitState, a: CircuitAircraft, player: PlayerRef | null): boolean {
-  if (runwayOccupiedByPlayer(s.legs[a.kind].rw, player)) return false;
+  if (circuitBlockedByPlayer(s, player)) return false;
   for (const o of s.aircraft) {
     if (o === a) continue;
     if (RUNWAY_LEGS.includes(o.leg) && timeToClearRunway(s, o) > 0) return false;
@@ -706,8 +786,8 @@ export function reanchorCircuit(s: CircuitState, player: PlayerRef | null): void
   const any = s.aircraft[0];
   if (!any) return;
   const rw = s.legs[any.kind].rw;
-  // only when the player is in the runway zone or on the ground near the field (not flying over it)
-  if (!runwayOccupiedByPlayer(rw, player) && !(playerNearField(rw, player) && player.agl < 30)) return;
+  // only when the player is in the runway zone (or a crossing runway's) or on the ground near the field (not flying over it)
+  if (!circuitBlockedByPlayer(s, player) && !(playerNearField(rw, player) && player.agl < 30)) return;
   const moved = s.aircraft.filter((a) => a.leg === 'to' || a.leg === 'tng' || a.leg === 'full' || a.leg === 'hold');
   if (!moved.length) return;
   // candidate slots around the circuit, taken greedily: each ≥ 500 m from every other aircraft

@@ -227,6 +227,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     immersionColor: new THREE.Color(1, 1, 1),
     flare: opts.flare ?? CONFIG.render.lensFlare.enabled,
     clouds: cloudHook,
+    whiteBalance: new THREE.Color(1, 1, 1),
   };
   setAtmosphereFrameData(scene, frame);
 
@@ -250,6 +251,8 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
   const cam = new THREE.Vector3();
   const snapped = new THREE.Vector3();
   const hz = { r: 0, g: 0, b: 0 };
+  // ?ae=0: fixed exposure (config.atmosphere.exposure) and daylight white balance, for A/B comparisons
+  const autoCamera = query.get('ae') !== '0';
 
   function applyState() {
     const s = state;
@@ -279,6 +282,10 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
     frame.sunColor.setRGB(s.sunAtCamera.r, s.sunAtCamera.g, s.sunAtCamera.b, THREE.LinearSRGBColorSpace);
     frame.sunDiscLuminance = s.sunDiscLuminance;
     frame.immersionColor.setRGB(s.immersionColor.r, s.immersionColor.g, s.immersionColor.b, THREE.LinearSRGBColorSpace);
+    // the camera: auto exposure + white balance for this light
+    renderer.toneMappingExposure = autoCamera ? s.exposure : ac.exposure;
+    if (autoCamera) frame.whiteBalance!.setRGB(s.whiteBalance.r, s.whiteBalance.g, s.whiteBalance.b, THREE.LinearSRGBColorSpace);
+    else frame.whiteBalance!.setRGB(1, 1, 1, THREE.LinearSRGBColorSpace);
   }
 
   function bakeEnv() {
@@ -443,6 +450,7 @@ export function createAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Sce
         envBakes,
         cloudShadows: shadowsWanted,
         immersion: Math.round(immersion * 100) / 100,
+        exposure: Math.round(renderer.toneMappingExposure * 100) / 100,
       };
     },
     dispose() {
