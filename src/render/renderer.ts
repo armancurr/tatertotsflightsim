@@ -63,6 +63,16 @@ export function toneMappingFromName(name: string): THREE.ToneMapping {
   }
 }
 
+/**
+ * Can EXT_disjoint_timer_query results be attributed to single passes on this
+ * GPU? ANGLE's Metal backend (Chrome/Edge on macOS, Apple GPUs) times whole
+ * command buffers: every pass reports roughly the frame ("clouds 10 ms" for a
+ * pass that costs 0.5 ms synchronised), so the cloud budget must not use it.
+ */
+export function passTimingReliable(rendererString: string): boolean {
+  return !/metal|apple/i.test(rendererString);
+}
+
 export function renderTargetSize(cssWidth: number, cssHeight: number, pixelRatio: number): { width: number; height: number } {
   return {
     width: Math.max(1, Math.floor(cssWidth * pixelRatio)),
@@ -203,6 +213,14 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   // ?gpu=1: flush after every timed pass. ANGLE's Metal backend times whole command buffers, so
   // without a flush every pass in the same buffer reports roughly the whole frame (misleading).
   const exactTiming = typeof location !== 'undefined' && new URLSearchParams(location.search).get('gpu') === '1';
+  let rendererString = '';
+  try {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    rendererString = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  } catch {
+    /* no debug info: assume reliable */
+  }
+  const perPassTiming = passTimingReliable(rendererString);
   const endPass = () => {
     timer.end();
     if (exactTiming) gl.flush();
@@ -279,7 +297,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   };
   if (typeof window !== 'undefined') {
     const w = window as unknown as { __render?: Record<string, unknown> };
-    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, pixelRatio: () => pixelRatio, benchClouds };
+    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, perPassTiming, pixelRatio: () => pixelRatio, benchClouds };
   }
 
   function renderPipeline(scene: THREE.Scene, camera: THREE.Camera) {
@@ -310,8 +328,9 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
       timer.begin('clouds');
       clouds.render(renderer, depth, camera, target.width, target.height, pixelRatio, depthMode);
       endPass();
-      clouds.gpuMs = timer.get('clouds');
-      clouds.frameGpuMs = timer.get('scene') + clouds.gpuMs + timer.get('post');
+      // (NaN = unknown → the budget controller's frame-rate rule; see passTimingReliable)
+      clouds.gpuMs = perPassTiming ? timer.get('clouds') : NaN;
+      clouds.frameGpuMs = perPassTiming ? timer.get('scene') + clouds.gpuMs + timer.get('post') : NaN;
     }
     if (frame?.clouds) frame.clouds.atMinQuality = handle.atMinQuality;
     renderer.setRenderTarget(null);
