@@ -1524,7 +1524,57 @@ export const CONFIG = {
      * between minDistance and maxDistance from the runway centre, preferring the bearing
      * `bearingDeg` (north of the airport: straight ahead after a runway-36 take-off).
      */
-    range: { bearingDeg: 350, minDistance: 5500, maxDistance: 9000, radius: 900 },
+    range: {
+      bearingDeg: 350,
+      minDistance: 5500,
+      maxDistance: 9000,
+      radius: 900,
+      /** Site search (main thread, cheap): coarse grid step (m), radius of the open patch scored (m), how far off `bearingDeg` it looks (deg) and what that costs (score per deg / per m beyond minDistance). */
+      search: { step: 125, patchRadius: 360, bearingSpanDeg: 45, bearingStepDeg: 3, distanceStep: 250, bearingWeight: 0.006, distanceWeight: 0.00004 },
+      /** Ground a vehicle may stand on: these surfaces, slope ≤ maxSlopeDeg, trees/buildings ≥ clearance m from the hull, ≥ farmClearance m from farm yards, ≥ roadClearance m from road edges (parked vehicles). */
+      ground: { surfaces: ['grass', 'field', 'dirt'] as string[], maxSlopeDeg: 8, clearance: 2.5, farmClearance: 75, roadClearance: 6, cell: 4 },
+      /** The dirt track loop the column drives around: target radius from the site centre (m, tried in order), width (m), A* grid (m). */
+      track: { radii: [300, 380, 240, 450, 200], width: 6, clearance: 2.6, cell: 6, waypoints: 8, minLength: 900 },
+      /** A march column on the track (front first): speed, spacing, braking; halts when one is killed, scatters off the track, then regroups. */
+      convoy: {
+        kinds: ['apc', 'tank', 'tank', 'ifv', 'tank', 'ifv', 'ifv', 'truck', 'truck', 'apc'] as ('tank' | 'ifv' | 'apc' | 'truck' | 'aaa')[],
+        speed: 6.5,
+        spacing: 42,
+        accel: 1.0,
+        brake: 2.5,
+        /** After a kill: react after reactS, scatter up to scatter[1] m off the track (≥ scatter[0]), regroup regroupS after the last kill. */
+        reactS: [1.5, 4] as [number, number],
+        scatter: [14, 32] as [number, number],
+        regroupS: 55,
+        /** Wrecks on the track are bypassed this far to the side, m. */
+        bypass: 7,
+      },
+      /** Tank platoon dug in behind berms, facing the airport; AAA site (ZSU-23-4s in revetments); logistics park. */
+      platoon: { count: 4, spacing: 42 },
+      aaa: { count: 2, spacing: 85 },
+      logistics: { kinds: ['truck', 'truck', 'truck', 'truck', 'truck', 'apc', 'apc'] as ('tank' | 'ifv' | 'apc' | 'truck' | 'aaa')[], spacing: 11 },
+      /** Levels of detail by camera distance (m): full < lod[0] ≤ medium < lod[1] ≤ far box; ±hysteresis fraction. */
+      lod: [420, 1500] as [number, number],
+      lodHysteresis: 0.08,
+      /** Keep vehicles visible over the coarse far terrain mesh (like the roads): world lift k·distance and view-depth pull. */
+      lodLift: 0.0015,
+      depthPull: 0.0012,
+      wreck: {
+        /** T-72 carousel cook-off: chance of the turret toss, how high it flies (m). */
+        tossChance: 0.7,
+        tossHeight: [5, 25] as [number, number],
+        /** Fire on the wreck (s), the smoke column after it (s), sporadic ammunition cook-off (s). */
+        fireS: [30, 90] as [number, number],
+        smokeS: [120, 240] as [number, number],
+        cookOffS: [10, 20] as [number, number],
+        /** How many continuous fx emitters the wrecks may hold (fires + columns); the rest smoulder with cheap puffs. */
+        maxFires: 7,
+        maxColumns: 7,
+        /** The hull settles this much (m) on its burnt suspension; trucks collapse more. */
+        settle: 0.14,
+        truckSettle: 0.38,
+      },
+    },
     /** Vehicle classes (real sizes). Armour multipliers are for the 30 mm API round. */
     targets: {
       tank: { name: 'T-72B', length: 6.95, width: 3.59, height: 2.23, health: 100, armor: { front: 0.05, side: 0.35, rear: 0.6, top: 0.8 }, speed: 8 } as TargetClassConfig,
