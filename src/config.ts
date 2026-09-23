@@ -1293,6 +1293,12 @@ export const CONFIG = {
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────
   hud: {
+    /**
+     * On-screen G meter (every aircraft): a round accelerometer with max/min tell-tales and red marks
+     * at the aircraft's own limits. Size and top-left position in CSS px; needle smoothing, s;
+     * caution from this fraction of the limit; redraws per second.
+     */
+    gMeter: { size: 112, left: 16, top: 84, tau: 0.06, cautionFraction: 0.8, redrawHz: 30 },
     /** Vertical speed indicator lag time constant, seconds (real VSIs lag). */
     vsiLagTau: 0.8,
     /** Instrument needle smoothing time constant, seconds. */
