@@ -1192,6 +1192,8 @@
         let prevAz = null;
         let azI = 0;
         let elI = 0;
+        let tPrev = null;
+        const tVel = { x: 0, z: 0 };
         // Fine hands for the dive: the elevator is placed directly (bias learnt as it goes).
         let eBias = elevEst;
         const kTh = o.elevPerDeg ?? P.diveElevPerDeg ?? 0.045;
@@ -1209,7 +1211,17 @@
             const rightM = o.aimRightM ?? 0;
             const ca = Math.cos(axis * D2R);
             const sa = Math.sin(axis * D2R);
-            const los = api.lineOfSight(s, T.x - sa * shortM + ca * rightM, T.y + 0.9, T.z + ca * shortM + sa * rightM);
+            // A moving vehicle (the convoy): lead it by its speed × the rounds' time of flight.
+            if (tPrev && now > tPrev.t) {
+              const k = clamp((now - tPrev.t) / 1000 / 1.0, 0, 1);
+              tVel.x += ((T.x - tPrev.x) / ((now - tPrev.t) / 1000) - tVel.x) * k;
+              tVel.z += ((T.z - tPrev.z) / ((now - tPrev.t) / 1000) - tVel.z) * k;
+            }
+            tPrev = { x: T.x, z: T.z, t: now };
+            const tof = Math.hypot(T.x - s.position.x, T.y - s.position.y, T.z - s.position.z) / ((gun.muzzleVelocity || 1000) + s.airspeed * KT_MS);
+            const lx = clamp(tVel.x, -25, 25) * tof;
+            const lz = clamp(tVel.z, -25, 25) * tof;
+            const los = api.lineOfSight(s, T.x + lx - sa * shortM + ca * rightM, T.y + 0.9, T.z + lz + ca * shortM + sa * rightM);
             const gam = pathDeg(s.verticalSpeed, Math.max(s.groundSpeed, 60));
             const alpha = clamp(fin(s.aoa, 0), -5, 20);
             // Where the rounds go: the CCIP pipper (the gun line + drop when there is none).

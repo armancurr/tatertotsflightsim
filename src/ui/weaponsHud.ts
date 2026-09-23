@@ -653,7 +653,8 @@ function layoutTexts(m: WeaponsHudModel, f: WeaponsHudFrame, hb: Rect | null, gl
   if (rc.show && rc.steerShow) placer.addSoft(rc.steerX - F * 0.7, rc.steerY - F, rc.steerX + F * 0.7, rc.steerY + lw);
 
   const S = m.stores;
-  const bottom = d.y + d.h;
+  // (the fixed blocks stay by the HUD: its box bottom, not the viewport's)
+  const boxBottom = Math.min(d.y + d.h, hb ? hb.y + hb.h : d.y + d.h);
   // ── Stores block: bottom-left, stacked upward (GUN, 9M, 65D, KILLS from the top) ──
   {
     let n = 0;
@@ -671,12 +672,12 @@ function layoutTexts(m: WeaponsHudModel, f: WeaponsHudFrame, hb: Rect | null, gl
     }
     n = queue(n, TX_KILLS, S.kills, F * 0.95);
     line(n - 1, S.kills, 700);
-    // spots: the usual corner, as low as it goes, then higher and higher
+    // spots: the usual corner, a little higher, as low as the HUD box goes, then higher and higher
     let k = 0;
     for (let j = -1; j < 12; j++) {
       const sp = spots[k++];
       sp.x = S.x;
-      sp.y = j < 0 ? S.y : j === 0 ? bottom - F * 0.6 : S.y - j * F * 0.5;
+      sp.y = j < 0 ? S.y : j === 0 ? S.y - F * 0.5 : j === 1 ? boxBottom - F * 0.6 : S.y - (j - 0.5) * F * 0.5 - F * 0.5;
       sp.align = 'left';
     }
     optsStores.nFixed = k;
@@ -707,7 +708,7 @@ function layoutTexts(m: WeaponsHudModel, f: WeaponsHudFrame, hb: Rect | null, gl
       for (let j = -1; j < 12; j++) {
         const sp = spots[k++];
         sp.x = S.right;
-        sp.y = j < 0 ? S.y : j === 0 ? bottom - F * 0.6 : S.y - j * F * 0.5;
+        sp.y = j < 0 ? S.y : j === 0 ? boxBottom - F * 0.6 : S.y - j * F * 0.5;
         sp.align = 'right';
       }
       optsStores.nFixed = k;
@@ -725,7 +726,7 @@ function layoutTexts(m: WeaponsHudModel, f: WeaponsHudFrame, hb: Rect | null, gl
     for (let j = -1; j < 14; j++) {
       const sp = spots[k++];
       sp.x = S.right;
-      sp.y = j < 0 ? S.y : j === 0 ? bottom - F * 0.6 : S.y - j * F * 0.5;
+      sp.y = j < 0 ? S.y : j === 0 ? boxBottom - F * 0.6 : S.y - j * F * 0.5;
       sp.align = 'right';
     }
     optsRange.nFixed = k;

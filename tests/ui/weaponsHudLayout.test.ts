@@ -468,6 +468,20 @@ describe('QA case: A-10 locked on a Mi-24 ~600 m ahead', () => {
     });
   }
 
+  it('the stores block stays by the HUD box (never jumps to the viewport bottom), with the range caret on the tape', () => {
+    for (const v of VIEWS.filter((x) => !x.glass)) {
+      for (const rangeCue of [false, true]) {
+        const { m } = runScene(v, { ...base, rangeCue });
+        const hb = computeHudLayout(v.vw, v.vh, v.cfg, v.exterior ? 'normal' : 'cockpitHidden', 'jet').jet!;
+        for (const i of [TX_GUN, TX_KILLS]) {
+          expect(m.texts[i].show).toBe(true);
+          expect(m.texts[i].y, `${v.name} ${m.texts[i].s}`).toBeLessThan(hb.y + hb.h);
+          expect(m.texts[i].y).toBeGreaterThan(hb.y + hb.h * 0.5);
+        }
+      }
+    }
+  });
+
   it('the heading tape band really is where the tape draws (chase view, gear up)', () => {
     const v = VIEWS[0];
     const { m } = runScene(v, base);
