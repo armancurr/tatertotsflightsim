@@ -101,6 +101,41 @@ describe('river ribbon', () => {
     expect(rib.attrs[(rib.sections - 1) * 2 * RIVER_STRIDE + 5]).toBe(0);
   });
 
+  it('carries the bend (inner bank side), turbidity and riffles per section', () => {
+    const at = (i: number, k: number) => rib.attrs[i * 2 * RIVER_STRIDE + 8 + k];
+    let left = 0;
+    let right = 0;
+    let agree = 0;
+    for (let i = 3; i < rib.sections - 3; i++) {
+      const b = at(i, 0);
+      expect(b).toBeGreaterThanOrEqual(-1);
+      expect(b).toBeLessThanOrEqual(1);
+      expect(at(i, 1)).toBeGreaterThanOrEqual(0);
+      expect(at(i, 1)).toBeLessThanOrEqual(1);
+      expect(at(i, 2)).toBeGreaterThanOrEqual(0);
+      expect(at(i, 2)).toBeLessThanOrEqual(1);
+      // both vertices of a section agree
+      for (let k = 0; k < 4; k++) expect(rib.attrs[(i * 2 + 1) * RIVER_STRIDE + 8 + k]).toBe(at(i, k));
+      // the bend's sign: the centreline turns toward +across (n = (−tz, tx)) when b > 0
+      const p0 = rv.points[i - 3];
+      const p1 = rv.points[i];
+      const p2 = rv.points[i + 3];
+      const cross = (p1.x - p0.x) * (p2.z - p1.z) - (p1.z - p0.z) * (p2.x - p1.x);
+      if (Math.abs(b) > 0.4) {
+        if (Math.sign(cross) === Math.sign(b)) agree++; // (the smoothing windows differ at inflections)
+        if (b > 0) left++;
+        else right++;
+      }
+    }
+    // a meandering river bends both ways, often enough for point bars
+    expect(left).toBeGreaterThan(20);
+    expect(right).toBeGreaterThan(20);
+    expect(agree / (left + right)).toBeGreaterThan(0.95);
+    // clear in the mountains, turbid in the plains
+    expect(at(40, 1)).toBeLessThan(0.35);
+    expect(at(rib.sections - 60, 1)).toBeGreaterThan(0.7);
+  });
+
   it('puts bridge piers in the water', () => {
     expect(L.bridges.length).toBe(2);
     for (const b of L.bridges) {
@@ -154,6 +189,9 @@ describe('river ribbon', () => {
             expect(uz * wx - ux * wz).toBeGreaterThan(0);
           }
           for (let i = 0; i < n; i++) {
+            const b = rb.attrs[i * 2 * RIVER_STRIDE + 8];
+            expect(Math.abs(b)).toBeLessThanOrEqual(1);
+            if (amp === 0) expect(b).toBe(0);
             const w = Math.hypot(vx(rb, i * 2) - vx(rb, i * 2 + 1), vz(rb, i * 2) - vz(rb, i * 2 + 1));
             expect(w).toBeCloseTo(2 * (hw + opts.margin), 2);
             for (const v of rb.attrs.subarray(i * 2 * RIVER_STRIDE, (i * 2 + 2) * RIVER_STRIDE)) expect(Number.isFinite(v)).toBe(true);

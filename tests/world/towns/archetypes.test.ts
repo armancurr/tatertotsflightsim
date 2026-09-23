@@ -8,6 +8,8 @@ import {
   PART,
   FLAG,
   NEAR_KINDS,
+  AWNING,
+  TREE_EQ,
   type ArchetypeGeometry,
   type NearKind,
 } from '../../../src/world/towns/archetypes';
@@ -64,11 +66,13 @@ function checkBuilding(b: Building, flagsOverride?: number) {
   const vs = evalAll(g, inst);
   const r = buildingRect(b);
   const ridgeTop = b.y + b.wallHeight + b.roofHeight;
-  // 1. every vertex of an enabled part is finite, inside the footprint grown by the overhang, between base and top
+  const tree = ((inst[14] | 0) & FLAG.tree) !== 0;
+  // 1. every vertex of an enabled part is finite, inside the footprint grown by the overhang (the awning over the pavement), between base and top
   for (const v of vs) {
     if (!v.on) continue;
     expect(Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z)).toBe(true);
-    expect(pointInRect(r, v.x, v.z, 0.5 + 1e-3)).toBe(true);
+    expect(pointInRect(r, v.x, v.z, (v.part === PART.awning ? AWNING.out : 0.5) + 1e-3)).toBe(true);
+    if (tree) expect(Math.hypot(v.x - b.x, v.z - b.z)).toBeLessThanOrEqual(b.width / 2 + 1e-3);
     expect(v.y).toBeGreaterThanOrEqual(b.y - 1e-3);
     const allowance = v.part === PART.chimney ? 1.0 : v.part === PART.cupola ? 2.6 : 0.25;
     expect(v.y).toBeLessThanOrEqual(ridgeTop + allowance);
@@ -83,7 +87,10 @@ function checkBuilding(b: Building, flagsOverride?: number) {
     if (v.face === FACE.siloRoof && Math.hypot(v.x - b.x, v.z - b.z) > b.width * 0.49) continue; // the dome's eave ring (on the circle)
     const top = roofTopAt(b, v.x, v.z);
     expect(top).toBeGreaterThan(-Infinity);
-    expect(v.y).toBeGreaterThanOrEqual(top - 0.05 - (v.face === FACE.roofFlat ? b.roofHeight : 0));
+    if (tree) {
+      // the lumpy crown lies under the physics' cap, above the trunk
+      expect(v.y).toBeGreaterThanOrEqual(b.y + b.wallHeight + TREE_EQ * b.roofHeight - 1e-3);
+    } else expect(v.y).toBeGreaterThanOrEqual(top - 0.05 - (v.face === FACE.roofFlat ? b.roofHeight : 0));
     expect(v.y).toBeLessThanOrEqual(top + 0.25);
   }
   // 3. triangles are wound counter-clockwise seen from outside (geometric normal agrees with the shading normal)
@@ -144,6 +151,50 @@ describe('archetype geometries (functional: real buildings)', () => {
     checkBuilding(mk({ archetype: 'silo', use: 'silo', width: 6, depth: 6, wallHeight: 16, roofHeight: 2.3, style: 6 }));
     checkBuilding(mk({ archetype: 'silo', use: 'silo', width: 10, depth: 10, wallHeight: 7, roofHeight: 2.4, ridge: 0, style: 6 }));
   });
+  it('a shop with an awning over the pavement: in front of the shopfront, under the sign', () => {
+    const b = mk({ archetype: 'flat', use: 'shop', width: 11, depth: 15, wallHeight: 10.2, roofHeight: 1.1, floorHeight: 3.2, style: 7, plinth: 0.6 });
+    const vs = checkBuilding(b, FLAG.awning | FLAG.shopfront);
+    const aw = vs.filter((v) => v.part === PART.awning);
+    expect(aw.length).toBeGreaterThan(0);
+    const line = b.y + 0.6 + 1.4 * 3.2 + AWNING.attach;
+    const f = { x: Math.sin((b.headingDeg * Math.PI) / 180), z: -Math.cos((b.headingDeg * Math.PI) / 180) };
+    for (const v of aw) {
+      expect(v.on).toBe(true);
+      expect(v.y).toBeLessThanOrEqual(line + 1e-3);
+      expect(v.y).toBeGreaterThanOrEqual(line - AWNING.drop - AWNING.valance - 1e-3);
+      const ahead = (v.x - b.x) * f.x + (v.z - b.z) * f.z; // along the front vector
+      expect(ahead).toBeGreaterThanOrEqual(b.depth / 2 - 1e-3);
+      expect(ahead).toBeLessThanOrEqual(b.depth / 2 + AWNING.out + 1e-3);
+    }
+    // without the flag it collapses
+    const off = evalAll(ARCH_GEOMETRIES.flat, (() => {
+      const inst = new Float32Array(INST_STRIDE);
+      writeInstance(inst, 0, { b, chunk: 0 }, 0);
+      return inst;
+    })());
+    for (const v of off) if (v.part === PART.awning) expect(v.on).toBe(false);
+  });
+  it('a tree: a lumpy crown on a trunk, round in plan, under the physics cap', () => {
+    const t = mk({ archetype: 'silo', use: 'tree', width: 8, depth: 8, wallHeight: 2.6, roofHeight: 8, style: 13, rand: 0.61 });
+    const vs = checkBuilding(t);
+    const trunk = vs.filter((v) => v.part === PART.trunk);
+    expect(trunk.length).toBeGreaterThan(0);
+    for (const v of trunk) {
+      expect(v.on).toBe(true);
+      expect(Math.hypot(v.x - t.x, v.z - t.z)).toBeLessThan(0.3);
+    }
+    const crown = vs.filter((v) => v.part === PART.main);
+    const top = Math.max(...crown.map((v) => v.y));
+    const low = Math.min(...crown.map((v) => v.y));
+    expect(top).toBeCloseTo(t.y + t.wallHeight + t.roofHeight, 3);
+    expect(low).toBeCloseTo(t.y + t.wallHeight, 3);
+    // lumpy: the widest ring is not a circle
+    const ring = crown.filter((v) => Math.abs(v.y - (t.y + t.wallHeight + TREE_EQ * t.roofHeight)) < 1e-3).map((v) => Math.hypot(v.x - t.x, v.z - t.z));
+    expect(Math.max(...ring) - Math.min(...ring)).toBeGreaterThan(0.3);
+    // a silo (no tree flag) has no trunk
+    const s = checkBuilding(mk({ archetype: 'silo', use: 'silo', width: 6, depth: 6, wallHeight: 16, roofHeight: 2.3, style: 6 }));
+    for (const v of s) if (v.part === PART.trunk) expect(v.on).toBe(false);
+  });
   it('parts switched off collapse to a point (no triangles drawn)', () => {
     const b = mk({ roofHeight: 4.2 });
     const inst = new Float32Array(INST_STRIDE);
@@ -164,6 +215,39 @@ describe('archetype geometries (functional: real buildings)', () => {
 });
 
 describe('archetype geometries (fuzz)', () => {
+  it('any tree: inside its circle, crown under the physics cap, trunk inside the crown, outward-wound', () => {
+    fc.assert(
+      fc.property(
+        fc.double({ min: 3, max: 13, noNaN: true }),
+        fc.double({ min: 0.5, max: 4, noNaN: true }),
+        fc.double({ min: 2, max: 30, noNaN: true }),
+        fc.double({ min: 0, max: 360, noNaN: true }),
+        fc.double({ min: 0, max: 0.999, noNaN: true }),
+        (w, trunk, crown, h, rand) => {
+          checkBuilding(mk({ archetype: 'silo', use: 'tree', width: w, depth: w, wallHeight: trunk, roofHeight: crown, headingDeg: h, rand, style: 13 }));
+        },
+      ),
+      { numRuns: 150 },
+    );
+  });
+  it('any shop with an awning: the canvas stays over the pavement in front, below the wall top', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom<Building['archetype']>('flat', 'gable'),
+        fc.double({ min: 4, max: 30, noNaN: true }),
+        fc.double({ min: 6, max: 30, noNaN: true }),
+        fc.double({ min: 2.8, max: 4, noNaN: true }),
+        fc.integer({ min: 2, max: 4 }),
+        fc.double({ min: 0, max: 360, noNaN: true }),
+        fc.double({ min: 0.3, max: 3, noNaN: true }),
+        (a, w, d, fh, floors, h, plinth) => {
+          const roof = a === 'flat' ? 1 : Math.min(0.8 * d, (d / 2) * Math.tan((35 * Math.PI) / 180));
+          checkBuilding(mk({ archetype: a, use: 'shop', width: w, depth: d, floorHeight: fh, wallHeight: floors * fh + 0.6 + plinth, roofHeight: roof, headingDeg: h, plinth, style: 7 }), FLAG.awning | FLAG.shopfront);
+        },
+      ),
+      { numRuns: 120 },
+    );
+  });
   it('any pitched/flat/silo building: inside its footprint, roof = roofTopAt, outward-wound', () => {
     const arch = fc.constantFrom<Building['archetype']>('gable', 'hip', 'flat', 'gambrel', 'silo');
     fc.assert(

@@ -15,6 +15,7 @@ import {
   BLD_FRAG_SHADE,
   BLD_FRAG_COLOR,
   BLD_FRAG_DITHER,
+  BLD_FRAG_DITHER_NEAR,
 } from './shaders';
 
 export interface BuildingUniforms {
@@ -24,6 +25,10 @@ export interface BuildingUniforms {
   uBldChunkNear: { value: THREE.Texture };
   /** Mid LOD: (minAngularSize, midDistance, farDistance, tallSize). */
   uBldLod: { value: THREE.Vector4 };
+  /** The view camera's world position (the shadow pass needs the real camera for the tree LOD). */
+  uBldCam: { value: THREE.Vector3 };
+  /** Tree LOD cross-fade: (start, end) distances, m. */
+  uBldTree: { value: THREE.Vector2 };
 }
 
 /** Shader anchors every material edit relies on (tests check they exist in three's sources). */
@@ -54,10 +59,10 @@ export function patchStandardShader(shader: { vertexShader: string; fragmentShad
   vs = must(vs, '#include <begin_vertex>', BLD_VERT_BEGIN_COLOR);
   let fs = shader.fragmentShader;
   fs = must(fs, '#include <common>', `#include <common>\n${BLD_FRAG_PARS}\n${BLD_FRAG_SHADE}`);
-  if (mid) fs = must(fs, '#include <clipping_planes_fragment>', BLD_FRAG_DITHER);
+  fs = must(fs, '#include <clipping_planes_fragment>', mid ? BLD_FRAG_DITHER : BLD_FRAG_DITHER_NEAR);
   fs = must(fs, '#include <color_fragment>', BLD_FRAG_COLOR);
   // glass panels are never perfectly flat: a per-panel tilt breaks up the sky reflection
-  fs = must(fs, '#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  normal = normalize(normal + vec3(bldJit * 0.05, bldJit * 0.03, 0.0));');
+  fs = must(fs, '#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  normal = normalize(normal + vec3(bldJit * 0.012, bldJit * 0.008, 0.0));');
   fs = must(fs, '#include <roughnessmap_fragment>', 'float roughnessFactor = bldRough;');
   fs = must(fs, '#include <metalnessmap_fragment>', 'float metalnessFactor = bldMetal;');
   fs = must(fs, '#include <emissivemap_fragment>', 'totalEmissiveRadiance = bldEmit;');
@@ -85,7 +90,7 @@ export function createBuildingMaterial(u: BuildingUniforms, mid: boolean): THREE
   m.name = mid ? 'buildings-mid' : 'buildings-near';
   m.defines = mid ? { BLD_COLOR: '', BLD_MID: '' } : { BLD_COLOR: '' };
   m.onBeforeCompile = (shader) => patchStandardShader(shader, u, mid);
-  m.customProgramCacheKey = () => (mid ? 'buildings-mid-v1' : 'buildings-near-v1');
+  m.customProgramCacheKey = () => (mid ? 'buildings-mid-v2' : 'buildings-near-v2');
   return m;
 }
 
@@ -93,7 +98,7 @@ export function createBuildingDepthMaterial(u: BuildingUniforms): THREE.MeshDept
   const m = new THREE.MeshDepthMaterial();
   m.name = 'buildings-depth';
   m.onBeforeCompile = (shader) => patchDepthShader(shader, u);
-  m.customProgramCacheKey = () => 'buildings-depth-v1';
+  m.customProgramCacheKey = () => 'buildings-depth-v2';
   return m;
 }
 
@@ -104,5 +109,5 @@ export function createBuildingUniforms(chunkCount: number): BuildingUniforms {
   tex.minFilter = THREE.NearestFilter;
   tex.generateMipmaps = false;
   tex.needsUpdate = true;
-  return { uBldNight: { value: 0 }, uBldChunkNear: { value: tex }, uBldLod: { value: new THREE.Vector4() } };
+  return { uBldNight: { value: 0 }, uBldChunkNear: { value: tex }, uBldLod: { value: new THREE.Vector4() }, uBldCam: { value: new THREE.Vector3() }, uBldTree: { value: new THREE.Vector2(600, 800) } };
 }

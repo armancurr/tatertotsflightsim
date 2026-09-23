@@ -42,13 +42,15 @@ export interface ClassInputs {
 
 /** Per-pixel class weights (sum 1). Writes into `out` (length ≥ CLASS_COUNT). */
 export function classWeights(i: ClassInputs, out: Float32Array | number[]): Float32Array | number[] {
-  const wForest = sat((i.forest - 0.5 + i.nb * 0.55) * 3.5 + 0.5);
-  const wRockBase = Math.max(sat((i.rock - 0.5 + i.nb2 * 0.5) * 3.0 + 0.5), sstep(0.24, 0.4, i.slope + i.nb * 0.06) * 0.9);
+  // The break-up noise only moves a boundary: a class is gated by its own landcover (a class the
+  // vertex doesn't have never appears — no snow flecks or forest smudges in lowland fields).
+  const wForest = sat((i.forest - 0.5 + i.nb * 0.55) * 3.5 + 0.5) * sstep(0, 0.1, i.forest);
+  const wRockBase = Math.max(sat((i.rock - 0.5 + i.nb2 * 0.5) * 3.0 + 0.5) * sstep(0, 0.1, i.rock), sstep(0.24, 0.4, i.slope + i.nb * 0.06) * 0.9);
   // snow: ragged edges, gone on the steepest faces, lingering in gullies on steep slopes
   const steepOff = 1 - sstep(0.34 + 0.12 * i.streak, 0.5 + 0.12 * i.streak, i.slope);
-  const wSnow = sat((i.snow - 0.5 + i.nb2 * 0.6 + i.nSnow * 0.35 + (i.streak - 0.5) * 0.5 * sstep(0.08, 0.3, i.slope)) * 3.0 + 0.5) * steepOff;
-  const wSand = sat((i.sand - 0.5 + i.nb * 0.4) * 3.0 + 0.5);
-  const wUrban = sat((i.urban - 0.5 + i.nb2 * 0.5) * 2.5 + 0.5);
+  const wSnow = sat((i.snow - 0.5 + i.nb2 * 0.6 + i.nSnow * 0.35 + (i.streak - 0.5) * 0.5 * sstep(0.08, 0.3, i.slope)) * 3.0 + 0.5) * steepOff * sstep(0, 0.12, i.snow);
+  const wSand = sat((i.sand - 0.5 + i.nb * 0.4) * 3.0 + 0.5) * sstep(0, 0.1, i.sand);
+  const wUrban = sat((i.urban - 0.5 + i.nb2 * 0.5) * 2.5 + 0.5) * sstep(0, 0.1, i.urban);
   let rem = 1;
   const aS = wSnow * rem;
   rem -= aS;
@@ -120,12 +122,12 @@ export function heightBlend(a1: number, h1: number, a2: number, h2: number, fade
 export const BLEND_GLSL = /* glsl */ `
 // ── twin of src/world/terrain/blend.ts ──
 void classWeights( vec4 lc0, vec4 lc1, float slope, float nb, float nb2, float nSnow, float streak, float height, out float w[8] ) {
-  float wForest = tSat( ( lc0.x - 0.5 + nb * 0.55 ) * 3.5 + 0.5 );
-  float wRockBase = max( tSat( ( lc0.w - 0.5 + nb2 * 0.5 ) * 3.0 + 0.5 ), smoothstep( 0.24, 0.4, slope + nb * 0.06 ) * 0.9 );
+  float wForest = tSat( ( lc0.x - 0.5 + nb * 0.55 ) * 3.5 + 0.5 ) * smoothstep( 0.0, 0.1, lc0.x );
+  float wRockBase = max( tSat( ( lc0.w - 0.5 + nb2 * 0.5 ) * 3.0 + 0.5 ) * smoothstep( 0.0, 0.1, lc0.w ), smoothstep( 0.24, 0.4, slope + nb * 0.06 ) * 0.9 );
   float steepOff = 1.0 - smoothstep( 0.34 + 0.12 * streak, 0.5 + 0.12 * streak, slope );
-  float wSnow = tSat( ( lc1.x - 0.5 + nb2 * 0.6 + nSnow * 0.35 + ( streak - 0.5 ) * 0.5 * smoothstep( 0.08, 0.3, slope ) ) * 3.0 + 0.5 ) * steepOff;
-  float wSand = tSat( ( lc1.y - 0.5 + nb * 0.4 ) * 3.0 + 0.5 );
-  float wUrban = tSat( ( lc1.z - 0.5 + nb2 * 0.5 ) * 2.5 + 0.5 );
+  float wSnow = tSat( ( lc1.x - 0.5 + nb2 * 0.6 + nSnow * 0.35 + ( streak - 0.5 ) * 0.5 * smoothstep( 0.08, 0.3, slope ) ) * 3.0 + 0.5 ) * steepOff * smoothstep( 0.0, 0.12, lc1.x );
+  float wSand = tSat( ( lc1.y - 0.5 + nb * 0.4 ) * 3.0 + 0.5 ) * smoothstep( 0.0, 0.1, lc1.y );
+  float wUrban = tSat( ( lc1.z - 0.5 + nb2 * 0.5 ) * 2.5 + 0.5 ) * smoothstep( 0.0, 0.1, lc1.z );
   float rem = 1.0;
   float aS = wSnow * rem; rem -= aS;
   float aR = wRockBase * rem; rem -= aR;

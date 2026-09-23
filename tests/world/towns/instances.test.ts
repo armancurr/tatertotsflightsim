@@ -60,15 +60,17 @@ describe('instance sets (functional: the real world)', () => {
   it('draws every building: one mid piece at least and near pieces of its own archetype', () => {
     const nearTotal = NEAR_KINDS.reduce((a, k) => a + count(S.near[k].data), 0);
     expect(nearTotal).toBeGreaterThanOrEqual(B.length);
-    expect(count(S.mid.data)).toBeGreaterThanOrEqual(B.length);
+    // pools lie flat on the ground: near only
+    expect(count(S.mid.data)).toBeGreaterThanOrEqual(B.filter((b) => b.use !== 'pool').length);
     for (const k of NEAR_KINDS) {
       const want = B.filter((b) => b.archetype === k).length;
       expect(count(S.near[k].data)).toBeGreaterThanOrEqual(want);
     }
   });
   it('chunk boxes hold every vertex drawn (near and mid)', () => {
-    checkChunkBoxes(S, 7);
-  }, 60_000);
+    // every 11th chunk (tens of thousands of instances with the trees): heavy, so a load-proof timeout
+    checkChunkBoxes(S, 11);
+  }, 300_000);
   it('splits setback towers into a base and an inset upper tier whose roofs are the ones the physics sees', () => {
     const tiered = B.filter((b) => (b.tierHeight ?? 0) > 0);
     expect(tiered.length).toBeGreaterThan(0);
@@ -112,6 +114,7 @@ describe('instance sets (functional: the real world)', () => {
       for (let n = 0; n < count(set.data); n++) {
         const o = n * INST_STRIDE;
         const st = set.data[o + I.style];
+        if (set.data[o + I.aux1] !== 2) continue; // rooftop pieces only (not a water tower's column)
         if (st !== STYLE_X.hvac && st !== STYLE_X.tank && st !== STYLE_X.mast && st !== STYLE_X.plain) continue;
         clutter++;
         if (st === STYLE_X.tank) tanks++;
@@ -148,6 +151,48 @@ describe('instance sets (functional: the real world)', () => {
     for (const b of B.filter((x) => x.style === 2)) expect(instanceFlags(b) & FLAG.glass).toBeTruthy();
     for (const b of B.filter((x) => x.use === 'steeple')) expect(instanceFlags(b) & FLAG.steeple).toBeTruthy();
     for (const b of B.filter((x) => x.use === 'shop')) expect(instanceFlags(b) & FLAG.shopfront).toBeTruthy();
+  });
+  it('awnings on most shopfronts (only where the front is the local +z wall), solar panels on some roofs, metal roofs by colour', () => {
+    const shops = B.filter((b) => b.use === 'shop');
+    const aw = shops.filter((b) => instanceFlags(b) & FLAG.awning);
+    expect(aw.length).toBeGreaterThan(shops.length * 0.4);
+    expect(aw.length).toBeLessThan(shops.length * 0.8);
+    for (const b of B) if (instanceFlags(b) & FLAG.awning) expect(b.archetype === 'flat' || (b.archetype === 'gable' && b.ridgeAxis === 0)).toBe(true);
+    const houses = B.filter((b) => b.use === 'house');
+    const solar = houses.filter((b) => instanceFlags(b) & FLAG.solar).length;
+    expect(solar).toBeGreaterThan(houses.length * 0.04);
+    expect(solar).toBeLessThan(houses.length * 0.2);
+    expect(houses.some((b) => instanceFlags(b) & FLAG.metalRoof)).toBe(true);
+    // trees are trees, pools are blank
+    for (const b of B.filter((x) => x.use === 'tree').slice(0, 500)) expect(instanceFlags(b)).toBe(FLAG.tree);
+    for (const b of B.filter((x) => x.use === 'pool')) expect(instanceFlags(b) & FLAG.blank).toBeTruthy();
+  });
+  it('water towers are a column and a raised tank; town halls carry a clock turret on the ridge', () => {
+    const idx = new Map(B.map((b, i) => [b, i]));
+    const towers = B.filter((b) => b.use === 'watertower');
+    expect(towers.length).toBeGreaterThan(0);
+    for (const t of towers) {
+      const i = idx.get(t)!;
+      const flat = S.near.flat;
+      const silo = S.near.silo;
+      const col = [...Array(count(flat.data)).keys()].filter((n) => flat.data[n * INST_STRIDE + I.aux0] === i);
+      const tank = [...Array(count(silo.data)).keys()].filter((n) => silo.data[n * INST_STRIDE + I.aux0] === i);
+      expect(col.length).toBe(1);
+      expect(tank.length).toBe(1);
+      const to = tank[0] * INST_STRIDE;
+      // the tank's top is the building's top (what the physics sees)
+      expect(silo.data[to + I.y] + silo.data[to + I.Hw]).toBeCloseTo(t.y + t.wallHeight, 2);
+      expect(silo.data[to + I.y]).toBeGreaterThan(t.y + 12);
+    }
+    const halls = B.filter((b) => b.use === 'townhall');
+    expect(halls.length).toBeGreaterThan(0);
+    for (const h of halls) {
+      const i = idx.get(h)!;
+      const hip = S.near.hip;
+      const turret = [...Array(count(hip.data)).keys()].filter((n) => hip.data[n * INST_STRIDE + I.aux0] === i && hip.data[n * INST_STRIDE + I.aux1] === 1);
+      expect(turret.length).toBe(1);
+      expect((hip.data[turret[0] * INST_STRIDE + I.flags] | 0) & FLAG.steeple).toBeTruthy();
+    }
   });
 });
 

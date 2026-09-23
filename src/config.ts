@@ -883,6 +883,9 @@ export const CONFIG = {
       minAngularSize: 0.0016,
       /** LOD switch hysteresis, as a fraction of the switch distance. */
       hysteresis: 0.06,
+      /** Trees: detailed crowns nearer than treeLodStart (m), the mid-LOD blob beyond treeLodEnd (dithered cross-fade between). */
+      treeLodStart: 600,
+      treeLodEnd: 800,
       /** Farmsteads: one candidate per jittered grid cell of this size (m), kept with this probability. */
       farmsteadSpacing: 900,
       farmsteadChance: 0.62,
@@ -1011,8 +1014,12 @@ export const CONFIG = {
       riverLiftPerKm: 1.2,
       /** Rivers stay at least this many pixels wide at any distance (coverage-faded, never dashed). */
       riverMinPixels: 1.4,
-      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = as windy as midday. */
+      /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = the full wind; later in the day (cat's paws between calm patches). */
       lakeMorningCalm: 0.85,
+      lakeDayCalm: 0.45,
+      /** Reeds at the water's edge (slow lowland river reaches, lowland lakes): candidate spacing along a bank (m), drawn within reedFar (m). */
+      reedSpacing: 3,
+      reedFar: 1800,
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
     },
@@ -1199,6 +1206,26 @@ export const CONFIG = {
     cloudResolution: 0.75,
     /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
     cloudBudgetMs: 2.5,
+    /**
+     * Quality presets (src/render/quality.ts). URL override: ?quality=auto|low|medium|high.
+     * 'auto' (default): start at ≤ startMegapixels of rendered pixels and let dynamic resolution climb
+     * to maxPixelRatio when there is headroom (fast first ramp), down to floorPixelRatio when there
+     * isn't; software renderers and older integrated GPUs start lower (and without MSAA / volumetric
+     * clouds on software). 'high' = start at the cap (the look screenshots are judged by).
+     */
+    quality: {
+      default: 'auto' as 'auto' | 'low' | 'medium' | 'high',
+      /** Rendered megapixels the 'auto' preset starts at (1440×900 at 1× ≈ 1.3). */
+      startMegapixels: 1.3,
+      /** …times this on an older integrated / mobile GPU. */
+      weakGpuStartScale: 0.5,
+      /** Lowest pixel ratio the auto/low/medium presets may drop to (config minPixelRatio is the 'high' floor). */
+      floorPixelRatio: 0.5,
+      /** Seconds of headroom per raise during the first ramp up from the conservative start (then upDelay). */
+      rampUpDelay: 1,
+      /** Seconds after start (or a reset) during which slow frames — streaming, shader compiles — are not judged. */
+      warmup: 3,
+    },
   },
 
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────

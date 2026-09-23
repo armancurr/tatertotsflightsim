@@ -25,15 +25,23 @@ function place(cam: THREE.PerspectiveCamera, x: number, y: number, z: number, he
 
 describe('water (functional)', () => {
   it('builds the sea, lakes and river in ≤ 12 draw calls, fogged, sorted before other transparents', () => {
-    const { scene, water } = setup();
-    const meshes: THREE.Mesh[] = [];
+    const { scene, water, cam } = setup();
+    const all: THREE.Mesh[] = [];
     scene.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
+      if ((o as THREE.Mesh).isMesh) all.push(o as THREE.Mesh);
     });
-    expect(meshes.length).toBeLessThanOrEqual(12);
-    expect(water.stats().drawCalls).toBe(meshes.length);
+    const meshes = all.filter((m) => !m.name.startsWith('reeds:'));
     const names = meshes.map((m) => m.name).sort();
     expect(names).toEqual(['lakes', 'river:Tater River', 'sea']);
+    // reeds: chunks near the camera only; ≤ 12 draw calls in all anywhere along the river
+    const rv = L.rivers[0];
+    for (let i = 0; i < rv.points.length; i += 60) {
+      place(cam, rv.points[i].x, rv.levels[i] + 150, rv.points[i].z, 180);
+      water.update(cam, 0, new THREE.Vector3(0, 1, 0));
+      const visible = all.filter((m) => m.visible).length;
+      expect(water.stats().drawCalls).toBe(visible);
+      expect(visible).toBeLessThanOrEqual(12);
+    }
     for (const m of meshes) {
       const mat = m.material as THREE.MeshStandardMaterial;
       expect(mat.fog).toBe(true);
