@@ -58,7 +58,7 @@ const EMAIL_OK = /(^noreply@anthropic\.com$|@users\.noreply\.github\.com$|@examp
  * Files the orchestrator rewrites at publish time (the agents may not edit them). Remove an entry
  * once that file is scrubbed — the test then guards it too.
  */
-const PENDING_SCRUB = new Set(['RESUME.md']);
+const PENDING_SCRUB = new Set<string>([]);
 /** This file holds sample bad paths and fake credentials to test the detectors, so it skips the scans. */
 const SELF = 'tests/repo/hygiene.test.ts';
 
