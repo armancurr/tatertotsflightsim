@@ -1520,6 +1520,48 @@ export const CONFIG = {
       boresightY: 0.34,
     },
     /**
+     * Airliner "glass" HUD (src/ui/glassHud.ts) for aircraft whose `hud` is 'glass' (the 747 has no
+     * head-up display): outside, a mini Boeing PFD bottom-left and a mini EICAS bottom-right, both in
+     * the bottom third; in the cockpit view (the flight deck has its own displays) a compact
+     * engines/flaps/gear strip bottom-left ('strip') or nothing ('hidden'). PFD height = pfdHeightFrac
+     * of the viewport (clamped in px, never above the bottom third), width = pfdAspect × height; the
+     * EICAS is eicasHeightFrac of the PFD's height. V-speeds: Vr = aircraft.limits.vrKt, Vref =
+     * vrefFactor × Vso, V1 = Vr − v1BelowVrKt (vrKt / vrefKt override them). N1 (%) at idle and full
+     * core speed; degPerAdiHeight = pitch degrees across the attitude display. Boeing colours.
+     */
+    glass: {
+      pfdHeightFrac: 0.28,
+      pfdMinH: 150,
+      pfdMaxH: 320,
+      pfdAspect: 1.16,
+      eicasHeightFrac: 0.62,
+      eicasAspect: 2.3,
+      cockpit: 'strip' as 'strip' | 'hidden',
+      compactHeightFrac: 0.058,
+      compactMinH: 38,
+      compactMaxH: 58,
+      compactAspect: 6,
+      vrefFactor: 1.3,
+      v1BelowVrKt: 6,
+      vrKt: null as number | null,
+      vrefKt: null as number | null,
+      n1IdlePct: 22,
+      n1MaxPct: 99,
+      degPerAdiHeight: 36,
+      colors: {
+        sky: '#2d78c8',
+        ground: '#80501f',
+        white: '#ffffff',
+        magenta: '#ff5cf2',
+        green: '#3de46c',
+        cyan: '#4fe3ff',
+        amber: '#ffb21e',
+        red: '#ff3b30',
+        tape: 'rgba(58,64,74,0.82)',
+        panel: 'rgba(6,9,14,0.55)',
+      },
+    },
+    /**
      * Weapons HUD (src/ui/weaponsHud.ts + src/game/systems/weaponsHud.ts), for aircraft that carry
      * weapons (A-10C, F-16C; the Cessna shows nothing): gun cross, gun CCIP pipper with its range
      * arc, the Maverick seeker circle and lock box, stores/ammo/kills, the range cue, and the

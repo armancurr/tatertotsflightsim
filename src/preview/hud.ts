@@ -2,6 +2,7 @@
  * HUD preview: a gradient sky/ground stand-in for the 3D view plus the HUD and the app chrome
  * (top bar, aircraft picker, pause menu), fed synthetic readings from URL parameters, e.g.
  *   &jet=1 → the F-16 head-up display (&mach=0.85 &ab=1 &beta=2 &sb=1 speed brake, &g=6.5)
+ *   &glass=1 → the 747's airliner PFD + EICAS (&rpm=90 core %, &fpa=2 flight path, &state=ground)
  *   &menu=1 | &menu=controls → the pause menu open · &picker=1 → the aircraft picker open · &bar=0 → no top bar
  *   /preview/hud.html?ias=95&alt=3500&hdg=270&vs=500&pitch=4&roll=15
  *   &stall=1 &crash=1 &landing=smooth &cam=cockpit &help=1 &paused=1
@@ -18,7 +19,7 @@ import type { AircraftState, CameraMode, EngineStatus, GearState, InstrumentRead
 import { createHud } from '../ui/hud';
 import { drawPanel } from '../ui/gauges';
 import { createInitialState, defaultControls } from '../physics';
-import { FLEET } from '../fleet';
+import { FLEET, getAircraftDef } from '../fleet';
 import { createAircraftPicker } from '../ui/picker';
 import { createMenu } from '../ui/menu';
 import { createTopBar } from '../ui/topBar';
@@ -35,11 +36,12 @@ const flag = (k: string) => q.get(k) === '1' || q.get(k) === 'true';
 
 const gear = (q.get('gear') as GearState | null) ?? 'down';
 const jet = flag('jet');
+const glass = !jet && flag('glass');
 const readings: InstrumentReadings & { gearHandleDown: boolean; betaDeg: number; flightPathDeg: number; speedBrake: boolean } = {
   mach: num('mach', jet ? 0.62 : 0.15),
   afterburner: num('ab', 0),
   betaDeg: num('beta', 0),
-  flightPathDeg: 0,
+  flightPathDeg: num('fpa', 0),
   speedBrake: flag('sb'),
   airspeedKt: num('ias', 95),
   altitudeFt: num('alt', 3500),
@@ -51,7 +53,7 @@ const readings: InstrumentReadings & { gearHandleDown: boolean; betaDeg: number;
   slipSkid: num('slip', 0),
   turnRateDegPerSec: num('turn', num('roll', 12) / 10),
   throttlePct: num('thr', 65),
-  rpm: num('rpm', 2350),
+  rpm: num('rpm', glass ? 90 : 2350),
   engineStatus: ((q.get('engine') ?? 'RUNNING').toUpperCase() as EngineStatus),
   flapsDeg: num('flaps', 0),
   flapsTargetDeg: num('flapsTarget', num('flaps', 0)),
@@ -65,7 +67,7 @@ const readings: InstrumentReadings & { gearHandleDown: boolean; betaDeg: number;
   aoaDeg: num('aoa', 4),
   gLoad: num('g', 1),
   groundSpeedKt: num('gs', num('ias', 95)),
-  state: flag('crash') ? 'crashed' : flag('stall') ? 'stalled' : 'airborne',
+  state: flag('crash') ? 'crashed' : flag('stall') ? 'stalled' : q.get('state') === 'ground' ? 'ground' : 'airborne',
   gearHandleDown: q.get('handle') ? q.get('handle') === 'down' : gear !== 'up',
 };
 
@@ -121,7 +123,8 @@ if (flag('panel')) {
   const cameraMode = (q.get('cam') as CameraMode | null) ?? 'chase';
   const hud = createHud(document.getElementById('hud')!, {
     aircraft: { setPanelDrawer: () => undefined },
-    style: jet ? 'jet' : 'steam',
+    style: jet ? 'jet' : glass ? 'glass' : 'steam',
+    config: glass ? getAircraftDef('b747').config : undefined,
   });
   if (q.get('bar') !== '0') {
     // The app chrome with a stub host (nothing to reset or switch here).
@@ -130,7 +133,7 @@ if (flag('panel')) {
     root.className = 'tfs-root';
     root.style.setProperty('--tfs-bar-h', `${topBarHeight(innerWidth)}px`);
     const items = FLEET.map((d) => ({ id: d.id, name: d.name, shortName: d.shortName, description: d.description }));
-    let current = jet ? 'f16' : 'c172rg';
+    let current = jet ? 'f16' : glass ? 'b747' : 'c172rg';
     const picker = createAircraftPicker(document, { items, current, onSelect: (id) => picker.setCurrent((current = id)) });
     let paused = true;
     const menu = createMenu(document, {
