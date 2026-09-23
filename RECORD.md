@@ -184,6 +184,6 @@ BreakupPart, FLEET with the Cessna and an F-16 placeholder), live aircraft switc
 (`?aircraft=`, `sim.selectAircraft`, `SystemContext.actions` for the menu, `onAircraftChange`),
 `F16_AIRCRAFT` with the final real-world geometry (15.06 m, 9.96 m span, 4.88 m tall, 4.00 m
 wheelbase, 2.36 m track) shared by the physics and the model, jet fields (afterburner, speed brake
-on X), page title "Tater's Flight Sim · Tater Tots Flight Simulator", package `taters-flight-sim`.
+on X), page title "Tater's Flight Sim · Tater Tots Flight Simulator", package `taters-flight-sim` (renamed `tatertotsflightsim` with the repository folder).
 Suite 1,438/1,438. Then 10 worktree agents: physics, f16, cessna, crash, traffic, cars, clouds, ui,
 audio, oss.

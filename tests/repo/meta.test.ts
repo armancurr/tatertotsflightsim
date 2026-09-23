@@ -50,17 +50,17 @@ const allCodes = [...new Set(Object.values(CONFIG.controls.keys as Record<string
 
 describe('package.json', () => {
   it('is the published Tater\'s Flight Sim package with licence, engines and links', () => {
-    expect(pkg.name).toBe('taters-flight-sim');
+    expect(pkg.name).toBe('tatertotsflightsim');
     expect(pkg.license).toBe('MIT');
     expect(pkg.engines?.node).toMatch(/^>=\s*\d+/);
     expect(String(pkg.description)).toMatch(/Tater's Flight Sim/);
     expect(pkg.keywords?.length ?? 0).toBeGreaterThanOrEqual(5);
     expect(pkg.keywords).toEqual(expect.arrayContaining(['flight-simulator', 'threejs', 'webgl2']));
     const repo = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
-    expect(repo).toMatch(/github\.com\/.+\/taters-flight-sim/);
-    expect(String(pkg.homepage)).toMatch(/taters-flight-sim/);
+    expect(repo).toMatch(/github\.com\/.+\/tatertotsflightsim/);
+    expect(String(pkg.homepage)).toMatch(/tatertotsflightsim/);
     const bugs = typeof pkg.bugs === 'string' ? pkg.bugs : pkg.bugs?.url;
-    expect(bugs).toMatch(/taters-flight-sim\/issues$/);
+    expect(bugs).toMatch(/tatertotsflightsim\/issues$/);
     expect(pkg.author).toMatch(/Jared Tate/);
   });
 

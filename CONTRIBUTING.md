@@ -7,8 +7,8 @@ fits together and [docs/TESTING.md](docs/TESTING.md) covers the test suite in de
 ## Set up
 
 ```sh
-git clone https://github.com/<owner>/taters-flight-sim.git
-cd taters-flight-sim
+git clone https://github.com/<owner>/tatertotsflightsim.git
+cd tatertotsflightsim
 npm install
 npx playwright install chromium   # the browser the end-to-end tests drive
 npm start                         # http://127.0.0.1:8092, hot reload

@@ -1,5 +1,5 @@
 {
-  "name": "taters-flight-sim",
+  "name": "tatertotsflightsim",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -18,13 +18,13 @@
   ],
   "license": "MIT",
   "author": "Jared Tate",
-  "homepage": "https://github.com/<owner>/taters-flight-sim#readme",
+  "homepage": "https://github.com/<owner>/tatertotsflightsim#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<owner>/taters-flight-sim.git"
+    "url": "git+https://github.com/<owner>/tatertotsflightsim.git"
   },
   "bugs": {
-    "url": "https://github.com/<owner>/taters-flight-sim/issues"
+    "url": "https://github.com/<owner>/tatertotsflightsim/issues"
   },
   "engines": {
     "node": ">=22.12"

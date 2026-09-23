@@ -8,7 +8,7 @@ The flight physics are real, so the aircraft can stall and spin. The sky is phys
 every texture, model and sound is generated in code. Nothing is downloaded at runtime, and the
 only runtime dependency is [Three.js](https://threejs.org).
 
-[![CI](https://github.com/<owner>/taters-flight-sim/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/taters-flight-sim/actions/workflows/ci.yml)
+[![CI](https://github.com/<owner>/tatertotsflightsim/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/tatertotsflightsim/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ![An A-10C Warthog runs in on a column of burning armour at golden hour](docs/screenshots/a10-burning-convoy.jpg)
@@ -65,8 +65,8 @@ You need **Node.js 22 or newer** (22.12+; any current LTS works), **git**, and a
 **WebGL2**. Chrome, Edge, Firefox and Safari 15+ all work.
 
 ```sh
-git clone https://github.com/<owner>/taters-flight-sim.git
-cd taters-flight-sim
+git clone https://github.com/<owner>/tatertotsflightsim.git
+cd tatertotsflightsim
 npm install
 npm start
 ```
@@ -227,8 +227,8 @@ npm run preview    # serve dist/ on http://127.0.0.1:8092
 host can serve it, including GitHub Pages, Netlify, Cloudflare Pages, S3 or nginx.
 
 - **At the root of a domain** (`https://example.com/`), use `npm run build`.
-- **Under a sub-path** (`https://<owner>.github.io/taters-flight-sim/`), pass Vite's `--base`:
-  `npm run build -- --base=/taters-flight-sim/`. You can also use `npm run build -- --base=./`,
+- **Under a sub-path** (`https://<owner>.github.io/tatertotsflightsim/`), pass Vite's `--base`:
+  `npm run build -- --base=/tatertotsflightsim/`. You can also use `npm run build -- --base=./`,
   which gives relative URLs and works from any folder.
 - **GitHub Pages.** In the repository settings, set *Pages → Source* to **GitHub Actions**. Then
   run the **Deploy to GitHub Pages** workflow from the *Actions* tab. It builds with the right
