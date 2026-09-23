@@ -1943,9 +1943,9 @@ function makeA10(): AircraftConfig {
       stallAlphaNegDeg: -14,
       /** Wide rounded top: the lift curve flattens from ~13° (buffet builds long before the break). */
       stallRoundingDeg: 5,
-      /** Trailing-edge stall of a thick section: lift falls away slowly. */
-      stallBreakWidthDeg: 8,
-      flatPlateLift: 1.15,
+      /** Trailing-edge stall of a thick section: lift falls away slowly (~25 % lost 5° past the peak). */
+      stallBreakWidthDeg: 12,
+      flatPlateLift: 1.2,
       flatPlateDrag: 1.3,
       /** Loaded: 11 pylons, 4 AGM-65D on LAU-88s, two pods, gun, gear pods, big nacelles. */
       cd0: 0.047,
@@ -1975,7 +1975,7 @@ function makeA10(): AircraftConfig {
       clAileron: 0.05,
       clRudder: 0.012,
       /** Twin fins on the tailplane tips, big tail arm; cnR includes the yaw SAS. */
-      cnBeta: 0.12,
+      cnBeta: 0.15,
       cnP: -0.02,
       cnR: -0.35,
       cnAileron: -0.003,
@@ -1987,15 +1987,16 @@ function makeA10(): AircraftConfig {
       stripAsymAileron: 0.05,
       wingStrips: 4,
       washoutDeg: 1.5,
-      stripStallBreakWidthDeg: 12,
+      /** Thick sections stall from the trailing edge: the strips lose lift gently → weak autorotation. */
+      stripStallBreakWidthDeg: 20,
       /** Departure-resistant: weak autorotation once stalled. */
       stripRollGainStalled: 0.5,
       stripYawGain: 1,
       /** Ailerons on the outer panels. */
       aileronSpanStart: 0.55,
-      /** The fins sit outboard, clear of the fuselage wake. */
-      stallYawDampingLoss: 0.15,
-      stallRudderLoss: 0.1,
+      /** The twin fins sit outboard on the tailplane tips, clear of the fuselage/wing wake. */
+      stallYawDampingLoss: 0.05,
+      stallRudderLoss: 0.05,
       bodyCrossflowCn: 0.3,
       postStallFlapLiftFraction: 0.5,
       stallPitchBreak: -0.06,
