@@ -24,13 +24,13 @@ you play, and the only runtime dependency is [Three.js](https://threejs.org).
 | **Boeing 747-400** on final over the coast. | **The 747 flight deck**: six live glass displays, levers that move. |
 | ![An F-16C fires a Sidewinder at a locked MiG-29: FOX 2 on the HUD](docs/screenshots/f16-fox2.jpg) | ![The MiG-29 explodes after the Sidewinder hit](docs/screenshots/f16-mig-kill.jpg) |
 | **Fox 2.** Lock an enemy jet with T, fire a Sidewinder with Z. | **Splash one.** Enemy aircraft break, burn and fall. |
-| ![A-10 Maverick lock: the HUD lock box on a BTR-80 at 1.9 NM and the missile's IR view](docs/screenshots/a10-maverick-lock.jpg) | ![A Maverick hits the lead vehicle of a truck column](docs/screenshots/a10-maverick-hit.jpg) |
+| ![A-10 Maverick lock: the HUD lock box on a BTR-80 at 1.9 NM and the missile's IR view](docs/screenshots/a10-maverick-lock.jpg) | ![A Maverick hits the lead BTR-80 of an armoured column; the smoke trail curves in from the launch](docs/screenshots/a10-maverick-hit.jpg) |
 | **Tank busting.** Lock and launch a Maverick. | **Direct hit.** Fireball, debris, and the blast takes out a neighbour. |
 | ![The F-16C cockpit: the HUD on its combiner glass, MFDs, keypad and gauges over the mountains](docs/screenshots/f16-cockpit.jpg) | ![The A-10C cockpit: three-piece windscreen, HUD on the glass, map and targeting-pod screens](docs/screenshots/a10-cockpit.jpg) |
 | **F-16C cockpit**: HUD on the glass, live MFDs. | **A-10C cockpit**: HUD on the glass, TAD map and targeting pod. |
 | ![The Cessna 172RG cockpit over the coast, with a real-size 1980s panel](docs/screenshots/cessna-cockpit.jpg) | ![Tater Field from above: runway 36/18 crossed by runway 03/21, the apron, hangars and fire station](docs/screenshots/runway-03-21.jpg) |
 | **Cessna 172RG cockpit**: a real 172RG panel. | **Tater Field**: two runways, a busy ramp. |
-| ![An F-16C in afterburner over snow-capped mountains and cumulus](docs/screenshots/f16-afterburner-mountains.jpg) | ![A Cessna following the river to the sea at golden hour](docs/screenshots/cessna-river-coast.jpg) |
+| ![An F-16C in afterburner diving along a forested ridge under cumulus, cliffs beyond](docs/screenshots/f16-afterburner-mountains.jpg) | ![A Cessna following the river to the sea at golden hour](docs/screenshots/cessna-river-coast.jpg) |
 | **F-16C in afterburner** over the mountains. | **Low and slow** down the river to the sea. |
 
 ## Quick start
