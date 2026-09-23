@@ -63,7 +63,7 @@ export function hudCentre(): THREE.Vector3 {
   return V(0, HUD.bottomY + (HUD.h / 2) * Math.cos(HUD.tilt), HUD.z + (HUD.h / 2) * Math.sin(HUD.tilt));
 }
 /** The windscreen's front panel edges (posts): x at the base and at the bow; the frame section. */
-export const WINDSCREEN = { baseZ: -5.4, baseX: 0.3, topX: 0.165, postW: 0.03, postD: 0.018, bowW: 0.032, bowD: 0.016 } as const;
+export const WINDSCREEN = { baseZ: -5.4, baseX: 0.3, topX: 0.145, postW: 0.03, postD: 0.018, bowW: 0.032, bowD: 0.016 } as const;
 /** Fire T-handles on the glareshield: L ENG, APU, R ENG (x). */
 const FIRE_X = [-0.335, 0.3, 0.37] as const;
 /** Centre stick: floor pivot, travel. */
@@ -420,7 +420,7 @@ function buildInterior(): THREE.BufferGeometry {
   for (const s of [-1, 1]) {
     T(rbox(0.045, 0.36, 0.54, 0.012, V(s * 0.265, 0.37, -4.22)), SEAT_FRAME, 0.75, 0.15);
     // Side rails up the back to the headrest.
-    T(box(0.032, 0.92, 0.055, backAt(0.46, -0.03).add(V(s * 0.235, 0, 0)), rec, 0, 0), 0x3a3f3b, 0.65, 0.25);
+    T(box(0.028, 0.86, 0.05, backAt(0.43, -0.03).add(V(s * 0.235, 0, 0)), rec, 0, 0), 0x50564e, 0.6, 0.3);
     // Ejection handles (striped loops on the seat sides).
     for (let k = 0; k < 4; k++) {
       const a = V(s * 0.225, 0.36 + k * 0.015, -4.52 + k * 0.012);
@@ -539,7 +539,6 @@ function buildPanelFaces(): THREE.BufferGeometry {
   const H = PANEL_CANVAS.height;
   const faces: THREE.BufferGeometry[] = [panelRect(0, 0, PANEL.w, PANEL.h, 0.0015, uvRect(0, 0, 1024, 512, W, H))];
   for (const side of ['left', 'right'] as const) {
-    const s = side === 'left' ? -1 : 1;
     const row = CONSOLE_ROW[side];
     // Corners: u (across, to the pilot's right) and w (aft) → canvas X = w, Y = row + (wid − u).
     const xL = side === 'left' ? -CONSOLE.xOut : CONSOLE.xIn;
@@ -554,7 +553,6 @@ function buildPanelFaces(): THREE.BufferGeometry {
     g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute([0, v0, 0, v1, 1, v1, 1, v0], 2));
     g.setIndex([0, 2, 1, 0, 3, 2]);
-    void s;
     faces.push(g);
   }
   return merge(faces.map((f) => tint(f, 0xffffff, 0.75, 0)));
@@ -656,10 +654,12 @@ export function buildCockpit(): CockpitBuild {
   };
 }
 
-/** Stick angles (rad) from the controls: aft with + elevator, right with + aileron. */
-export function stickAngles(elevator: number, aileron: number): { pitch: number; roll: number } {
-  const f = (v: number) => (Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
-  return { pitch: f(elevator) * STICK.pitchDeg * DEG, roll: -f(aileron) * STICK.rollDeg * DEG };
+const unit = (v: number) => (Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
+/** Stick angles (rad) from the controls: aft with + elevator, right with + aileron (writes `out`: no allocation per frame). */
+export function stickAngles(elevator: number, aileron: number, out = { pitch: 0, roll: 0 }): { pitch: number; roll: number } {
+  out.pitch = unit(elevator) * STICK.pitchDeg * DEG;
+  out.roll = -unit(aileron) * STICK.rollDeg * DEG;
+  return out;
 }
 
 /** Throttle lever angle (rad about +X; + = aft) from the throttle percentage. */

@@ -462,6 +462,7 @@ export function createA10Model(): AircraftModelHandle {
   const airFlags: boolean[] = sidewinders.map(() => true);
   screenState.stores = storeFlags;
   screenState.airStores = airFlags;
+  const stickOut = { pitch: 0, roll: 0 };
   const panelTex = textures?.panel ?? null;
   const screensTex = textures?.screens ?? null;
 
@@ -577,7 +578,7 @@ export function createA10Model(): AircraftModelHandle {
 
     // Cockpit: stick, throttles, live instruments and displays.
     const inCockpitView = v.cameraMode === 'cockpit';
-    const sa = stickAngles(v.elevator, v.aileron);
+    const sa = stickAngles(v.elevator, v.aileron, stickOut);
     stickPivot.rotation.x = sa.pitch;
     stickPivot.rotation.z = sa.roll;
     throttlePivot.rotation.x = throttleAngle(v.instruments?.throttlePct ?? 0);
