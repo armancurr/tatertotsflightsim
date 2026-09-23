@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { CONFIG, type Config } from '../../config';
 import type { WorldLayout } from '../layout';
-import { runwayFrame } from '../runway';
+import { runwayFrames } from '../runway';
 import {
   TERRAIN_VERTEX_PARS,
   TERRAIN_BEGIN_VERTEX,
@@ -18,6 +18,7 @@ import {
   TERRAIN_ROUGHNESS_FRAGMENT,
   TERRAIN_NORMAL_FRAGMENT,
   MAX_TOWNS,
+  MAX_RUNWAYS,
 } from './terrainShader';
 import { generateDetailSet, generateNoiseTexture, NOISE_TEX_SIZE } from './detailTextures';
 
@@ -96,7 +97,13 @@ export function createTerrainMaterial(layout: WorldLayout, cfg: Config = CONFIG,
     townB.push(t ? new THREE.Vector4(t.blockSize, t.density, 0, 0) : new THREE.Vector4(60, 0, 0, 0));
   }
 
-  const rwf = runwayFrame(cfg);
+  // every runway (36/18 first): threshold, length, heading — approach corridors stay clear
+  const frames = runwayFrames(cfg).slice(0, MAX_RUNWAYS);
+  const runwaysU: THREE.Vector4[] = [];
+  for (let i = 0; i < MAX_RUNWAYS; i++) {
+    const r = frames[i];
+    runwaysU.push(r ? new THREE.Vector4(r.threshold.x, r.threshold.z, r.length, (r.headingDeg * Math.PI) / 180) : new THREE.Vector4(1e9, 1e9, 0, 0));
+  }
   const seed = (cfg.world.seed | 0) + 404;
   const detailSize = opts.detailSize ?? 512;
   const aniso = opts.anisotropy ?? 8;
@@ -111,7 +118,8 @@ export function createTerrainMaterial(layout: WorldLayout, cfg: Config = CONFIG,
     uPavedB: { value: pavedB },
     uPavedCount: { value: paved.length },
     uAirport: { value: new THREE.Vector4(ap.runway.center.x, ap.runway.center.z, ap.flatRadius, (ap.runway.headingDeg * Math.PI) / 180) },
-    uRunway: { value: new THREE.Vector4(rwf.threshold.x, rwf.threshold.z, rwf.length, 0) },
+    uRunways: { value: runwaysU },
+    uRunwayCount: { value: frames.length },
     uTownA: { value: townA },
     uTownB: { value: townB },
     uTownCount: { value: towns.length },

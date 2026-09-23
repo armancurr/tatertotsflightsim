@@ -25,6 +25,8 @@ import { BLEND_GLSL } from './blend';
 import { DETAIL_TILE_M } from './detailTextures';
 
 export const MAX_TOWNS = 32;
+/** Runways the shader knows (approach corridors kept clear of woodlots): 36/18 first, then the rest. */
+export const MAX_RUNWAYS = 4;
 
 const f = (v: number) => (Number.isInteger(v) ? `${v}.0` : `${v}`);
 
@@ -159,7 +161,8 @@ uniform vec4 uPavedA[8];   // centre x, centre z, half length, half width
 uniform vec4 uPavedB[8];   // forward x, forward z, kind (0 runway, 1 taxiway/apron), unused
 uniform int uPavedCount;
 uniform vec4 uAirport;     // centre x, centre z, flat radius, runway heading (rad)
-uniform vec4 uRunway;      // threshold (36) x, z, length, 0
+uniform vec4 uRunways[ ${MAX_RUNWAYS} ]; // every runway: threshold x, z, length, heading (rad)
+uniform int uRunwayCount;
 uniform vec4 uTownA[${MAX_TOWNS}]; // x, z, radius, grid angle (rad)
 uniform vec4 uTownB[${MAX_TOWNS}]; // block size, density, 0, 0
 uniform int uTownCount;
@@ -249,18 +252,22 @@ Surf tSurf( vec3 col, float layer, float amt, float rough, float bump ) {
   Surf s; s.col = col; s.layer = layer; s.amt = amt; s.rough = rough; s.bump = bump; return s;
 }
 
-// Cleared ground around the airfield and under the approach paths (twin of landcover.ts
-// airportClear): no woodlots are drawn there (and no trees stand there).
+// Cleared ground around the airfield and under the approach paths of every runway (twin of
+// landcover.ts airportClear): no woodlots are drawn there (and no trees stand there).
 float tAirportClear( vec2 p ) {
   float c = 1.0 - smoothstep( uAirport.z + 300.0, uAirport.z + 800.0, distance( p, uAirport.xy ) );
-  vec2 dir = vec2( sin( uAirport.w ), -cos( uAirport.w ) );
-  vec2 d = p - uRunway.xy;
-  float along = dot( d, dir );
-  float across = dot( d, vec2( -dir.y, dir.x ) );
-  float past = along < 0.0 ? -along : max( along - uRunway.z, 0.0 );
-  if ( past < 4000.0 ) {
-    float halfW = 160.0 + 0.12 * past;
-    c = max( c, ( 1.0 - smoothstep( halfW, halfW + 150.0, abs( across ) ) ) * ( 1.0 - smoothstep( 3500.0, 4000.0, past ) ) );
+  for ( int i = 0; i < ${MAX_RUNWAYS}; i++ ) {
+    if ( i >= uRunwayCount ) break;
+    vec4 R = uRunways[ i ];
+    vec2 dir = vec2( sin( R.w ), -cos( R.w ) );
+    vec2 d = p - R.xy;
+    float along = dot( d, dir );
+    float across = dot( d, vec2( -dir.y, dir.x ) );
+    float past = along < 0.0 ? -along : max( along - R.z, 0.0 );
+    if ( past < 4000.0 ) {
+      float halfW = 160.0 + 0.12 * past;
+      c = max( c, ( 1.0 - smoothstep( halfW, halfW + 150.0, abs( across ) ) ) * ( 1.0 - smoothstep( 3500.0, 4000.0, past ) ) );
+    }
   }
   return c;
 }
@@ -920,14 +927,33 @@ vec3 terrainAlbedo( out float rough ) {
   // shore, sea bed and water tint
   float depth = vWaterLevel - wp.y;
   float wWater = vLc1.w;
+  bool seaW = vWaterLevel < 0.5;
+  if ( !seaW && depth > -3.5 ) {
+    // river and lake banks: lush grass and rushes down to a strip of wet mud at the waterline, with
+    // the odd gravel bar (sand only near the river mouth) — never a bright beach-like edging
+    float a = -depth;                                   // metres above the water
+    float lushK = 1.0 - smoothstep( 0.6, 3.5, a );
+    vec3 lush = mix( vec3( 0.03, 0.055, 0.02 ), vec3( 0.05, 0.075, 0.026 ), tN( p, 7.0 ) );
+    col = mix( col, lush, lushK * 0.6 * ( 1.0 - vLc1.z ) );
+    float mudK = ( 1.0 - smoothstep( 0.05, 0.7, a ) ) * smoothstep( 0.35, 0.65, tN( p + 31.0, 9.0 ) );
+    col = mix( col, vec3( 0.06, 0.052, 0.04 ), mudK * 0.7 );
+  }
   if ( depth > -1.2 ) {
     float wet = smoothstep( -1.2, 0.0, depth );
     col *= 1.0 - 0.38 * wet;
-    rough = mix( rough, 0.35, wet );
-    if ( wWater > 0.01 || depth > 0.0 ) {
-      vec3 bed = mix( vec3( 0.30, 0.26, 0.18 ), vec3( 0.13, 0.12, 0.09 ), smoothstep( 0.0, 12.0, depth ) );
+    // wet sand on the beach is glossy; river mud and grass only a little (a glossy band reads as edging)
+    rough = mix( rough, seaW ? 0.35 : 0.72, wet );
+    if ( ( seaW && wWater > 0.01 ) || depth > 0.0 ) {
+      vec3 bed;
+      if ( seaW ) bed = mix( vec3( 0.30, 0.26, 0.18 ), vec3( 0.13, 0.12, 0.09 ), smoothstep( 0.0, 12.0, depth ) );
+      else {
+        // river / lake bed: silt and mud, pale gravel bars in the shallows, sand only at the mouth
+        bed = mix( vec3( 0.085, 0.076, 0.058 ), vec3( 0.055, 0.05, 0.042 ), smoothstep( 0.0, 3.0, depth ) );
+        float bar = smoothstep( 0.64, 0.82, tN( p + 77.0, 40.0 ) ) * smoothstep( 0.05, 0.25, depth ) * ( 1.0 - smoothstep( 0.4, 1.5, depth ) );
+        bed = mix( bed, vWaterLevel < 3.0 ? vec3( 0.22, 0.195, 0.14 ) : vec3( 0.13, 0.12, 0.105 ), bar );
+      }
       bed *= 0.85 + 0.3 * tN( p, 18.0 );
-      col = mix( col, bed, tSat( wWater * 1.5 ) );
+      col = mix( col, bed, depth > 0.0 ? 1.0 : tSat( wWater * 1.5 ) );
     }
     if ( depth > 0.0 ) {
       bool sea = vWaterLevel < 0.5;
