@@ -1530,15 +1530,15 @@ export const CONFIG = {
       seed: 3571,
       /** Soil (dirt/field/grass/sand/forest): dark ejecta thrown up, then lingering dust that merges into the carpet. */
       soil: {
-        ejecta: 3,
-        ejectaSpeed: [7, 16] as [number, number],
-        ejectaSize: [0.8, 1.6] as [number, number],
-        ejectaLife: [0.9, 1.6] as [number, number],
+        ejecta: 4,
+        ejectaSpeed: [9, 22] as [number, number],
+        ejectaSize: [1, 2.2] as [number, number],
+        ejectaLife: [1, 1.9] as [number, number],
         puffs: 2,
-        puffSize: [4, 8] as [number, number],
-        puffLife: [6, 11] as [number, number],
-        puffRise: [2, 5] as [number, number],
-        puffAlpha: 0.42,
+        puffSize: [7, 13] as [number, number],
+        puffLife: [8, 14] as [number, number],
+        puffRise: [3, 7] as [number, number],
+        puffAlpha: 0.38,
       },
       /** Pavement / rock: sparks + a grey puff + a couple of chips. */
       hard: { sparks: 5, chips: 2, puffs: 1, puffSize: [2.5, 5] as [number, number], puffLife: [3, 6] as [number, number], puffAlpha: 0.32 },

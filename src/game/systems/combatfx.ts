@@ -30,6 +30,10 @@ interface DemoOpts {
   surface?: SurfaceType;
   kind?: TargetKind;
   burstS?: number;
+  /** Virtual shooter: bearing from the aim point to the shooter (deg), slant range (m), dive angle (deg). */
+  fromDeg?: number;
+  slantM?: number;
+  diveDeg?: number;
 }
 
 const FWD = { x: 0, y: 0, z: -1 };
@@ -67,7 +71,17 @@ const mod: SystemModule = {
       const tx = Number.isFinite(o.x) ? (o.x as number) : s.x + (f.x / fl) * dist;
       const tz = Number.isFinite(o.z) ? (o.z as number) : s.z + (f.z / fl) * dist;
       const target = { x: tx, y: ground.groundHeight(tx, tz), z: tz };
-      const shooter = { x: s.x, y: s.y, z: s.z };
+      // The shooter: the aircraft when it flies; parked (or asked to), a virtual A-10 diving in from
+      // `fromDeg` (default: from the left of the view) at `slantM` / `diveDeg` — a real gun-run geometry.
+      const agl = s.y - ground.groundHeight(s.x, s.z);
+      const virtual = Number.isFinite(o.fromDeg) || agl < 10;
+      const headingDeg = (Math.atan2(f.x, -f.z) * 180) / Math.PI;
+      const b = ((Number.isFinite(o.fromDeg) ? (o.fromDeg as number) : headingDeg - 90) * Math.PI) / 180;
+      const slant = Number.isFinite(o.slantM) ? (o.slantM as number) : 1200;
+      const dive = ((Number.isFinite(o.diveDeg) ? (o.diveDeg as number) : 20) * Math.PI) / 180;
+      const shooter = virtual
+        ? { x: tx + Math.sin(b) * Math.cos(dive) * slant, y: target.y + Math.sin(dive) * slant, z: tz - Math.cos(b) * Math.cos(dive) * slant }
+        : { x: s.x, y: s.y, z: s.z };
       const surfaceAt = (x: number, z: number): SurfaceType => o.surface ?? env.surfaceAt(x, z);
       const denv = { groundHeight: ground.groundHeight, surfaceAt };
       const kindOf = o.kind ?? 'tank';
