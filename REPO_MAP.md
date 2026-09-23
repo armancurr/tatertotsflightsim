@@ -7,7 +7,7 @@ descriptions come from each file's own opening comment, so this map stays accura
 `npm run repo-map` after adding, moving or renaming files.
 
 Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.worktrees/`
-(temporary agent workspaces) and the QA image folders. 738 files, 172,409 lines.
+(temporary agent workspaces) and the QA image folders. 800 files, 195,505 lines.
 
 ## Start here
 
@@ -67,6 +67,7 @@ Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.w
 | `tests/` | The automated tests (Vitest). Folders mirror `src/`; plus cross-cutting fuzz, functional-flight and browser end-to-end tests. |
 | `tests/aircraft/` | Tests for the 3D aircraft: gear kinematics, prop disc, wreck, geometry anchors. |
 | `tests/aircraft/a10/` |  |
+| `tests/aircraft/b747/` |  |
 | `tests/aircraft/f16/` |  |
 | `tests/audio/` | Tests for the sound system (with a fake Web Audio context). |
 | `tests/camera/` | Tests for the camera rig: modes, transitions, ground clearance, shake. |
@@ -112,13 +113,13 @@ Project root: the page (`index.html`), build/test config, the licence and the pr
 | `.gitattributes` | 5 | Line-ending rules (LF in the repository) and binary file types. |
 | `.gitignore` | 17 | Files git ignores (dependencies, build output, agent worktrees, scratch screenshots). |
 | `.nvmrc` | 2 | The Node.js version for `nvm use`. |
-| `ARCHITECTURE.md` | 490 | How the simulator is built, explained in plain English. |
+| `ARCHITECTURE.md` | 497 | How the simulator is built, explained in plain English. |
 | `CODE_OF_CONDUCT.md` | 133 | Contributor Covenant 2.1. |
 | `CONTRIBUTING.md` | 145 | How to set up, the principles, code style, visual QA and what a good pull request looks like. |
 | `ELEVATOR_PITCH.md` | 59 | What this project is, in one page. |
 | `LICENSE` | 22 | MIT licence. |
 | `PLAN.md` | 132 | The build plan: architecture contracts, agent rules and the wave history. |
-| `README.md` | 355 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
+| `README.md` | 353 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
 | `RECORD.md` | 190 | The build log: what was done, decisions, bugs found and their causes. |
 | `REPO_MAP.md` | 1346 | This file: every folder and file and what it is for. |
 | `RESUME.md` | 157 | Hand-off notes: exactly where the work stopped and what to do next. |
@@ -172,12 +173,18 @@ Extra documentation (how the tests are organised) and shelved work waiting to be
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `a10-burning-convoy.jpg` | 967 |  |
-| `a10-cockpit-hud.jpg` | 847 |  |
+| `a10-cockpit.jpg` | 846 |  |
 | `a10-maverick-hit.jpg` | 1386 |  |
 | `a10-maverick-lock.jpg` | 843 |  |
-| `cessna-cockpit-coast.jpg` | 1002 |  |
+| `b747-cockpit.jpg` | 827 |  |
+| `b747-final.jpg` | 723 |  |
+| `cessna-cockpit.jpg` | 916 |  |
 | `cessna-river-coast.jpg` | 1030 |  |
 | `f16-afterburner-mountains.jpg` | 1163 |  |
+| `f16-cockpit.jpg` | 1236 |  |
+| `f16-fox2.jpg` | 894 |  |
+| `f16-mig-kill.jpg` | 874 |  |
+| `runway-03-21.jpg` | 741 |  |
 
 ### `preview/`
 
@@ -189,6 +196,7 @@ Developer preview pages — each one shows a single part of the sim (terrain, sk
 | `aircraft.html` | 20 | Developer preview page. |
 | `airport.html` | 21 | Developer preview page. |
 | `atmosphere.html` | 20 | Developer preview page. |
+| `b747.html` | 20 | Developer preview page. |
 | `cars.html` | 21 | Developer preview page. |
 | `carsWorld.html` | 21 | Developer preview page. |
 | `crash.html` | 19 | Developer preview page. |
@@ -196,6 +204,7 @@ Developer preview pages — each one shows a single part of the sim (terrain, sk
 | `fx.html` | 19 | Developer preview page. |
 | `hud.html` | 21 | Developer preview page. |
 | `roads.html` | 21 | Developer preview page. |
+| `ships.html` | 21 | Developer preview page. |
 | `terrain.html` | 21 | Developer preview page. |
 | `towns.html` | 21 | Developer preview page. |
 | `townsWorld.html` | 21 | Developer preview page. |
@@ -216,7 +225,7 @@ Helper scripts: headless screenshots, the test-browser picker, the keyboard-only
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `audio-check.mjs` | 133 | Audio check in the LIVE game, in Google Chrome for Testing (never the user's Chrome), with autoplay allowed so the real AudioContext runs without a click. |
-| `qa-pilot.js` | 1198 | QA pilot — flies the simulator ONLY through keyboard events (the same path a person uses: DOM keydown/keyup → input manager → smoothed controls → physics). |
+| `qa-pilot.js` | 1454 | QA pilot — flies the simulator ONLY through keyboard events (the same path a person uses: DOM keydown/keyup → input manager → smoothed controls → physics). |
 | `repo-map.mjs` | 223 | Generates REPO_MAP.md — a map of every file in the repository with a one-line description taken from the file's own leading doc comment (so the map stays true as the code changes). |
 | `shot.mjs` | 59 | Headless screenshot + console check, for development QA. |
 | `test-browser.d.mts` | 30 | Types for scripts/test-browser.mjs. |
@@ -229,7 +238,7 @@ All of the simulator’s source code (TypeScript).
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `boot.ts` | 118 | Boot sequence (main.ts calls `boot()` with the real browser; tests pass fakes): 1. |
-| `config.ts` | 2985 | Every tunable value in the simulator lives here. |
+| `config.ts` | 3339 | Every tunable value in the simulator lives here. |
 | `main.ts` | 25 | Entry point. |
 | `types.ts` | 290 | Shared contracts between the pure simulation (physics, controls, camera, instruments) and the renderer. |
 
@@ -289,7 +298,25 @@ The 3D Cessna 172RG: fuselage, wings, tail, retractable gear, propeller, paint, 
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `index.ts` | 51 | Boeing 747-400 model — PLACEHOLDER (blocks on the B747_AIRCRAFT geometry) until the procedural model lands: fuselage with the upper-deck hump, swept wings, four engine pods, tailplane and fin. |
+| `animate.ts` | 261 | PURE mapping from the sim's visual state to the 747-400's joint angles, fans, gear sequence and lights. |
+| `atlas.ts` | 85 | PURE layout of the 747's paint atlas (one 4096 × 2048 canvas for every painted part; a second canvas of the same layout carries the panel-line bump in R and the roughness in G) and the UV mappings the geometry builder… |
+| `engines.ts` | 255 | The 747-400's four RB211-524H-style pods: the long fan cowl in Tater blue with a gold band and the thrust-reverser sleeve line, the polished intake lip, the dark intake duct, the fan (34 wide-chord blades + the spiral… |
+| `flightDeck.ts` | 371 | Boeing 747-400 flight deck (camera 1: the captain's seat on the upper deck): const deck = createB747FlightDeck(); flightDeckGroup.add(deck.group); // the model's `b747.flightDeck` group (body frame) deck.setVisualStat… |
+| `flightDeckAnim.ts` | 102 | Boeing 747-400 flight deck — control animation (pure): what the levers, columns, yokes and pedals show for a visual state. |
+| `flightDeckDisplays.ts` | 781 | Boeing 747-400 flight deck — the display painters (canvas 2D, square pictures of S × S px): - PFD: FMA row, attitude (sky/ground, pitch scale every 2.5°, bank scale + pointer + slip, aircraft symbol, flight path vecto… |
+| `flightDeckGeom.ts` | 594 | Boeing 747-400 flight deck — geometry (node-safe; three.js core only). |
+| `flightDeckLayout.ts` | 325 | Boeing 747-400 flight deck — the layout (pure data + small maths, no three.js). |
+| `flightDeckLight.ts` | 182 | Daylight on the 747 flight deck. |
+| `flightDeckPaint.ts` | 462 | Boeing 747-400 flight deck — the painted panel faces (one 2048² atlas + a matching glow atlas for the panel backlighting at dusk and the lit annunciators): the overhead panel (IRS, ELEC, HYD, FIRE, FUEL, ANTI-ICE, STA… |
+| `flightDeckReadings.ts` | 250 | Boeing 747-400 flight deck — what the displays show (pure). |
+| `fuselage.ts` | 251 | 747-400 fuselage: one loft from the round nose to the tail cone (the upper-deck hump and the wing-body fairing come from the section function in shape.ts), resampled uniformly in arc length around every station so the… |
+| `gear.ts` | 265 | The 747-400's 18-wheel landing gear: a two-wheel nose gear that retracts forward into the nose, two four-wheel wing-gear trucks that fold inward into the wing-body fairing, and two four-wheel body-gear trucks that fol… |
+| `index.ts` | 451 | Procedural Boeing 747-400 "Tater Airways" (N747TT): exterior, animation, lights and crash break-up — built in code. |
+| `livery.ts` | 551 | "Tater Airways" — the 747's paint, drawn on canvas: a classic airliner scheme (gloss white upper fuselage, a Tater-blue cheatline with a gold pinstripe under the window line, a grey belly), "TATER AIRWAYS" titles on t… |
+| `materials.ts` | 192 | 747 materials. |
+| `shape.ts` | 494 | PURE shape of the Boeing 747-400 (no three.js): the anchor points shared with the physics (`B747_AIRCRAFT.geometry`), the fuselage cross-sections (main lobe + the upper-deck hump, blended with a smooth max so the famo… |
+| `tail.ts` | 164 | 747-400 empennage: the tall swept fin (42° leading edge) with the split rudder (upper and lower panels), and the 22.17 m stabiliser (40° leading edge, 7° dihedral) with inboard and outboard elevators each side. |
+| `wing.ts` | 384 | 747-400 wing: the cranked planform (40° leading edge, the trailing-edge kink at 12.8 m, 7° dihedral, washout) as a fixed wing box with the trailing-edge cut-outs, the triple-slotted Fowler flaps (fore + main flap on o… |
 
 ### `src/aircraft/f16/`
 
@@ -315,8 +342,10 @@ All sound, made live in the browser with the Web Audio API — engine, wind, sta
 
 | File | Lines | What it is |
 | --- | ---: | --- |
+| `airTargets.ts` | 276 | The enemy aircraft's sound: a small pool of procedural voices (no samples) that follow the nearest MiG-29s, Su-25s and Mi-24s (src/audio/airTargetsMapping.ts picks them and works out the level, Doppler, air absorption… |
+| `airTargetsMapping.ts` | 188 | Pure maths for the enemy aircraft's sound (src/audio/airTargets.ts): which aircraft are heard (the nearest few within range, keeping each voice on the same aircraft while it stays in the set), and for each one its lev… |
 | `analysis.ts` | 41 | PURE signal analysis used by the audio self-test (RMS, single-bin DFT, peak search). |
-| `audio.ts` | 638 | The aircraft's sound: a fully synthesised WebAudio graph (no sound files). |
+| `audio.ts` | 654 | The aircraft's sound: a fully synthesised WebAudio graph (no sound files). |
 | `builder.ts` | 188 | Small helpers for building WebAudio graphs: a node builder that remembers every node and source it made (so a sub-graph — an engine voice — can be torn down without leaks), and `Knob`, an AudioParam that is only re-ta… |
 | `combat.ts` | 430 | Combat sound (procedural WebAudio, no samples), under the master bus (mute, pause, compressor, limiter): the gun GAU-8/A "BRRRT" (65 rds/s → a 65 Hz buzz-saw of muzzle blasts, a heavy chest thump, the torn noise of ea… |
 | `combatMapping.ts` | 106 | PURE combat-sound mappings (total functions: NaN/±∞ in → finite, bounded out): - propagation: speed-of-sound delay, air absorption (a low-pass falling with distance), level; - the gun: firing rate (the fundamental of … |
@@ -328,10 +357,10 @@ All sound, made live in the browser with the Web Audio API — engine, wind, sta
 | `mapping.ts` | 195 | PURE mappings from the flight situation to synthesiser parameters. |
 | `oneshots.ts` | 331 | One-shot sounds (touchdown chirp/thump, gear clunk, engine catch, afterburner light-off, the layered crash — boom, crunch, metal tearing, clang, debris clatter, scraping — explosions, debris impacts, fire crackle). |
 | `piston.ts` | 207 | The Cessna 172RG's voice: Lycoming O-360 (4 cylinders, 4-stroke) + 2-blade McCauley prop, plus the systems sounds of a light piston single (electric-hydraulic gear pump, flap motor, door-seal whistle). |
-| `selftest.ts` | 389 | Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext (faster than real time, no speakers needed) through the full output chain (glue compressor → limiter → soft clipper) and measu… |
+| `selftest.ts` | 431 | Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext (faster than real time, no speakers needed) through the full output chain (glue compressor → limiter → soft clipper) and measu… |
 | `turbofan.ts` | 160 | The A-10C's voice: two GE TF34-GE-100A high-bypass turbofans (see turbofanMapping.ts). |
 | `turbofanMapping.ts` | 60 | PURE mappings for the A-10's TF34-GE-100A high-bypass turbofans (aircraft sound 'turbofan'): the "Hog whistle" is the fan's blade-pass tone (28 blades × N1 shaft rate: ≈1.2 kHz at ground idle, ≈3.4 kHz at 100 % N1) ov… |
-| `types.ts` | 154 | Shared type definitions for this folder. |
+| `types.ts` | 162 | Shared type definitions for this folder. |
 | `waves.ts` | 268 | PURE waveform and noise generators for the synthesiser. |
 
 ### `src/camera/`
@@ -432,7 +461,7 @@ The four camera views (cockpit, chase, fly-by, orbit), their smooth transitions 
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `index.ts` | 100 | The fleet registry: every aircraft the player can choose. |
-| `types.ts` | 65 | The fleet: every flyable aircraft is an `AircraftDef` — its full physics config (same shape as CONFIG, with its own `aircraft` section), a 3D-model factory, and which HUD and engine sound it uses. |
+| `types.ts` | 66 | The fleet: every flyable aircraft is an `AircraftDef` — its full physics config (same shape as CONFIG, with its own `aircraft` section), a 3D-model factory, and which HUD and engine sound it uses. |
 
 ### `src/fx/`
 
@@ -470,9 +499,9 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `airTargets.ts` | 160 | Enemy aircraft to shoot down (owned by src/combat/air): MiG-29 pairs on racetrack CAPs around the range, a Su-25 pair making attack passes at it, a Mi-24 pair circling low near it. |
-| `airTraffic.ts` | 87 | Other aircraft (owned by src/world/traffic): runway-36 circuit traffic (touch-and-goes, full stops, go-arounds), GA crossing the area, a helicopter over Port Chateau, airliners at cruise with contrails. |
+| `airTraffic.ts` | 88 | Other aircraft (owned by src/world/traffic): circuit traffic on the runway end most into the surface wind (36 with the windsocks' 330°/8 kt; touch-and-goes, full stops, go-arounds — held off while the player is on tha… |
 | `airport.ts` | 32 | Airport: pavement, markings, buildings, parked aircraft, lights, PAPI (owned by src/world/airport). |
-| `audio.ts` | 240 | Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop or F-16 F110 turbofan, swapped on onAircraftChange / the frame's def), wind, horns, tyres, motors, hydraulics and the crash. |
+| `audio.ts` | 306 | Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop or F-16 F110 turbofan, swapped on onAircraftChange / the frame's def), wind, horns, tyres, motors, hydraulics and the crash. |
 | `camerafx.ts` | 42 | Camera feel (owned by src/fx): a subtle speed-dependent widening of the field of view in the cockpit and chase views (fx.fov), eased so view changes never jump. |
 | `cars.ts` | 24 | Road traffic: moving cars, trucks, buses and tractors, parked cars (owned by src/world/cars). |
 | `combatfx.ts` | 189 | Combat effects (owned by src/combat/fx): listens to the combat world's events — 30 mm impacts, gun hits, Maverick detonations, vehicles destroyed — and plays them into the scene's shared fx pools (the fx system at ord… |
@@ -494,7 +523,7 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | `vegetation.ts` | 56 | Trees, forests, hedgerows, orchards (owned by src/world/vegetation). |
 | `water.ts` | 33 | Sea, lakes and rivers (owned by src/world/water). |
 | `weapons.ts` | 128 | The aircraft's gun (A-10 GAU-8/A, F-16 M61A1; the Cessna has none), on the pure gun core (src/combat/gunnery.ts): sets Controls.gunFiring before the physics (recoil), flies the rounds, applies hits to the combat world… |
-| `weaponsHud.ts` | 463 | The weapons HUD (src/ui/weaponsHud.ts) for aircraft that carry weapons (A-10C, F-16C): gun cross, CCIP pipper, Maverick circle + lock box, target markers, range cue, stores/kills and short messages on a transparent fu… |
+| `weaponsHud.ts` | 469 | The weapons HUD (src/ui/weaponsHud.ts) for aircraft that carry weapons (A-10C, F-16C): gun cross, CCIP pipper, Maverick circle + lock box, target markers, range cue, stores/kills and short messages on a transparent fu… |
 
 ### `src/input/`
 
@@ -523,16 +552,17 @@ The flight model of the Cessna 172RG. Pure and deterministic — it never touche
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `aero.ts` | 412 | Aerodynamics of the C172RG: lift/drag coefficient curves (with a rounded stall peak collapsing to flat-plate behaviour) and the full airframe force/moment build-up from the stability derivatives in config.aircraft.aero. |
-| `aircraft.ts` | 590 | The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config passed to step() selects the ai… |
+| `aero.ts` | 435 | Aerodynamics of the C172RG: lift/drag coefficient curves (with a rounded stall peak collapsing to flat-plate behaviour) and the full airframe force/moment build-up from the stability derivatives in config.aircraft.aero. |
+| `aircraft.ts` | 637 | The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config passed to step() selects the ai… |
 | `atmosphere.ts` | 40 | International Standard Atmosphere (ISA) density. |
 | `engine.ts` | 148 | Lycoming O-360 + constant-speed propeller, simplified. |
 | `fbw.ts` | 250 | Fly-by-wire (F-16 style), a pure layer between the pilot's controls and the control surfaces. |
 | `flatEnv.ts` | 16 | The default physics environment: flat ground at y = 0 everywhere, all runway, no water, no obstacles, no wind. |
 | `frames.ts` | 105 | The single source of truth for frame conventions (see the header of src/types.ts). |
-| `ground.ts` | 251 | Ground interaction: spring-damper struts at the three wheels, tyre friction (rolling resistance by surface, brakes, cornering, nosewheel steering), the tail skid, and collision detection of the structural points again… |
-| `index.ts` | 39 | Public API of the pure flight-physics module (Cessna 172RG, F-16C — the aircraft is chosen by the config passed to step()). |
+| `ground.ts` | 258 | Ground interaction: spring-damper struts at the three wheels, tyre friction (rolling resistance by surface, brakes, cornering, nosewheel steering), the tail skid, and collision detection of the structural points again… |
+| `index.ts` | 42 | Public API of the pure flight-physics module (Cessna 172RG, F-16C — the aircraft is chosen by the config passed to step()). |
 | `jet.ts` | 142 | Turbofan with afterburner (F-16: General Electric F110-GE-129), simplified. |
+| `placards.ts` | 22 | Placard speeds the instruments and the physics share, as tiny pure functions with no dependency but the config (the HUD imports this without pulling in the flight model). |
 | `recoil.ts` | 54 | Gun recoil. |
 | `trim.ts` | 144 | Steady-flight trim solver: finds the angle of attack, engine power and elevator trim that hold a given indicated airspeed on a given flight path hands-off (elevator 0, wings level, no sideslip), using exactly the same… |
 
@@ -546,17 +576,19 @@ The code behind the developer preview pages in `preview/`.
 | `aircraft.ts` | 263 | Aircraft model preview: the C172RG on a light-grey apron under a gradient sky environment with a shadow-casting sun. |
 | `airport.ts` | 109 | Airport preview (real renderer + atmosphere + terrain + airport). |
 | `atmosphere.ts` | 330 | Atmosphere preview: sky, sun, haze, clouds, shadows and flare over a test world. |
-| `cars.ts` | 108 | Vehicle models preview: every model (near LOD in the front row, far LOD behind) on a plain asphalt apron under the real sky, lights and environment map, rendered through the same material as the traffic. |
-| `carsWorld.ts` | 149 | Cars world preview (a copy of the roads preview that exposes the GPU pass timings): the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera. |
+| `b747.ts` | 248 | Boeing 747-400 model preview: the jumbo on a light apron under a gradient-sky environment with a shadowing sun. |
+| `cars.ts` | 114 | Vehicle models preview: every model (near LOD in the front row, far LOD behind) on a plain asphalt apron under the real sky, lights and environment map, rendered through the same material as the traffic. |
+| `carsWorld.ts` | 165 | Cars world preview (a copy of the roads preview that exposes the GPU pass timings): the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera. |
 | `crash.ts` | 257 | Crash preview: the full crash sequence (break-up, fireball, fires, smoke, scorch, crash camera) with the real renderer, atmosphere, aircraft model and effects, simulated deterministically to a chosen time so screensho… |
 | `f16.ts` | 236 | F-16 model preview: the jet on a light apron under a gradient-sky environment with a shadowing sun. |
 | `fx.ts` | 222 | Effects preview: the crash fireball / smoke column / debris and touchdown tyre smoke, with the real renderer (HDR, tone mapping), atmosphere (sun, sky, aerial perspective) and the aircraft, simulated deterministically… |
-| `hud.ts` | 191 | HUD preview: a gradient sky/ground stand-in for the 3D view plus the HUD and the app chrome (top bar, aircraft picker, pause menu), fed synthetic readings from URL parameters, e.g. |
+| `hud.ts` | 194 | HUD preview: a gradient sky/ground stand-in for the 3D view plus the HUD and the app chrome (top bar, aircraft picker, pause menu), fed synthetic readings from URL parameters, e.g. |
 | `roads.ts` | 103 | Roads + cars preview: the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera. |
+| `ships.ts` | 87 | Vessel and harbour models preview: one model (or the marina) on a calm sea plane under the real sky, lights and environment map, drawn through the traffic batch material. |
 | `terrain.ts` | 209 | Terrain + water preview. |
 | `towns.ts` | 223 | Buildings preview (real renderer + atmosphere). |
 | `townsWorld.ts` | 157 | Towns world preview: the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera, for photographing the towns and timing them on the GPU. |
-| `trees.ts` | 155 | Trees preview: the seven species on a lawn, lit by the real renderer + atmosphere. |
+| `trees.ts` | 254 | Trees preview: the seven species on a lawn, lit by the real renderer + atmosphere. |
 
 ### `src/render/`
 
@@ -564,9 +596,10 @@ The renderer and the atmosphere: sky, sun, shadows, haze (fog), clouds, lens fla
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `atmosphere.ts` | 477 | The atmosphere: sky, sun light + soft shadows, sky-lit environment map, aerial-perspective fog on every material, cumulus clouds, cirrus, and the data the output pass needs for the lens flare and in-cloud whiteout. |
+| `atmosphere.ts` | 485 | The atmosphere: sky, sun light + soft shadows, sky-lit environment map, aerial-perspective fog on every material, cumulus clouds, cirrus, and the data the output pass needs for the lens flare and in-cloud whiteout. |
 | `atmosphereModel.ts` | 233 | Physically based clear-sky model — pure TypeScript, no three.js. |
-| `atmosphereState.ts` | 177 | Everything the renderer needs to light the scene for one sun direction and camera height, derived from the physical sky model (pure, no three.js): sun light colour/intensity, sky irradiance, ground radiance (env map l… |
+| `atmosphereState.ts` | 280 | Everything the renderer needs to light the scene for one sun direction and camera height, derived from the physical sky model (pure, no three.js): sun light colour/intensity, sky irradiance, ground radiance (env map l… |
+| `bloom.ts` | 313 | Cheap physically-motivated bloom (veiling glare of the lens/eye) for HDR highlights: sun glints on water and canopies, runway and town lights at dusk, the sun itself. |
 | `blueNoise.ts` | 104 | Blue-noise dither tile by void-and-cluster (Ulichney 1993), pure. |
 | `capabilities.ts` | 103 | Can this browser run the simulator? |
 | `cloudBudget.ts` | 173 | Frame-budget controller for the clouds (pure). |
@@ -578,19 +611,20 @@ The renderer and the atmosphere: sky, sun, shadows, haze (fog), clouds, lens fla
 | `dynamicResolution.ts` | 150 | Pure dynamic-resolution controller: lowers the render pixel ratio when the frame rate sits below target and restores it when there is headroom. |
 | `envmap.ts` | 97 | Scene environment map from the sky: the ENV_MODE sky dome (no sun disc, hazy ground below the horizon) rendered into a cube map and prefiltered by PMREM, assigned to scene.environment, so every PBR material gets image… |
 | `fog.ts` | 482 | Aerial perspective for EVERY material: a global override of three.js' fog shader chunks with height-based, sun-aware atmospheric haze. |
-| `frameData.ts` | 56 | Per-frame hand-off from the atmosphere (sun, in-cloud whiteout) to the renderer's output pass, stored on scene.userData so the app only has to call renderer.render(scene, camera). |
+| `frameData.ts` | 58 | Per-frame hand-off from the atmosphere (sun, in-cloud whiteout) to the renderer's output pass, stored on scene.userData so the app only has to call renderer.render(scene, camera). |
 | `gpuTimer.ts` | 89 | GPU pass timing with EXT_disjoint_timer_query_webgl2 (when the browser exposes it). |
 | `jobQueue.ts` | 161 | Time-sliced background work for the renderer (pure; no DOM needed). |
 | `lensflare.ts` | 104 | Subtle sun lens flare, drawn in the HDR output pass (post.ts). |
 | `logDepthPatch.ts` | 95 | Logarithmic-depth support for custom ShaderMaterials. |
+| `metering.ts` | 201 | Eye adaptation / camera metering on the GPU: a gentle, view-dependent trim on top of the time-of-day exposure (atmosphereState.ts), like a camera's centre-weighted metering or an eye adapting when you look into the su… |
 | `noise.ts` | 59 | Small deterministic PRNG + value noise for procedural render textures and layouts (pure). |
-| `post.ts` | 275 | HDR → display output pass: one full-screen triangle that applies, in order, the volumetric clouds (depth-aware upsampling of the low-resolution cloud buffer, composited as scene·T + L; see volumetricClouds.ts), the le… |
+| `post.ts` | 377 | HDR → display output pass: one full-screen triangle that applies, in order, the volumetric clouds (depth-aware upsampling of the low-resolution cloud buffer, composited as scene·T + L; see volumetricClouds.ts), the le… |
 | `quality.ts` | 124 | Quality presets: what a player gets without touching any setting (pure; see tests/render/quality.test.ts). |
-| `renderer.ts` | 435 | WebGL2 renderer with a high-precision HDR pipeline. |
+| `renderer.ts` | 436 | WebGL2 renderer with a high-precision HDR pipeline. |
 | `sky.ts` | 373 | Physically based sky dome. |
 | `sun.ts` | 78 | Pure sun-vector and shadow-frustum math (no three.js, allocation-free when `out` vectors are passed). |
 | `temporal.ts` | 142 | Temporal reprojection helpers for the low-resolution cloud buffer (pure; mirrored in the cloud GLSL in volumetricClouds.ts). |
-| `toneMapping.ts` | 74 | "Filmic Neutral" tone mapping, installed as three.js CustomToneMapping. |
+| `toneMapping.ts` | 132 | "Filmic" tone mapping, installed as three.js CustomToneMapping. |
 | `volumetricClouds.ts` | 890 | Volumetric cumulus: a raymarched cloud layer rendered at reduced resolution with checkerboard (quarter-pixel) temporal updates, composited against the scene depth by the output pass (post.ts). |
 
 ### `src/ui/`
@@ -603,23 +637,25 @@ The instruments and the on-screen HUD: steam gauges, compass, warnings, messages
 | `gMeter.ts` | 178 | The G meter: a round accelerometer like the one on an aerobatic panel — a needle for the load factor now, orange tell-tale needles that stay at the highest and lowest g since the last reset, red marks at the aircraft'… |
 | `gauges.ts` | 1541 | Canvas-2D steam gauges of the Cessna 172RG, drawn from InstrumentReadings: the six-pack (airspeed, attitude, altimeter, turn coordinator, heading, vertical speed), the tachometer, compact system cells (throttle, flaps… |
 | `gearWarning.ts` | 112 | The 172RG landing-gear warning system, PURE (no DOM, no audio): what the gear position lights show, when the intermittent gear horn sounds, and the squat-switch and gear-speed cautions. |
+| `glassHud.ts` | 1072 | The airliner "glass" HUD style (the 747, which has no head-up display): a mini Boeing PFD and a mini EICAS drawn on canvases over the 3D view. |
 | `help.ts` | 44 | The help overlay (H): the same grouped Controls page as the menu (src/ui/controls.ts) in a glass sheet over the view. |
-| `hud.ts` | 728 | The HUD overlay: DOM + canvases over the 3D view. |
+| `hud.ts` | 752 | The HUD overlay: DOM + canvases over the 3D view. |
 | `hudGlass.ts` | 487 | The jet HUD on its combiner glass (cockpit view). |
 | `hudStyle.ts` | 139 | The HUD's stylesheet (CSS-in-TS, system fonts only — nothing loads from the network). |
 | `instruments.ts` | 282 | The instrument model: turns the physics state into what the cockpit instruments show, in display units, with the behaviour of the real instruments — pitot-static needles that are smoothed, a VSI that lags, gyro attitu… |
 | `jetHud.ts` | 418 | The F-16's head-up display, drawn on a transparent canvas over the centre of the view: a pitch ladder that rolls with the aircraft (a right bank rotates it counter-clockwise, exactly like the real horizon seen from th… |
 | `mascot.ts` | 162 | "Tater", the mascot of Tater's Flight Sim: a flying potato in brown-leather aviator goggles and a red cape, streaking up and to the right. |
 | `menu.ts` | 300 | The pause menu: a glass panel over the paused sim with Resume, Restart on runway, Start on final approach, the aircraft list, time of day, camera, sound and HUD switches, and the Controls page (the same sheet as the H… |
-| `messages.ts` | 148 | Text of the HUD's messages — landing toast, crash banner, annunciators, start hint and key labels. |
+| `messages.ts` | 149 | Text of the HUD's messages — landing toast, crash banner, annunciators, start hint and key labels. |
 | `picker.ts` | 271 | The aircraft picker: a compact dropdown (upper right of the top bar) listing the fleet with a one-line description each, built as an ARIA listbox so it works from the keyboard (Tab to it, Enter/↓ to open, ↑/↓/Home/End… |
 | `seekerView.ts` | 415 | The Maverick view: a picture-in-picture game camera on the locked target, with the look of the Maverick's black-and-white "white-hot" IR video (it is a camera, not a sensor model — the missiles are arcade). |
 | `topBar.ts` | 80 | The slim branding bar across the top: Tater the mascot and "Tater's Flight Sim" on the left, the aircraft picker and the ☰ menu button on the right. |
 | `uiBus.ts` | 50 | A tiny typed event bus between the UI's systems (hud, menu, weaponsHud), which the systems layer keeps apart: the menu asks the HUD to show/hide and tells it when the menu is up (the HUD then drops its PAUSED pill); t… |
 | `uiStyle.ts` | 155 | Stylesheet of the app chrome (top bar, aircraft picker, pause menu): CSS-in-TS with system fonts only — nothing is fetched. |
 | `veil.ts` | 611 | The start-up loading veil: a full-screen title card (Tater the mascot flying over "Tater's Flight Sim", the aircraft and airfield, a progress bar and what is being prepared) that hides the start-up hitch — the aircraf… |
-| `weaponsHud.ts` | 1009 | The A-10C / F-16C weapons HUD — the real A-10C symbology, simplified — drawn on a transparent full-viewport canvas in the jet HUD's phosphor green (with the same faint dark halo): - gun cross on the gun line (the GAU-… |
+| `weaponsHud.ts` | 1332 | The A-10C / F-16C weapons HUD — the real A-10C symbology, simplified — drawn on a transparent full-viewport canvas in the jet HUD's phosphor green (with the same faint dark halo): - gun cross on the gun line (the GAU-… |
 | `weaponsHudDemo.ts` | 129 | A debug driver for the weapons HUD (`window.sim.weaponsHudDemo(mode)`): until the gun and targets systems are in, it seeds a platoon of vehicles at the target range and writes a plausible weapons status every frame — … |
+| `weaponsHudLayout.ts` | 535 | Where the weapons HUD's text goes, so nothing overlaps (pure maths, no DOM): - `jetHudKeepOut` — the rectangles the jet HUD (src/ui/jetHud.ts) fills with its own text and scales in a HUD box: corner data (G / MAX / TH… |
 | `weaponsHudMath.ts` | 277 | Pure maths and wording for the weapons HUD (no DOM, no three.js): projecting world points with a camera's matrices, clamping off-screen symbols to the display edge, the gun line, bearings to the target range, the CCIP… |
 
 ### `src/world/`
@@ -672,12 +708,12 @@ The airport: pavement, FAA runway markings, lights and PAPI, buildings, and obst
 | `idm.ts` | 43 | Longitudinal vehicle kinematics (PURE): the Intelligent Driver Model (Treiber, Hennecke & Helbing 2000) — smooth acceleration to the desired speed, a safe time gap to the vehicle ahead, and comfortable braking that es… |
 | `index.ts` | 832 | Road traffic renderer: moving vehicles (sim.ts on the lane graph of the active roads), parked cars (parking.ts: kerbs and car parks), contact shadows and dusk lamp glows — four draw calls at most: 1. |
 | `lanes.ts` | 824 | The drivable lane graph (PURE, no three.js), built from the roads' lane data (`activeRoads().lanes`, see src/world/roads/builder.ts LaneData). |
-| `material.ts` | 290 | Materials for the traffic (all fog-enabled, HDR-calibrated: sun ≈ 3 scene units, exposure ≈ 2.2): - `createCarMaterial`: MeshPhysicalMaterial for the vehicle BatchedMesh. |
+| `material.ts` | 314 | Materials for the traffic (all fog-enabled, HDR-calibrated: sun ≈ 3 scene units, exposure ≈ 2.2): - `createCarMaterial`: MeshPhysicalMaterial for the vehicle BatchedMesh. |
 | `paint.ts` | 107 | Paint colours (PURE), from the real mix of new-car colours on North American roads (Axalta/PPG surveys, 2020s): white ≈ 29 %, black ≈ 21 %, grey ≈ 18 %, silver ≈ 10 %, blue ≈ 9 %, red ≈ 8 %, green / brown / beige / ot… |
 | `parking.ts` | 317 | Parked cars (PURE): - kerbside parking along town streets (lanes.ts decides which side(s) of which pieces): parallel-parked at the kerb facing the traffic on their side, gaps between them, clear of the junction boxes … |
 | `sim.ts` | 1260 | Road traffic simulation (PURE, deterministic): a pool of vehicles driving on the lane graph (lanes.ts) around the camera, stepped at a fixed rate. |
 | `specs.ts` | 65 | Vehicle types (PURE): real-world dimensions and performance, shared by the traffic simulation (lengths, widths, accelerations) and the models. |
-| `vehicles.ts` | 1070 | Procedural low-poly vehicle models (no assets): sedan, hatchback, SUV, pickup, cargo van, box truck, semi tractor + 53 ft trailer, bus and a farm tractor, each in two levels of detail (0 = near, ~500–1,450 triangles; … |
+| `vehicles.ts` | 1516 | Procedural vehicle models (no assets): sedan, hatchback, SUV, pickup, cargo van, box truck, semi tractor + 53 ft trailer, bus and a farm tractor, each in two levels of detail (0 = near, ≤ ~2,000 triangles; 1 = far, ≤ … |
 
 ### `src/world/grass/`
 
@@ -733,7 +769,7 @@ Towns, the coastal city, villages and farms: where buildings go and how they are
 | `archetypes.ts` | 638 | Parametric building geometry. |
 | `constraints.ts` | 108 | Where things may be built: water (sea, lakes, river) and the airport (plateau + approach corridors) as fast clearance queries shared by the street generator, the farmstead planner and the building placement. |
 | `geom.ts` | 483 | Small, allocation-light 2D geometry for towns and roads: oriented building footprints (SAT overlap, point tests, distance to segments), a uniform-grid segment index (nearest road segment, footprint clearance) and a re… |
-| `index.ts` | 400 | Towns renderer: every building of the world drawn as instanced parametric archetypes (archetypes.ts) with a procedural facade/roof shader (shaders.ts). |
+| `index.ts` | 401 | Towns renderer: every building of the world drawn as instanced parametric archetypes (archetypes.ts) with a procedural facade/roof shader (shaders.ts). |
 | `instances.ts` | 354 | Buildings → GPU instance records. |
 | `lod.ts` | 93 | Level-of-detail and chunking decisions for the building renderer. |
 | `material.ts` | 114 | Building materials: MeshStandardMaterial (PBR lights, shadows, sky environment reflections, the global aerial-perspective fog) extended with the parametric vertex transform and the procedural facade/roof shader (shade… |
@@ -750,9 +786,9 @@ Other traffic: boats, ships, the marina and wakes; circuit aircraft, crossing ai
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `air.ts` | 734 | Air traffic (PURE, visual only — no collision with the player): - Circuit traffic: GA aircraft flying left-hand circuits for runway 36 at 1,000 ft AGL: upwind, crosswind, downwind, base, final; touch-and-go, or a full… |
-| `airSim.ts` | 194 | The air traffic simulation driver (PURE, no three.js): owns the runway-36 circuit, the crossing-GA and airliner slot schedulers and the helicopter, and turns them into a fixed list of entities with poses every frame. |
-| `airTraffic.ts` | 485 | Air traffic renderer: every other aircraft in FOUR draw calls. |
+| `air.ts` | 814 | Air traffic (PURE, visual only — no collision with the player): - Circuit traffic: GA aircraft flying left-hand circuits at 1,000 ft AGL on the runway end most into the surface wind (36 for the default 330°/8 kt; 3, 1… |
+| `airSim.ts` | 194 | The air traffic simulation driver (PURE, no three.js): owns the circuit (on the runway end into the wind, 36 by default), the crossing-GA and airliner slot schedulers and the helicopter, and turns them into a fixed li… |
+| `airTraffic.ts` | 488 | Air traffic renderer: every other aircraft in FOUR draw calls. |
 | `buoyancy.ts` | 121 | Buoyancy (PURE): how a hull rides the drawn sea. |
 | `clock.ts` | 44 | The traffic clock (PURE): seconds of traffic time. |
 | `compile.ts` | 20 | Compiles a traffic group's programs up front (hidden objects included) so no frame stalls on them. |
@@ -774,8 +810,8 @@ Procedural 3D models for traffic: boats, sails, ferry, container ship, tanker, m
 | --- | ---: | --- |
 | `aircraft.ts` | 314 | Procedural low-poly traffic aircraft (body frame: nose −Z, right wing +X, up +Y, origin at the CG; wheels at y = −GEAR_HEIGHT): a high-wing Cessna 172 (struts, spring-steel gear with wheel pants), a low-wing Piper PA-… |
 | `builder.ts` | 287 | A small procedural mesh builder for traffic models. |
-| `marina.ts` | 306 | Static harbour structures, built in the marina's local (u, w) frame mapped to a geometry whose origin is the marina frame origin (rotation about Y applied by the instance): rubble-mound breakwaters with a concrete cre… |
-| `vessels.ts` | 599 | Procedural vessel models (local frame: bow −Z, starboard +X, waterline y = 0). |
+| `marina.ts` | 431 | Static harbour structures, built in the marina's local (u, w) frame mapped to a geometry whose origin is the marina frame origin (rotation about Y applied by the instance): rubble-mound breakwaters with a concrete cre… |
+| `vessels.ts` | 750 | Procedural vessel models (local frame: bow −Z, starboard +X, waterline y = 0). |
 
 ### `src/world/vegetation/`
 
@@ -783,15 +819,15 @@ Trees and forests: where each tree goes, the tree models, far-away tree images, 
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `impostors.ts` | 203 | Impostor atlas: every species mesh (with its leaf-card textures) rendered once at startup from 6 view elevations (0°, 18°, … 90°) into two RGBA8 render targets: albedo (sRGB, alpha = coverage) and view-space bent norm… |
-| `index.ts` | 431 | Trees and forests: deterministic placement (placement.ts) generated in Web Workers (workers.ts, vegetation.worker.ts) or inline, streamed per chunk with LOD levels and pooled buffers (streamer.ts, pool.ts), near insta… |
+| `impostors.ts` | 231 | Impostor atlas: every species mesh (with its leaf-card textures) rendered once at startup from 6 view elevations (0°, 18°, … 90°) into two RGBA8 render targets: albedo (sRGB, alpha = coverage) and view-space bent norm… |
+| `index.ts` | 430 | Trees and forests: deterministic placement (placement.ts) generated in Web Workers (workers.ts, vegetation.worker.ts) or inline, streamed per chunk with LOD levels and pooled buffers (streamer.ts, pool.ts), near insta… |
 | `lod.ts` | 109 | Level-of-detail rules for trees. |
-| `materials.ts` | 450 | Tree materials: three.js MeshStandardMaterials extended with onBeforeCompile, so the scene's lights, shadows, sky environment and the global atmospheric fog override (ShaderChunk fog_*) all apply unchanged. |
+| `materials.ts` | 657 | Tree materials: three.js MeshStandardMaterials extended with onBeforeCompile, so the scene's lights, shadows, sky environment and the global atmospheric fog override (ShaderChunk fog_*) all apply unchanged. |
 | `obstacles.ts` | 116 | Tree obstacles for the physics: `top(x, z)` = the highest canopy surface (m MSL) over the point, or −Infinity where there is no tree. |
 | `pack.ts` | 145 | Packing placement cells into the instance layout the impostor shader reads. |
 | `placement.ts` | 619 | Deterministic tree placement. |
 | `pool.ts` | 94 | Object pool with size classes: preallocated buffers are handed out by capacity and returned when a chunk scrolls out of range, so streaming reuses memory instead of allocating. |
-| `species.ts` | 576 | Procedural tree meshes for the seven species, built deterministically at startup from alpha-tested leaf cards (textures.ts) on a branch skeleton: spruce – spruce/fir: whorls of drooping needle-spray branches with uptu… |
+| `species.ts` | 725 | Procedural tree meshes for the seven species, built deterministically at startup from alpha-tested leaf cards (textures.ts) on a branch skeleton: spruce – spruce/fir: whorls of drooping needle-spray branches with uptu… |
 | `standin.ts` | 125 | STAND-IN height and tree density for the vegetation tests and preview, built on the real world layout (airport, roads, rivers, lakes, coast, towns) so exclusions are realistic. |
 | `streamer.ts` | 376 | Chunk streaming for trees. |
 | `textures.ts` | 364 | Procedural foliage + bark atlas (one RGBA8 sRGB DataTexture, mipmapped), painted in plain JS from a seeded PRNG — deterministic, no canvas, no network, works in node tests too. |
@@ -858,6 +894,18 @@ Tests for the 3D aircraft: gear kinematics, prop disc, wreck, geometry anchors.
 | `panel.test.ts` | 155 | The A-10C panel painter (src/aircraft/a10/panel.ts), in node: gauge values from the readings (unit), lamps that follow the gear / AOA / engine, and — property-based — whatever the readings (NaN, infinities, absurd val… |
 | `sidewinders.test.ts` | 82 | The two AIM-9M Sidewinders on the LAU-105 at station 11: one mesh per rail, centred on A10_WEAPONS.airMissiles.stations (where the missiles system launches them), riding with the right wing (they break away with it), … |
 
+### `tests/aircraft/b747/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `anchors.test.ts` | 432 | The 747-400 model agrees with the physics geometry (B747_AIRCRAFT.geometry) within 3 cm: the 18 wheels (nose pair on the nose contact, the wing-gear trucks on the main contacts, the body-gear trucks level with them), … |
+| `animate.test.ts` | 151 | The 747-400's pure animation mapping (src/aircraft/b747/animate.ts): control surfaces move the right way and stay inside the real travel limits, the outboard ailerons lock out with the flaps up, the spoilers work as s… |
+| `flightDeck.test.ts` | 258 | 747-400 flight deck (functional, geometry built in node): parts and draw calls, cockpit-only visibility, the view from the captain's design eye (forward cone clear through the windscreen, ~20° over the nose, the six d… |
+| `flightDeckAnim.test.ts` | 147 | 747-400 flight deck: the control animation mapping (unit + fast-check fuzz) and the room layout (the eyes are inside the room, the windows are real openings in their planes). |
+| `flightDeckDisplays.test.ts` | 205 | 747-400 flight deck displays: the readings (engine map, fuel, V-speeds, placards; fuzz: finite and in range) and the painters on a recording canvas (PFD, ND, upper/lower EICAS, standby): what they show is physically r… |
+| `functional.test.ts` | 247 | Functional: the whole 747-400 built in node — render budget (draw calls, triangles, shadow casters) in every configuration, build time, the fleet entry, the lights, crash break-up parts that cover the model and restor… |
+| `fuzz.test.ts` | 108 | Property tests: whatever the sim throws at the 747 (NaN, infinities, out-of-range controls, random time steps), the animation stays finite and inside the real surface limits, the model's transforms never go NaN, and t… |
+
 ### `tests/aircraft/f16/`
 
 | File | Lines | What it is |
@@ -875,6 +923,7 @@ Tests for the sound system (with a fake Web Audio context).
 
 | File | Lines | What it is |
 | --- | ---: | --- |
+| `airTargets.test.ts` | 308 | The enemy aircraft's sound (src/audio/airTargetsMapping.ts, src/audio/airTargets.ts and the audio system's feed from the combat world): - unit: distance law + fade to silence at ~3 km, air absorption, closing speed, D… |
 | `audio.test.ts` | 354 | Tests. |
 | `combat.test.ts` | 198 | Functional (mock WebAudio): the combat sound — the gun's gate and fundamental (GAU-8 65 Hz, M61 100 Hz, rising with the spin), its exterior delay line at d / 343 m/s, impacts and explosions scheduled at their own dist… |
 | `combatMapping.test.ts` | 125 | Unit + fuzz: the PURE combat-sound and TF34 mappings — speed-of-sound delay, air absorption, distance level, the gun's firing-rate fundamental (GAU-8 65 Hz, M61 100 Hz) while spinning up, the muzzle-blast waveform, th… |
@@ -885,7 +934,7 @@ Tests for the sound system (with a fake Web Audio context).
 | `inputs.test.ts` | 200 | Tests. |
 | `jetMapping.test.ts` | 158 | Tests. |
 | `mapping.test.ts` | 262 | Tests. |
-| `mockAudio.ts` | 313 | Minimal WebAudio mock for node tests. |
+| `mockAudio.ts` | 323 | Minimal WebAudio mock for node tests. |
 | `selftest.e2e.test.ts` | 90 | E2E: the audio self-test in a real browser (headless Chrome for Testing). |
 | `selftest.html` | 17 | Developer preview page. |
 | `selftest.test.ts` | 61 | Functional (node): the self-test machinery on a mock OfflineAudioContext — its timeline of suspend points really drives the synth (the crash's secondary explosions and the reset happen during the render), and the mix … |
@@ -968,10 +1017,12 @@ End-to-end tests: start the real game in a headless test browser and drive it wi
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `app.e2e.test.ts` | 201 | End-to-end: the real page in headless Chromium (GPU WebGL where there is a GPU), driven only through the keyboard and observed only through `window.sim` (plus the title, the viewport and the full-screen canvas). |
+| `lookdev.e2e.test.ts` | 83 | End-to-end: the look-dev post stack (filmic curve, eye-adaptation metering, bloom chain, camera white balance) compiles, links and runs in a real browser at every time of day, with no GL errors or feedback-loop warnin… |
 | `robustness.e2e.test.ts` | 278 | End-to-end robustness of what a stranger downloads: the PRODUCTION build (vite build with the GitHub Pages sub-path --base, served by vite preview) in headless Chromium. |
 | `sortie-range.sortie.ts` | 100 | Sortie e2e — the A-10 at the target range, flown ONLY by the keyboard QA pilot (scripts/qa-pilot.js) in headless Chrome for Testing: `?aircraft=a10&spawn=range` → a Maverick shot (T until LOCK, Z) on a live tank → a k… |
 | `sortie.vitest.config.ts` | 19 | Opt-in runner for the long keyboard-pilot sorties (not part of `npm test`: a flown sortie takes ~3 min of wall time and depends on every combat system being merged): npx vitest run -c tests/e2e/sortie.vitest.config.ts |
-| `towns.e2e.test.ts` | 68 | End-to-end: the building shaders (near archetypes with trees, awnings and water towers, the mid LOD with its dithered tree cross-fade, the shadow depth material) compile and draw in a real browser — the towns gallery … |
+| `towns.e2e.test.ts` | 69 | End-to-end: the building shaders (near archetypes with trees, awnings and water towers, the mid LOD with its dithered tree cross-fade, the shadow depth material) compile and draw in a real browser — the towns gallery … |
+| `trees.e2e.test.ts` | 92 | End-to-end: the tree shaders (near leaf cards with per-tree clump variation, their shadow depth material, the impostor billboards, the impostor bake) compile, link and draw in a real browser, and the LOD switch is sea… |
 
 ### `tests/fleet/`
 
@@ -985,11 +1036,14 @@ Whole flights flown by a scripted pilot against the real physics: take-off, turn
 
 | File | Lines | What it is |
 | --- | ---: | --- |
+| `a10-trim.test.ts` | 52 | The A-10's pitch trim at keyboard gunnery speeds (RESUME §5 item 9: "needs ~10° nose-down trim at 280–300 kt"). |
 | `approach-landing.test.ts` | 107 | Mission (e): from the final-approach reset, fly the 3° glide path, flare, land on runway 36 ('landed', rating better than 'hard', on the runway, near the centreline), then brake to a full stop on the runway. |
 | `crashes.test.ts` | 143 | Missions (d), (f), (g): the ways a flight ends badly, and the reset afterwards. |
 | `keyboard-takeoff.test.ts` | 87 | Play-test bug #2 regression (RECORD.md). |
+| `qa-pilot-747.test.ts` | 52 | The QA pilot's Boeing 747-400 profile (scripts/qa-pilot.js — the calibrated values validated against the 747 flight model, tests/physics/b747-qapilot.test.ts): Vr ~145–150, final at Vref30 + 5 ≈ 132 KIAS with flaps 30… |
 | `qa-pilot-flare.test.ts` | 167 | The QA pilot's landing (scripts/qa-pilot.js): the flare law as pure functions (unit + fast-check), then whole approaches flown headless by the SAME pilot through the real keyboard pipeline and physics (tests/functiona… |
-| `qa-pilot.harness.ts` | 223 | Headless harness for scripts/qa-pilot.js: runs the SAME in-page QA pilot against the real physics in node, through the real keyboard pipeline (held keys + key-down edges → updateControls → step at 120 Hz), with a virt… |
+| `qa-pilot-gunrun.test.ts` | 63 | Functional (headless, the real physics + the real keyboard pipeline + the pure gun core): the QA pilot's gunRun() — set-up on the attack axis, a long straight run-in lined up on the target, a gentle push-over (positiv… |
+| `qa-pilot.harness.ts` | 264 | Headless harness for scripts/qa-pilot.js: runs the SAME in-page QA pilot against the real physics in node, through the real keyboard pipeline (held keys + key-down edges → updateControls → step at 120 Hz), with a virt… |
 | `stall.test.ts` | 90 | Mission (c): a deliberate power-off stall and recovery. |
 | `takeoff-climb.test.ts` | 95 | Mission (a): full take-off and climb, flown by the scripted pilot against the real physics — on the flat default world and on the hilly test world. |
 | `turns.test.ts` | 91 | Mission (b): a 90° left turn and a 90° right turn at 1,500 ft above the field, holding altitude within ±150 ft, coordinated, at cruise speed. |
@@ -1070,6 +1124,12 @@ Tests for every rule of the flight model: lift, drag, thrust, stall, ground, lan
 | `aircraft-state.test.ts` | 187 | Tests. |
 | `atmosphere.test.ts` | 25 | Tests. |
 | `attitude.test.ts` | 148 | Heading, pitch, roll and yaw: the rotational response to the controls. |
+| `b747-flight.test.ts` | 425 | Boeing 747-400 functional flight tests: scripted pilots fly the fleet config through step() on the runway world and the numbers are checked against the real aircraft (flown light at 220 t, ISA): take-off (flaps 10, Vr… |
+| `b747-fuzz.test.ts` | 142 | Boeing 747-400 property tests (fast-check): random control scripts — column, wheel, rudder, thrust, trim, flaps, gear, brakes, speed brake, engines — flown for 30 s from the runway, from the approach and from random a… |
+| `b747-helpers.ts` | 196 | Shared helpers for the Boeing 747-400 tests (tests/physics/b747*.test.ts): the fleet's 747 config, a flyer on the runway world, small scripted-pilot loops, and a keyboard pilot that flies through the real control syst… |
+| `b747-keyboard.test.ts` | 287 | Boeing 747-400 keyboard sortie (functional): a "human on a keyboard" flies the whole mission through the real control system (src/input/controlSystem.ts updateControls with the 747 config) — short proportional key tap… |
+| `b747-qapilot.test.ts` | 64 | The in-page QA pilot (scripts/qa-pilot.js) flies the 747 headless through the real keyboard pipeline and the real world (tests/functional/qa-pilot.harness.ts) — the same code and profile that fly it in Chrome for Test… |
+| `b747.test.ts` | 330 | Boeing 747-400 unit + property tests: the config against the real aircraft (220 t light), the lift and drag curves, the engines, and the airliner features the 747 adds to src/physics — spoilers (flight + automatic gro… |
 | `collision.test.ts` | 185 | Collision detection: terrain, wingtips, belly, water, obstacles, over-G, and the crash state that follows. |
 | `drag.test.ts` | 53 | Tests. |
 | `f16-accuracy-keyboard.test.ts` | 108 | F-16C (and A-10C) keyboard feel, through the real control system (src/input/controlSystem.ts updateControls, default key rates — what the app uses) and step(): F-16 roll: a short tap of → gives a modest bank change an… |
@@ -1100,7 +1160,8 @@ Tests for the renderer and atmosphere maths: sky, fog, clouds, shadows, budget c
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `atmosphereModel.test.ts` | 138 | Tests. |
-| `atmosphereState.test.ts` | 73 | Functional tests: the full CPU lighting state for every time-of-day preset — what the sun light, sky ambient, haze, clouds and flare will be given. |
+| `atmosphereState.test.ts` | 179 | Functional tests: the full CPU lighting state for every time-of-day preset — what the sun light, sky ambient, haze, clouds and flare will be given. |
+| `bloom.test.ts` | 83 | Tests. |
 | `blueNoise.test.ts` | 74 | Blue-noise dither tile (blueNoise.ts): a permutation of ranks, deterministic, and spectrally blue (little low-frequency energy compared with white noise). |
 | `cloudBudget.test.ts` | 117 | Cloud frame-budget controller (cloudBudget.ts): degrades volumetric → reduced-resolution volumetric → billboard clouds when the cloud pass (GPU timer) or the frame rate stays over budget, and probes back up with expon… |
 | `cloudLayout.test.ts` | 134 | Tests. |
@@ -1113,12 +1174,13 @@ Tests for the renderer and atmosphere maths: sky, fog, clouds, shadows, budget c
 | `jobQueue.test.ts` | 157 | Time-sliced job queue (jobQueue.ts): generators advance until the per-step budget is spent, in FIFO order, and completion callbacks fire once. |
 | `lensflare.test.ts` | 42 | Tests. |
 | `logDepthPatch.test.ts` | 84 | Logarithmic depth for custom ShaderMaterials (src/render/logDepthPatch.ts) — what Firefox and Safari render with (no EXT_clip_control). |
+| `metering.test.ts` | 70 | Tests. |
 | `properties.test.ts` | 281 | Property-based (fuzz) tests for the pure render/atmosphere modules. |
 | `quality.test.ts` | 182 | Quality presets (src/render/quality.ts): what a first-time player gets without touching settings. |
 | `renderer.test.ts` | 43 | Tests. |
 | `sun.test.ts` | 113 | Tests. |
 | `temporal.test.ts` | 452 | Temporal reprojection for the cloud buffer (temporal.ts): projection of a world point with the previous frame's view-projection matrix, history acceptance/rejection, and the per-frame jitter sequence. |
-| `toneMapping.test.ts` | 42 | Tests. |
+| `toneMapping.test.ts` | 93 | Tests. |
 
 ### `tests/repo/`
 
@@ -1160,6 +1222,8 @@ Tests for the instruments, gauges, HUD layout, gear warning, messages and loadin
 | `gauges.test.ts` | 302 | Tests. |
 | `gearWarning.test.ts` | 183 | Tests. |
 | `geoCtx.ts` | 323 | A geometry-tracking CanvasRenderingContext2D stand-in for the gauge tests: it applies translate/rotate/scale/setTransform/save/restore like a real canvas and records every stroked segment, filled polygon, arc, text an… |
+| `glassHud.fuzz.test.ts` | 126 | Glass HUD fuzz: the layout on any viewport from 640×480 to 4K in every camera mode (on screen, below the top bar, no overlaps with the chip or each other, the centre third clear, messages outside it), and the painters… |
+| `glassHud.test.ts` | 303 | Tests. |
 | `hud.jet.test.ts` | 123 | Tests. |
 | `hud.test.ts` | 350 | Tests. |
 | `hudGlass.test.ts` | 161 | The jet HUD on its combiner glass (src/ui/hudGlass.ts): unit (projection + clip maths with real three.js cameras), fuzz (random head-look angles and attitudes never give NaN; everything is drawn under a clip equal to … |
@@ -1178,8 +1242,9 @@ Tests for the instruments, gauges, HUD layout, gear warning, messages and loadin
 | `seekerView.feedback.test.ts` | 124 | The Maverick picture-in-picture must never draw with a texture that is attached to the framebuffer it is drawing into: WebGL reports that as "GL_INVALID_OPERATION: Feedback loop formed between Framebuffer and active T… |
 | `seekerView.test.ts` | 234 | The Maverick view picture (picture-in-picture): the white-hot spots over the vehicles (pure, projected with the view camera), the corner blit, the ≤ maxHz refresh, and — with a recording stand-in for THREE.WebGLRender… |
 | `veil.test.ts` | 208 | Tests. |
-| `weaponsHud.e2e.test.ts` | 128 | End-to-end in headless Chrome for Testing: the A-10's weapons HUD in the real game. |
+| `weaponsHud.e2e.test.ts` | 129 | End-to-end in headless Chrome for Testing: the A-10's weapons HUD in the real game. |
 | `weaponsHud.test.ts` | 475 | Weapons HUD model + drawing (functional, node): real three.js cameras over a small scene of targets; the symbols must land where the world points project (gun cross, CCIP pipper, lock box, markers, range caret), the t… |
+| `weaponsHudLayout.test.ts` | 499 | The weapons HUD's text layout (src/ui/weaponsHudLayout.ts + layoutTexts in src/ui/weaponsHud.ts): - unit: the placer puts a block next to its symbol, steps around hard obstacles, keeps last frame's spot, drops the lea… |
 | `weaponsHudMath.test.ts` | 264 | Weapons HUD maths (unit + fast-check fuzz): camera projection of world points (three.js cameras built in node), clamping off-screen points to the display edge, the gun line, bearings to the range, the pipper range arc… |
 
 ### `tests/world/`
@@ -1192,7 +1257,7 @@ Tests for the world: noise, layout, heightfield, landcover, runway, environment,
 | `fields.test.ts` | 200 | Tests. |
 | `functional.test.ts` | 218 | Functional tests: the world pieces working together the way the renderer and the physics use them. |
 | `fuzz.test.ts` | 259 | Property / fuzz tests (fast-check) for the pure world: random points anywhere in ±100 km (and some far beyond), random tiles, random polylines, random cameras. |
-| `heightfield.test.ts` | 218 | Tests. |
+| `heightfield.test.ts` | 219 | Tests. |
 | `landcover.test.ts` | 164 | Tests. |
 | `layout.test.ts` | 157 | Tests. |
 | `noise.test.ts` | 171 | Tests. |
@@ -1226,14 +1291,14 @@ Tests for the airport plan, markings, lights/PAPI, obstacles and renderer.
 | --- | ---: | --- |
 | `fixtures.ts` | 18 | Shared fixtures for the cars tests: the real road network's lane data (stand-in terrain), built once. |
 | `idm.test.ts` | 76 | Tests. |
-| `lanes.test.ts` | 216 | Tests. |
+| `lanes.test.ts` | 217 | Tests. |
 | `parking.test.ts` | 141 | Tests. |
 | `render.functional.test.ts` | 140 | Functional: the traffic renderer headless (three.js objects in node, no GL): ten minutes of updates with the camera touring Taterville, the coast highway and Port Chateau — the draw-call budget, instances ⇔ vehicles (… |
 | `sim.test.ts` | 190 | Tests. |
 | `support.ts` | 147 | Invariant checks and collision tests shared by the cars sim tests. |
 | `traffic.functional.test.ts` | 98 | Functional: ten minutes of traffic on the real road network, headless, with the camera hovering over Taterville, flying to the coast highway bridge, hovering there, then crossing to Port Chateau. |
 | `traffic.stress.test.ts` | 48 | Functional stress: several seeds × the busiest and the trickiest places (Taterville's grid, Port Chateau, the coast highway bridge, the villages of Millbrook and Eastfield with their acute junctions and dead ends), fo… |
-| `vehicles.test.ts` | 141 | Tests. |
+| `vehicles.test.ts` | 265 | Tests. |
 
 ### `tests/world/fixtures/`
 
@@ -1291,7 +1356,7 @@ Tests for building placement, archetypes, obstacles, LOD and the road network us
 | `obstacles.test.ts` | 85 | Tests. |
 | `pack.test.ts` | 66 | Tests. |
 | `placement.test.ts` | 364 | Tests. |
-| `render.test.ts` | 130 | Tests. |
+| `render.test.ts` | 137 | Tests. |
 | `standin.test.ts` | 38 | Tests. |
 
 ### `tests/world/traffic/`
@@ -1304,10 +1369,11 @@ Tests for traffic paths, sea routes, wakes, air circuits and models.
 | `airSim.test.ts` | 167 | The air traffic driver: unit (clearance above the terrain), fuzz, and functional runs (many frames with a moving player, pause, teleport, fast-forward). |
 | `airTraffic.test.ts` | 157 | The air traffic renderer, driven in node: draw-call budget, mesh/dot/hidden rules, disc and light pools, contrails, pause and teleport behaviour. |
 | `buoyancy.test.ts` | 99 | Tests. |
+| `circuitRunway.test.ts` | 211 | Circuit traffic on either runway (src/world/traffic/air.ts): - unit: the circuit takes the runway end most into the surface wind (the windsocks' 330°/8 kt → 36; other winds → 3, 18, 21; calm → 36; a forced end), with … |
 | `clock.test.ts` | 55 | Tests. |
 | `daylight.test.ts` | 42 | Tests. |
 | `jobs.test.ts` | 101 | Tests. |
-| `models.test.ts` | 219 | Tests. |
+| `models.test.ts` | 303 | Tests. |
 | `path.test.ts` | 117 | Tests. |
 | `sea.test.ts` | 262 | Tests. |
 | `ships.test.ts` | 173 | The sea traffic renderer, driven in node (no WebGL: BatchedMesh/InstancedMesh bookkeeping is plain JS): build slicing, draw-call budget, visibility and LOD rules, pools, pause, sails. |
@@ -1321,10 +1387,12 @@ Tests for tree placement, species, obstacles, LOD, pooling and streaming.
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `lod.test.ts` | 132 | Tests. |
+| `materials.test.ts` | 188 | Tree material rules (JS mirrors of the GLSL, which is generated from the same constants): per-tree tint variety (brightness, warm/cool hue, saturation, a few turning and dead trees), per-tree clump variation (shrunk a… |
 | `obstacles.test.ts` | 123 | Tests. |
 | `placement.test.ts` | 327 | Tests. |
 | `pool.test.ts` | 82 | Tests. |
 | `species.test.ts` | 86 | Tests. |
+| `speciesShape.test.ts` | 193 | Crown structure of the species meshes (wave 7 realism pass): foliage grouped into clumps that the vertex shader can shrink or drop per tree (irregular silhouettes, bare branches in the gaps), clump-shaded normals (eac… |
 | `standin.test.ts` | 67 | Tests. |
 | `streamer.test.ts` | 223 | Tests. |
 | `vegetation.test.ts` | 178 | Tests. |
