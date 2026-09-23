@@ -28,7 +28,7 @@ export interface CockpitBuild {
 export const SCREEN_ATLAS = { width: 1024, height: 1024 } as const;
 
 /** Instrument panel plane: centre height, depth, tilt (raked back), size. */
-export const PANEL = { cy: 0.56, z: -5.02, tilt: -0.16, w: 0.9, h: 0.46 } as const;
+export const PANEL = { cy: 0.62, z: -5.02, tilt: -0.16, w: 0.9, h: 0.42 } as const;
 /** The glareshield's aft lip (limits the view over the nose). */
 export const GLARESHIELD = { y: 0.875, z: -4.98 } as const;
 
@@ -59,7 +59,8 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
   const glass = loftGeometry(rings, { closed: false });
 
   const f: THREE.BufferGeometry[] = [];
-  const FRAME = 0x3a3e41;
+  // Frames: medium grey inside (the A-10's cockpit grey), so they don't read as a black ring.
+  const FRAME = 0x61676b;
   // Sill rails along both sides.
   for (const s of [-1, 1]) {
     let prev: THREE.Vector3 | null = null;
@@ -79,7 +80,7 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
     const d = canopyArch(z - width / 2, 24, depth);
     f.push(tint(loftGeometry([a, b, c2, d, a.slice()], { closed: false }), FRAME, 0.5, 0.3));
   };
-  band(WINDSCREEN_BOW_Z, 0.1, 0.05, 0.012);
+  band(WINDSCREEN_BOW_Z, 0.032, 0.02, 0.008);
   band(CANOPY_REAR_Z + 0.05, 0.1, 0.05, 0.008);
   // A-pillars: follow the front panel's corners (where the arch turns from the flat front to the side).
   for (const s of [-1, 1]) {
@@ -92,7 +93,7 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
       const sn = Math.sin(t * Math.PI);
       pts.push(V(s * c.w * Math.abs(cs) ** (2 / c.n) * 1.01, c.sill + (c.top - c.sill) * Math.abs(sn) ** (2 / c.n) + 0.008, z));
     }
-    for (let i = 0; i < pts.length - 1; i++) f.push(tint(tube(pts[i], pts[i + 1], 0.024, 0.024, 6), FRAME, 0.5, 0.3));
+    for (let i = 0; i < pts.length - 1; i++) f.push(tint(tube(pts[i], pts[i + 1], 0.017, 0.017, 6), FRAME, 0.5, 0.3));
   }
   // Base of the windscreen.
   {
@@ -133,10 +134,10 @@ function buildInterior(): THREE.BufferGeometry {
   g.push(tint(box(PANEL.w, PANEL.h, 0.04, pc, PANEL.tilt, 0, 0), PANEL_GREY, 0.7, 0.1));
   // HUD: projector body under the combiner (on the glareshield), combiner frame.
   const hudZ = G.z + 0.02;
-  g.push(tint(box(0.2, 0.09, 0.24, V(0, G.y - 0.01, hudZ - 0.12)), BLACK, 0.6, 0.2));
+  g.push(tint(box(0.18, 0.05, 0.22, V(0, G.y - 0.03, hudZ - 0.12)), BLACK, 0.6, 0.2));
   const hudBot = G.y + 0.03;
-  const hudTop = G.y + 0.2;
-  for (const s of [-1, 1]) g.push(tint(box(0.012, hudTop - hudBot + 0.02, 0.02, V(s * 0.08, (hudTop + hudBot) / 2, hudZ), 0.22, 0, 0), BLACK, 0.5, 0.3));
+  const hudTop = G.y + 0.17;
+  for (const s of [-1, 1]) g.push(tint(box(0.008, hudTop - hudBot + 0.02, 0.016, V(s * 0.08, (hudTop + hudBot) / 2, hudZ), 0.22, 0, 0), BLACK, 0.5, 0.3));
   g.push(tint(box(0.17, 0.02, 0.03, V(0, hudBot - 0.01, hudZ - 0.02)), BLACK, 0.5, 0.3));
   // UFC housing under the HUD (the keys are painted on the panel face).
   g.push(tint(box(0.24, 0.12, 0.05, panelPoint(0, 0.15, 0.015), PANEL.tilt, 0, 0), DARK, 0.65, 0.1));
@@ -222,7 +223,7 @@ export function buildCockpit(): CockpitBuild {
   const pilot = buildPilot();
   const G = GLARESHIELD;
   // HUD combiner: one glass, leaning back.
-  const hud = tint(quad(0.15, 0.17, V(0, G.y + 0.115, G.z + 0.02), 0.22, 0, 0, 1, 1), 0xffffff, 0.05, 0);
+  const hud = tint(quad(0.15, 0.15, V(0, G.y + 0.105, G.z + 0.02), 0.22, 0, 0, 1, 1), 0xffffff, 0.05, 0);
   // Screens (unlit): the two MFCD faces from the top half of the screen canvas.
   const screens = merge(
     [

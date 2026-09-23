@@ -67,9 +67,14 @@ export function buildGun(): GunBuild {
   const cluster = merge(g);
 
   const blurLen = z0 - zm;
-  const blur = new THREE.CylinderGeometry(R + GUN.barrelR, R + GUN.barrelR, blurLen, 32, 1, true);
-  blur.rotateX(Math.PI / 2);
-  blur.translate(0, 0, (z0 + zm) / 2);
+  const shell = new THREE.CylinderGeometry(R + GUN.barrelR, R + GUN.barrelR, blurLen, 32, 1, true);
+  shell.rotateX(Math.PI / 2);
+  shell.translate(0, 0, (z0 + zm) / 2);
+  // The muzzle end smears into a dark disc at speed (like a propeller disc).
+  const disc = new THREE.RingGeometry(R * 0.35, R + GUN.barrelR, 32, 1);
+  disc.rotateY(Math.PI);
+  disc.translate(0, 0, zm - 0.004);
+  const blur = merge([tint(shell, 0xffffff, 0.5, 0), tint(disc, 0xffffff, 0.5, 0)]);
 
   // Gun port: a dark shroud where the barrels leave the nose.
   const ax = GUN.axisX;

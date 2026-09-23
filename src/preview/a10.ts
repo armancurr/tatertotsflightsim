@@ -4,7 +4,7 @@
  *   view = front34 | side | rear34 | rear | top | belly | front | nose | tail | gear | cockpit | intake
  *   az, el, dist, fov, target=x,y,z   orbit camera (deg; az 0 = ahead of the nose, −90 = left side)
  *   gear=0..1 flaps=deg elev= ail= rud= (−1..1) sb=0..1 thr=0..100 (core %) aoa=deg air=1 steer=
- *   gunspin=0..1 stores=1,1,0,1 (Maverick stations)
+ *   gunspin=0..1 stores=1,1,0,1 (Maverick stations)   hide=name,name (hide parts by name)
  *   lights=nav,strobe,beacon,landing,taxi   t=seconds   night=1   sun=az,el   exposure=
  *   lookYaw, lookDown (cockpit view)   crashed=1 crashAge=s
  * window.__ready, window.__stats {calls, triangles, buildMs}.
@@ -197,6 +197,7 @@ if (atlasKind) {
 }
 
 const bench = q.get('bench') === '1';
+const hidden = (q.get('hide') ?? '').split(',').filter(Boolean);
 const gpu = createGpuTimer(renderer.getContext() as WebGL2RenderingContext, 0.05);
 let frames = 0;
 let last = performance.now();
@@ -210,6 +211,8 @@ renderer.setAnimationLoop((now) => {
   if (spin) p.az += dt * 20;
   // Settle the rate-limited parts quickly for stills.
   jet.setVisualState(state, frames < 30 ? 0.25 : dt);
+  // ?hide=name,name hides parts (debugging what blocks a view).
+  for (const n of hidden) { const o = jet.root.getObjectByName(n); if (o) o.visible = false; }
   placeCamera();
   renderer.info.reset();
   if (atlasScene) {
