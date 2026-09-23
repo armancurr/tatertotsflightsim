@@ -42,6 +42,7 @@ import { getAtmosphereFrameData } from './frameData';
 import { installFilmicNeutral } from './toneMapping';
 import { createGpuTimer, type GpuTimer } from './gpuTimer';
 import { planQuality, qualityFromQuery, type QualityLevel, type QualityPlan } from './quality';
+import { installLogDepthForShaderMaterials } from './logDepthPatch';
 
 export type DepthMode = 'reversed' | 'logarithmic' | 'standard';
 
@@ -138,7 +139,12 @@ export interface RendererHandle {
 
 export function createRenderer(container: HTMLElement, opts: RendererOptions = {}): RendererHandle {
   const rc = CONFIG.render;
-  const depthMode = chooseDepthMode(probeClipControl(), opts.depth ?? 'reversed');
+  // ?depth=log|standard forces the fallbacks Firefox and Safari get (no EXT_clip_control) — for QA in Chrome.
+  const depthParam = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('depth') : null;
+  const depthFromUrl: DepthMode | undefined = depthParam === 'log' || depthParam === 'logarithmic' ? 'logarithmic' : depthParam === 'standard' ? 'standard' : undefined;
+  const depthMode = depthFromUrl ?? chooseDepthMode(probeClipControl(), opts.depth ?? 'reversed');
+  // Custom ShaderMaterials must write the same logarithmic depth as three's built-ins (logDepthPatch.ts).
+  if (depthMode === 'logarithmic') installLogDepthForShaderMaterials();
   const wantHdr = opts.hdr ?? rc.hdr;
   const renderer = new THREE.WebGLRenderer({
     antialias: !wantHdr && rc.antialias,
