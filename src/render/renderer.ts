@@ -37,7 +37,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
 import { createDynamicResolution, type DynamicResolution } from './dynamicResolution';
-import { createOutputPass, type OutputPass, type PostSettings } from './post';
+import { bloomForQuality, createOutputPass, type OutputPass, type PostSettings } from './post';
 import { getAtmosphereFrameData } from './frameData';
 import { installFilmicNeutral } from './toneMapping';
 import { createGpuTimer, type GpuTimer } from './gpuTimer';
@@ -225,6 +225,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     flareGhosts: rc.lensFlare.ghosts,
     flareStarburst: rc.lensFlare.starburst,
     dither: true,
+    bloom: bloomForQuality(plan),
   };
 
   function resize() {

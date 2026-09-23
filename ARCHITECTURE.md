@@ -249,6 +249,13 @@ flying fast never hitches.
   conservative resolution and dynamic resolution (`dynamicResolution.ts`) climbs when the frame
   rate has headroom and drops when it hasn't; software renderers and older integrated GPUs start
   lower. A lost WebGL context shows a banner and a Reload button.
+- **Camera look (`atmosphereState.ts`, `post.ts`, `bloom.ts`, `metering.ts`, `toneMapping.ts`)** — the
+  camera meters the light like a real one: a time-of-day exposure from the ground illuminance (partial
+  adaptation: golden hour +1.2 EV, dawn +1.9 EV over morning's 2.2), a partial auto white balance with a
+  golden-hour warm / blue-hour cool tint, and a GPU eye adaptation (centre-weighted log-average of the
+  frame, ±0.5 EV, eased, no readback). HDR highlights bloom through a ½-res dual-filter chain (off on
+  `?quality=low`), and the filmic curve keeps gradation in clouds and white paint. `?ae=0` / `?meter=0`
+  switch the camera automation off for A/B comparisons.
 - **Atmosphere (`atmosphere.ts`)** — a physically based sky (single scattering: deep blue overhead,
   pale haze at the horizon, a real sun disc), a sun light whose colour follows its height, soft
   shadows that follow the aircraft, and a sky environment map for reflections. Four time-of-day

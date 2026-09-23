@@ -1119,8 +1119,21 @@ export const CONFIG = {
       { name: 'Golden hour', elevationDeg: 9, azimuthDeg: 255 },
       { name: 'Dawn', elevationDeg: 4, azimuthDeg: 95 },
     ],
-    /** Tone-mapping exposure (scene radiance → display). */
+    /** Tone-mapping exposure (scene radiance → display) at the reference illuminance (the default morning preset). */
     exposure: 2.2,
+    /**
+     * The camera adapts to the light like an eye / a camera's metering: exposure × (reference / E)^strength,
+     * E = illuminance on flat ground (sun + sky, scene units; morning ≈ 1.71, midday 2.54, golden hour 0.35,
+     * dawn 0.13), clamped to [min, max] × exposure. strength < 1 = partial adaptation: dusk still reads darker.
+     */
+    autoExposure: { reference: 1.71, strength: 0.5, min: 0.6, max: 4.5 },
+    /**
+     * Camera auto white balance (von Kries, partial): 0 = daylight balance everywhere (a warm cast at golden
+     * hour), 1 = fully neutralised. Estimated from the sunlit ground and the horizon haze colour.
+     */
+    whiteBalance: 0.35,
+    /** Look: warm tint when the sun is low (golden hour / sunrise, fades out by 25°), cool tint once it has set (blue hour). */
+    grade: { warmth: 0.1, blueHour: 0.1 },
     /** Top-of-atmosphere sun illuminance in three.js light units; the sun light, sky and haze all scale with it. */
     sunIntensity: 3.2,
     /** Sunlight colour above the atmosphere (linear RGB) — effectively the camera white balance. */
@@ -1231,10 +1244,28 @@ export const CONFIG = {
      * 'neutral' | 'aces' | 'agx'. ACES bleaches the golden-hour glow; AgX is flat; Neutral crushes shadows.
      */
     toneMapping: 'filmic',
+    /**
+     * The 'filmic' curve (toneMapping.ts): contrast = log-space slope around `pivot` (1 = linear mids),
+     * shoulderStart = where highlights start to roll off (Khronos Neutral: 0.8 — clouds/white paint/snow
+     * merge into flat white), toe = black-level offset, desaturation = highlights fade toward white.
+     */
+    tone: { contrast: 1.05, pivot: 0.18, shoulderStart: 0.6, toe: 0.002, desaturation: 0.15 },
     /** Output grade: corner darkening 0..1 and saturation (1 = unchanged). */
     vignette: 0.16,
     saturation: 1.0,
     lensFlare: { enabled: true, glare: 1.0, ghosts: 0.015, starburst: 0.06 },
+    /**
+     * Bloom (bloom.ts): the fraction of the blurred highlights added back (0 = off), the exposed value
+     * where it starts, its soft knee, and the clamp that keeps the sun disc from flooding the frame.
+     * Off on the 'low' quality preset. ≈0.1–0.2 ms at 1440×900.
+     */
+    bloom: { intensity: 0.05, threshold: 1.2, knee: 0.6, clamp: 40 },
+    /**
+     * Eye adaptation (metering.ts): a view-dependent trim on the time-of-day exposure — (key / centre-weighted
+     * geometric-mean exposed luminance)^strength, clamped to [min, max], eased with tauDarken / tauBrighten (s).
+     * Looking into the sun stops down a little; a dark cockpit opens up a little. ?meter=0 turns it off.
+     */
+    metering: { enabled: true, key: 0.2, strength: 0.4, min: 0.7, max: 1.4, tauDarken: 0.6, tauBrighten: 1.5 },
     /**
      * Clouds: 'volumetric' (raymarched, falls back to billboards automatically when over budget),
      * 'billboard' (instanced puff sprites) or 'off'. URL override: ?clouds=volumetric|billboard|off.

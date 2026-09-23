@@ -10,7 +10,7 @@
 import type { Vec3 } from '../types';
 import { CONFIG } from '../config';
 import { luminance, skyRadiance, sunIlluminanceAt, type AtmosphereParams, type RGB } from './atmosphereModel';
-import { fogStateFromAtmosphere, type FogState } from './fog';
+import { fogStateFromAtmosphere, hazeColor, type FogState } from './fog';
 
 export interface AtmosphereState {
   sunDir: Vec3;
@@ -33,6 +33,12 @@ export interface AtmosphereState {
   sunDiscLuminance: number;
   cirrusSun: RGB;
   cirrusAmbient: RGB;
+  /** Illuminance on flat ground from the sun and the sky (luminance, scene units): what the camera meters. */
+  illuminance: number;
+  /** Tone-mapping exposure the camera adapts to (config.atmosphere.exposure at the reference light). */
+  exposure: number;
+  /** Per-channel camera white-balance gains (luminance-preserving). */
+  whiteBalance: RGB;
 }
 
 export interface AtmosphereStateOptions {
@@ -67,7 +73,74 @@ function blank(): AtmosphereState {
     sunDiscLuminance: 0,
     cirrusSun: rgb(),
     cirrusAmbient: rgb(),
+    illuminance: 0,
+    exposure: 1,
+    whiteBalance: { r: 1, g: 1, b: 1 },
   };
+}
+
+type AutoExposureCfg = typeof CONFIG.atmosphere.autoExposure;
+
+/**
+ * Exposure for a scene lit with illuminance `E` on flat ground: `base` at the reference
+ * light, × (reference / E)^strength (partial adaptation), clamped to [min, max] × base.
+ * No light (E ≤ 0, NaN) = fully open. Pure, finite for any input.
+ */
+export function autoExposure(E: number, base: number, cfg: AutoExposureCfg = CONFIG.atmosphere.autoExposure): number {
+  const lo = base * cfg.min;
+  const hi = base * cfg.max;
+  if (!(E > 0)) return hi;
+  if (!Number.isFinite(E)) return lo;
+  const k = base * Math.pow(cfg.reference / E, cfg.strength);
+  return Number.isFinite(k) ? Math.min(hi, Math.max(lo, k)) : hi;
+}
+
+const sstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * The look's colour tint for a sun elevation (degrees): warm (more red, less blue) while the sun is
+ * low — strongest at golden hour (8–12°), fading out by 25° and toward the horizon — and cool
+ * once it has set (blue hour).
+ * Luminance-preserving gains; neutral for a high sun or junk input.
+ */
+export function lookTint(sunElevationDeg: number, out: RGB, cfg: { warmth: number; blueHour: number } = CONFIG.atmosphere.grade): RGB {
+  const el = Number.isFinite(sunElevationDeg) ? sunElevationDeg : 90;
+  // peaks at golden hour (8–12°); a sunrise sun (≲ 4°) is orange enough already
+  const warm = Math.min(0.2, Math.max(0, cfg.warmth)) * (1 - sstep(12, 25, el)) * sstep(0, 8, el);
+  const cool = Math.min(0.2, Math.max(0, cfg.blueHour)) * (1 - sstep(-6, 0, el));
+  const r = 1 + warm - 0.6 * cool;
+  const g = 1 + 0.25 * warm - 0.1 * cool;
+  const b = 1 - warm + cool;
+  const n = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  out.r = r / n;
+  out.g = g / n;
+  out.b = b / n;
+  return out;
+}
+
+/**
+ * Von Kries white-balance gains that move the colour `illuminant` part of the way (strength 0..1)
+ * toward neutral, normalised so a white surface keeps its luminance; bounded to [0.6, 1.6].
+ */
+export function whiteBalanceGains(illuminant: RGB, strength: number, out: RGB): RGB {
+  const k = Number.isFinite(strength) ? Math.min(1, Math.max(0, strength)) : 0;
+  const c = (v: number) => (Number.isFinite(v) && v > 1e-6 ? v : 1e-6);
+  let r = c(illuminant.r);
+  let g = c(illuminant.g);
+  let b = c(illuminant.b);
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const gain = (v: number) => Math.min(1.6, Math.max(0.6, Math.pow(l / v, k)));
+  r = gain(r);
+  g = gain(g);
+  b = gain(b);
+  const n = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  out.r = Math.min(1.6, Math.max(0.6, r / n));
+  out.g = Math.min(1.6, Math.max(0.6, g / n));
+  out.b = Math.min(1.6, Math.max(0.6, b / n));
+  return out;
 }
 
 // Hemisphere quadrature for the sky irradiance: elevation bands × 8 azimuths.
@@ -75,6 +148,8 @@ const BANDS = [0, 8, 18, 32, 48, 64, 78, 90].map((d) => (d * Math.PI) / 180);
 const AZ = 8;
 const _l = rgb();
 const _d: Vec3 = { x: 0, y: 0, z: 0 };
+const _hz = rgb();
+const _wb = rgb();
 
 /** Cosine-weighted sky irradiance on a horizontal surface at height h (m above sea level). */
 export function skyIrradianceAt(p: AtmosphereParams, sunDir: Vec3, h: number, out: RGB): RGB {
@@ -172,5 +247,33 @@ export function computeAtmosphereState(
 
   sunIlluminanceAt(p, Math.max(0, cirrusAlt - sea), sunDir, s.cirrusSun);
   set(s.cirrusAmbient, ca * 0.45 * sky.r, ca * 0.45 * sky.g, ca * 0.45 * sky.b);
+
+  // Camera: meter the light on flat ground (sun + sky) → exposure; white balance from what fills
+  // the frame — the sunlit ground and the horizon haze — each normalised to unit luminance.
+  const ac = CONFIG.atmosphere;
+  s.illuminance = luminance(sunG) * sinEl + luminance(s.skyIrradiance);
+  s.exposure = autoExposure(s.illuminance, ac.exposure, ac.autoExposure);
+  set(_wb, 0, 0, 0);
+  for (let i = 0; i < 8; i++) {
+    const az = (i / 8) * Math.PI * 2;
+    _d.x = Math.sin(az) * 0.9998;
+    _d.y = 0.02;
+    _d.z = -Math.cos(az) * 0.9998;
+    hazeColor(_d, cameraY, s.fog, _hz);
+    const lh = Math.max(luminance(_hz), 1e-9);
+    _wb.r += _hz.r / lh / 16;
+    _wb.g += _hz.g / lh / 16;
+    _wb.b += _hz.b / lh / 16;
+  }
+  const lg = Math.max(luminance(s.groundRadiance), 1e-9);
+  _wb.r += (0.5 * s.groundRadiance.r) / lg;
+  _wb.g += (0.5 * s.groundRadiance.g) / lg;
+  _wb.b += (0.5 * s.groundRadiance.b) / lg;
+  whiteBalanceGains(_wb, ac.whiteBalance, s.whiteBalance);
+  // …and the look: golden-hour warmth / blue-hour cool on top
+  lookTint((Math.asin(Math.max(-1, Math.min(1, sunDir.y))) * 180) / Math.PI, _hz);
+  const wb = s.whiteBalance;
+  const n = 0.2126 * wb.r * _hz.r + 0.7152 * wb.g * _hz.g + 0.0722 * wb.b * _hz.b;
+  set(wb, (wb.r * _hz.r) / n, (wb.g * _hz.g) / n, (wb.b * _hz.b) / n);
   return s;
 }
