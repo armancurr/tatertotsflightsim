@@ -108,15 +108,16 @@
     b747: {
       jet: true, fbw: false, afterburner: false,
       vrKt: 145, rotatePitchDeg: 8, climbKt: 250, climbPitchMaxDeg: 15, cruiseKt: 280,
-      takeoffThrottle: 100, climbThrottle: 100, cruiseThrottle: 50, takeoffFlapsNotch: 2, flapsUpKt: 195, rotateRateDegS: 2.5,
+      takeoffThrottle: 100, climbThrottle: 100, cruiseThrottle: 30, takeoffFlapsNotch: 2, flapsUpKt: 195, rotateRateDegS: 2.5,
       approachKt: 132, finalFlapsNotch: 5, patternFlapsNotch: 2, patternAglFt: 2000, patternKt: 190, finalLengthM: 9000,
       maxBankDeg: 30, patternBankDeg: 25, maxThrottle: 100,
-      flareLeadS: 3, flareMinFt: 22, flareMaxFt: 36, touchdownSinkFpm: 150, maxFlarePitchDeg: 7, minFlarePitchDeg: 0, flareGain: 0.8, flareIdle: 'entry',
+      flareLeadS: 4, flareMinFt: 25, flareMaxFt: 45, touchdownSinkFpm: 150, maxFlarePitchDeg: 7, minFlarePitchDeg: 0, flareGain: 0.8, flareIdle: 'entry',
       trackKdegPerM: 0.05, finalMaxCorrDeg: 10,
-      // Gentle hands: a key held for more than ~¼ of each window keeps the column coming, and a jumbo's
-      // pitch answers slowly — big duties make a pilot-induced oscillation.
-      pitchKp: 0.05, pitchKd: 0.06, rollKp: 0.05, rollKd: 0.03, yawKp: 0.05, yawKd: 0.02, flareKp: 0.1, flareKd: 0.1,
-      speedKp: 1.0, speedKi: 0.25, throttleIdle: 0, approachThrottle: 25,
+      // Gentle hands with lots of pitch-rate damping: a key held for more than ~¼ of each window keeps the
+      // column coming and a jumbo's pitch answers slowly — big duties make a pilot-induced oscillation.
+      // Pulses are √-shaped (dutySqrt) so small corrections still move the column; steer on a 3 s average α.
+      pitchKp: 0.04, pitchKd: 0.2, dutySqrt: true, rollKp: 0.05, rollKd: 0.03, yawKp: 0.05, yawKd: 0.02, flareKp: 0.06, flareKd: 0.1,
+      speedKp: 0.6, speedKi: 0.1, throttleIdle: 0, approachThrottle: 25, aoaSmoothS: 3, levelOffFt: 1000,
       gearOffsetFt: 16.4,
     },
   };
@@ -375,7 +376,8 @@
         trimI = clamp(trimI + (t.pitch - s.pitch) * (ms / 1000), -20, 20);
         if (Math.abs(trimI) > 2.5) { trimKey = trimI > 0 ? 'BracketRight' : 'BracketLeft'; trimI *= 0.5; }
       }
-      const tp = Math.min(ms, Math.abs(up) * ms);
+      // Profile dutySqrt: a pulsed key moves the column ≈ duty² on average — take √ so small corrections count.
+      const tp = Math.min(ms, (P.dutySqrt ? Math.sqrt(Math.abs(up)) : Math.abs(up)) * ms);
       const tr = Math.min(ms, Math.abs(ur) * ms);
       const ty = Math.min(ms, Math.abs(uy) * ms);
       const dthr = t.thr === null || t.thr === undefined ? 0 : clamp(t.thr, 0, 100) - s.throttle;
@@ -406,6 +408,21 @@
       key('ArrowDown', false); key('ArrowUp', false); key('ArrowRight', false); key('ArrowLeft', false);
       key('KeyD', false); key('KeyA', false); key('KeyW', false); key('KeyS', false);
     }
+    /**
+     * The angle of attack the pilot "knows" (profile aoaSmoothS > 0: averaged over that many seconds —
+     * a slow jumbo's α swings with every column input, and steering on the raw value is a neutral loop).
+     */
+    let aoaAvg = null;
+    let aoaT = null;
+    function pilotView(s) {
+      if (!P.aoaSmoothS) return s;
+      const t = drv.now();
+      const a = fin(s.aoa, 0);
+      if (aoaAvg === null || aoaT === null) aoaAvg = a;
+      else aoaAvg += (a - aoaAvg) * clamp((t - aoaT) / 1000 / P.aoaSmoothS, 0, 1);
+      aoaT = t;
+      return { ...s, aoa: aoaAvg };
+    }
     /** Fly until `done(sim)` or timeout (ms of the driver clock), steering to `targets(sim)`. */
     async function fly(targets, done, timeoutMs, ms = 200) {
       const end = drv.now() + timeoutMs;
@@ -414,7 +431,7 @@
         const s = sim();
         if (s.state === 'crashed') { releaseAll(); return 'crashed'; }
         if (done && done(s)) return 'done';
-        await controlWindow(targets(s), typeof ms === 'function' ? ms(s) : ms);
+        await controlWindow(targets(pilotView(s)), typeof ms === 'function' ? ms(s) : ms);
       }
       return 'timeout';
     }
@@ -566,11 +583,13 @@
         const hdg = o.headingDeg ?? sim().heading;
         const climbing = targetAlt > sim().altitude;
         const thr = o.throttle ?? (climbing ? P.climbThrottle : P.cruiseThrottle);
+        // Profile levelOffFt: a jet climbing at thousands of fpm starts levelling off (and pulls the power back) earlier.
+        const lead = P.levelOffFt ?? 300;
         const r = await fly(
           (s) => {
-            const near = Math.abs(targetAlt - s.altitude) < 300;
+            const near = Math.abs(targetAlt - s.altitude) < lead;
             const pitch = climbing && !near ? clamp(s.pitch + (s.airspeed - P.climbKt) * 0.15, 3, P.climbPitchMaxDeg) : pitchForVs(s, altHoldVs(s, targetAlt, 3000));
-            return { pitch, roll: rollFor(s, hdg, P.patternBankDeg), thr };
+            return { pitch, roll: rollFor(s, hdg, P.patternBankDeg), thr: near && P.levelOffFt ? (o.cruiseThrottle ?? P.cruiseThrottle) : thr };
           },
           (s) => Math.abs(s.altitude - targetAlt) < 60 && Math.abs(s.verticalSpeed) < 500,
           o.timeoutMs ?? 240000,

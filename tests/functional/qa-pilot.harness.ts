@@ -55,7 +55,7 @@ export type QaPilot = Record<string, unknown> & {
   log: Record<string, unknown>[];
   init(): Promise<QaProfile>;
   takeoff(): Promise<string>;
-  climbTo(aglFt: number): Promise<string>;
+  climbTo(aglFt: number, o?: Record<string, unknown>): Promise<string>;
   turn(deg: number, bank?: number): Promise<string>;
   approachAndLand(): Promise<string>;
   circuit(opts?: Record<string, unknown>): Promise<string>;
