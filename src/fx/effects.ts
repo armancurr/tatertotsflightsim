@@ -1,10 +1,24 @@
 /**
  * three.js adapter for the effects simulation (sim.ts): ONE sorted, instanced draw call for all
- * smoke/dust/fire (premultiplied-alpha blending unifies additive fire and alpha smoke, so fire
+ * smoke/dust/fire/sparks (premultiplied-alpha blending unifies additive fire and alpha smoke, so fire
  * seen through smoke and smoke in front of fire both composite correctly), an InstancedMesh of
  * tumbling debris, and a flickering point light at the fire. Buffers are preallocated; update()
- * allocates nothing. Particles are lit with sprite-space normals (sun side bright), glow orange
- * near the fire, fade near the ground/camera, and haze with the scene fog (fog chunks included,
+ * allocates nothing.
+ *
+ * Every particle looks different and moves: the shader derives a mirror flip, a noise-space offset
+ * and an animation rate from the particle's seed (shading.ts `variation`) and scrolls a tiling
+ * 4-channel noise texture (sprites.ts) through it —
+ *   puffs    (tiles 0–3) boil and fray with age (noise-distorted, eroded), are lit like volumes by
+ *            the sun (sprite normals, 2-tap self-shadow, darker thick core, forward scattering) and
+ *            glow orange from below near a fire; hot puffs (fireballs) are a rolling temperature
+ *            field (hot core, mottled by the noise) that cools patch by patch into soot;
+ *   flames   (tiles 4–7) are tongue envelopes animated by upward-scrolling domain-warped noise that
+ *            breaks them into licks, oriented along their (wind-leaning, buoyant) velocity and
+ *            stretched tall (per-particle aspect), hottest low in the core, sooty at the tips;
+ *   sparks   (SPARK_TILE) are procedural motion-blurred streaks along their screen velocity.
+ * Far flames/sparks never vanish sub-pixel (energy-conserving minimum size). Particles fade near
+ * the ground (analytic soft particles against the terrain height under them), near the camera and
+ * when they would cover too much of the screen, and haze with the scene fog (fog chunks included,
  * so the atmospheric fog override applies too).
  */
 import * as THREE from 'three';
@@ -13,12 +27,14 @@ import type { SurfaceType } from '../types';
 import { FxSim } from './sim';
 import { particleAlpha, particleHeat, particleSize, type ParticlePool } from './pool';
 import { createSortScratch, sortBackToFront } from './sort';
-import { generateParticleAtlas } from './sprites';
+import { generateNoiseTexture, generateParticleAtlas } from './sprites';
 import { FIRE_GLSL } from './shading';
 
 const FX = CONFIG.fx;
 const FIRE_LIGHT = new THREE.Color(0xff8a3a);
 const FLASH_LIGHT = new THREE.Color(0xffd9a8);
+/** The animation clock wraps (seconds) to keep float precision in the shader. */
+const TIME_WRAP = 3600;
 
 export interface EffectsOptions {
   /** Terrain/water height for debris bounce and ground fades (default: just below the event). */
@@ -45,66 +61,110 @@ export interface Effects {
 }
 
 const VERT = /* glsl */ `
-attribute vec4 iPos;
-attribute vec4 iParams;
-attribute vec4 iColor;
-attribute float iGround;
+attribute vec4 iPos;    // xyz, diameter
+attribute vec4 iParams; // rotation, opacity, heat, tile
+attribute vec4 iColor;  // albedo, fire glow at the particle
+attribute vec4 iExtra;  // ground height under it, seed, age / life, aspect (width / height)
+attribute vec4 iVel;    // velocity (m/s)
 uniform vec3 uSunView;
 uniform float uNearFade;
 uniform float uMaxCover;
-varying vec2 vUv;
+uniform float uViewportH;
+uniform float uMinPx;
+uniform float uShutter;
+varying vec2 vQ;
+varying vec4 vVar;
 varying vec3 vLight;
+varying vec2 vUpS;
 varying vec4 vColor;
-varying vec3 vFx;
+varying vec4 vFx;
 varying vec2 vGround;
 varying float vPhase;
+varying float vStreak;
 #include <fog_pars_vertex>
 ${FIRE_GLSL}
 void main() {
   float size = iPos.w;
   float tile = iParams.w;
-  float isFlame = step(3.5, tile);
+  float kind = tile < 3.5 ? 0.0 : (tile < 7.5 ? 1.0 : 2.0); // puff, flame, spark
+  vec4 va = variation(iExtra.y);
   vec4 mvPosition = viewMatrix * vec4(iPos.xyz, 1.0);
   float depth = -mvPosition.z;
+  float p11 = projectionMatrix[1][1];
+  // Energy-conserving minimum size: far flames and sparks stay visible as points.
+  float px = size * p11 * 0.5 * uViewportH / max(depth, 0.05);
+  float grow = pixelScale(px, uMinPx);
+  size *= grow;
   // Fade sprites the camera is inside of, and any that would cover too much of the screen.
-  float fade = iParams.y * smoothstep(0.1 * size * uNearFade, size * uNearFade, depth) * coverFade(size, depth, projectionMatrix[1][1], uMaxCover);
+  float fade = iParams.y / (grow * grow) * smoothstep(0.1 * size * uNearFade, size * uNearFade, depth) * coverFade(size, depth, p11, uMaxCover);
   vec3 upV = mat3(viewMatrix) * vec3(0.0, 1.0, 0.0);
-  float rot = mix(iParams.x, atan(-upV.x, upV.y) + iParams.x * 0.3, isFlame);
+  vec2 corner = position.xy;
+  vec2 k = corner;
+  float rot = iParams.x;
+  float streak = 1.0;
+  if (kind > 1.5) {
+    // Spark: a streak along its screen-space motion during the exposure.
+    vec3 vv = mat3(viewMatrix) * iVel.xyz;
+    float len = length(vv.xy) * uShutter;
+    vec2 ax = length(vv.xy) > 1e-4 ? normalize(vv.xy) : vec2(0.0, 1.0);
+    rot = atan(-ax.x, ax.y);
+    streak = 1.0 + len / max(size, 1e-3);
+    k.y *= streak;
+  } else if (kind > 0.5) {
+    // Flame: stands on its base along its buoyant, wind-leaning velocity; tall when seen from the side.
+    vec3 axisW = normalize(vec3(iVel.x * 0.35, max(iVel.y, 0.0) * 0.25 + 1.0, iVel.z * 0.35));
+    vec3 axisV = mat3(viewMatrix) * axisW;
+    float l = length(axisV.xy);
+    rot = (l > 1e-3 ? atan(-axisV.x, axisV.y) : iParams.x) + iParams.x;
+    float side = smoothstep(0.2, 0.75, l);
+    float asp = clamp(iExtra.w, 0.1, 10.0);
+    float tall = mix(1.0, inversesqrt(asp), side) * (1.0 + 0.05 * side * max(iVel.y, 0.0));
+    float wide = mix(1.0, sqrt(asp), side);
+    k = vec2(corner.x * wide, corner.y * tall + 0.3 * tall * side);
+  }
   float c = cos(rot);
   float s = sin(rot);
-  vec2 corner = position.xy;
-  // Flame licks are taller than wide and stand on their base.
-  vec2 k = corner * vec2(1.0, mix(1.0, 1.5, isFlame)) + vec2(0.0, 0.25 * isFlame);
   vec2 off = vec2(c * k.x - s * k.y, s * k.x + c * k.y) * size;
   mvPosition.xy += off;
   gl_Position = projectionMatrix * mvPosition;
   if (fade < 0.003) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // nothing to draw: no fill cost
-  vUv = (vec2(mod(tile, 4.0), floor(tile / 4.0)) + corner + 0.5) / vec2(4.0, 2.0);
+  vQ = vec2(corner.x, corner.y);
+  vVar = vec4(va.z, va.w, variationRate(iExtra.y), clamp(iExtra.z, 0.0, 1.0));
   vLight = vec3(c * uSunView.x + s * uSunView.y, -s * uSunView.x + c * uSunView.y, uSunView.z);
+  vUpS = vec2(c * upV.x + s * upV.y, -s * upV.x + c * upV.y);
   // Forward scattering (Henyey-Greenstein, g = 0.6): thin smoke glows when it is between the eye and the sun.
   float cosT = dot(normalize(mvPosition.xyz), uSunView);
   vPhase = 0.64 / pow(1.36 - 1.2 * cosT, 1.5);
   vColor = iColor;
   vec3 worldOff = (vec4(off, 0.0, 0.0) * viewMatrix).xyz;
-  vGround = vec2(iPos.y + worldOff.y - iGround, 1.0 / max(0.05, 0.25 * size));
-  vFx = vec3(fade, iParams.z, isFlame);
+  vGround = vec2(iPos.y + worldOff.y - iExtra.x, 1.0 / max(0.05, 0.25 * size));
+  vFx = vec4(fade, iParams.z, kind, tile + (va.x < 0.0 ? 16.0 : 0.0));
+  vStreak = streak;
   #include <fog_vertex>
 }
 `;
 
 const FRAG = /* glsl */ `
 uniform sampler2D uAtlas;
+uniform sampler2D uNoise;
+uniform float uTime;
 uniform vec3 uSunColor;
 uniform vec3 uAmbient;
 uniform vec3 uGlowColor;
+uniform float uGlowFloor;
 uniform float uFireIntensity;
 uniform float uFireOcclusion;
-varying vec2 vUv;
+uniform float uSparkIntensity;
+uniform float uSelfShadow;
+varying vec2 vQ;
+varying vec4 vVar;
 varying vec3 vLight;
+varying vec2 vUpS;
 varying vec4 vColor;
-varying vec3 vFx;
+varying vec4 vFx;
 varying vec2 vGround;
 varying float vPhase;
+varying float vStreak;
 #include <fog_pars_fragment>
 ${FIRE_GLSL}
 vec3 finishColor(vec3 c) {
@@ -113,23 +173,84 @@ vec3 finishColor(vec3 c) {
   #endif
   return linearToOutputTexel(vec4(c, 1.0)).rgb;
 }
+vec2 tileUv(float tile, vec2 q) {
+  q = clamp(q, -0.5, 0.5);
+  return (vec2(mod(tile, 4.0), floor(tile / 4.0)) + q + 0.5) / vec2(4.0, 2.0);
+}
 void main() {
-  vec4 tex = texture2D(uAtlas, vUv);
+  float kind = vFx.z;
+  float heat = vFx.y;
+  float flip = vFx.w >= 16.0 ? -1.0 : 1.0;
+  float tile = vFx.w - (flip < 0.0 ? 16.0 : 0.0);
   float groundFade = clamp(vGround.x * vGround.y, 0.0, 1.0);
-  float a = tex.a * vFx.x * groundFade;
-  if (a < 0.002) discard;
-  // Smoke: lit like a volume by the sun (sprite-space normals) and the sky, with forward scattering at thin edges.
-  vec3 n = vec3(tex.rg * 2.0 - 1.0, 0.0);
-  n.z = sqrt(max(0.0, 1.0 - dot(n.xy, n.xy)));
-  float diff = clamp(dot(n, normalize(vLight)) * 0.6 + 0.4, 0.0, 1.0);
-  float phase = mix(1.0, clamp(vPhase, 0.25, 4.0), (1.0 - tex.a) * 0.75);
-  vec3 albedo = vColor.rgb;
-  vec3 lit = albedo * (uAmbient + uSunColor * diff * phase) + albedo * uGlowColor * vColor.a;
-  // Fire: hottest in the core of the sprite, cooler and sooty at its edges.
-  float T = vFx.y * mix(0.3, 1.15, tex.b);
-  vec3 emis = fireRamp(T) * uFireIntensity;
-  float glow = smoothstep(0.3, 0.9, T);
-  float aOcc = a * mix(1.0, uFireOcclusion, glow);
+  float base = vFx.x * groundFade;
+  if (base < 0.002) discard;
+  float a;
+  float T = 0.0;
+  float occ = 1.0;
+  float emisK = uFireIntensity;
+  vec3 lit = vec3(0.0);
+  if (kind > 1.5) {
+    // Spark / ember: a hot capsule stretched along its motion; the light is spread over the streak.
+    vec2 p = vec2(vQ.x, vQ.y * vStreak);
+    p.y = max(abs(p.y) - 0.5 * (vStreak - 1.0), 0.0);
+    float d2 = dot(p, p) * 4.0;
+    a = exp(-5.0 * d2) * smoothstep(1.0, 0.6, d2) * base * inversesqrt(vStreak);
+    if (a < 0.002) discard;
+    T = heat;
+    occ = 0.0;
+    emisK = uFireIntensity * uSparkIntensity;
+  } else if (kind > 0.5) {
+    // Flame tongue: the envelope flutters and splits into licks as noise scrolls up through it.
+    vec2 q = vec2(vQ.x * flip, vQ.y);
+    float h = vQ.y + 0.5;
+    float tt = uTime * vVar.z;
+    vec2 nq = vec2(q.x * 0.7, q.y * 0.45 - tt * 0.9) + vVar.xy;
+    vec4 n1 = texture2D(uNoise, nq);
+    vec4 n2 = texture2D(uNoise, nq * 2.3 + (n1.rg - 0.5) * 0.3 + vec2(0.37, 0.61 - tt * 0.5));
+    vec2 d = vec2((n1.r - 0.5) * 0.38 + (n2.g - 0.5) * 0.14, (n1.g - 0.5) * 0.1) * (0.25 + h);
+    vec4 env = texture2D(uAtlas, tileUv(tile, q + d));
+    float brk = smoothstep(0.0, 0.35, n2.b * 0.8 + n1.a * 0.4 + (1.0 - h) * 0.75 - 0.45);
+    a = env.a * brk * base;
+    if (a < 0.002) discard;
+    T = flameTemperature(heat, env.b + (n2.r - 0.5) * 0.3, h);
+    // Soot shows at the tips; the sides stay a translucent red glow (no dark outline).
+    occ = mix(0.2 + 0.6 * h, uFireOcclusion, smoothstep(0.3, 0.9, T));
+    lit = vColor.rgb * uAmbient;
+  } else {
+    // Puff: boils (noise-distorted) and frays with age; lit like a volume.
+    vec2 q = vec2(vQ.x * flip, vQ.y);
+    float age = vVar.w;
+    float hot = smoothstep(0.02, 0.3, heat);
+    float tt = uTime * vVar.z * mix(0.05, 0.35, hot);
+    vec4 n = texture2D(uNoise, q * 0.6 + vVar.xy + vec2(tt * 0.6, -tt));
+    vec2 uq = q + (n.rg - 0.5) * (0.08 + 0.08 * age + 0.12 * hot);
+    vec4 tex = texture2D(uAtlas, tileUv(tile, uq));
+    float dens = smokeErosion(tex.a, n.b * 0.6 + n.a * 0.4, age);
+    a = dens * base;
+    if (a < 0.002) discard;
+    vec3 nrm = vec3((tex.rg * 2.0 - 1.0) * vec2(flip, 1.0), 0.0);
+    nrm.z = sqrt(max(0.0, 1.0 - dot(nrm.xy, nrm.xy)));
+    vec3 L = normalize(vLight);
+    float diff = clamp(dot(nrm, L) * 0.6 + 0.4, 0.0, 1.0);
+    // Self-shadow: puff density one step toward the sun, plus the thick core when the sun is behind it.
+    float toward = texture2D(uAtlas, tileUv(tile, uq + vec2(L.x * flip, L.y) * 0.22)).a;
+    float sh = mix(1.0, selfShadow(toward + tex.b * max(-L.z, 0.0)), uSelfShadow);
+    float phase = mix(1.0, clamp(vPhase, 0.25, 4.0), (1.0 - tex.a) * 0.75);
+    float ao = mix(1.0, 0.6, tex.b * tex.a);
+    vec3 albedo = vColor.rgb;
+    // Fire light from below: the underside of the smoke glows.
+    float below = clamp(0.55 - 0.5 * dot(nrm.xy, vUpS), 0.15, 1.0);
+    lit = albedo * (uAmbient * ao + uSunColor * diff * sh * phase) + max(albedo, vec3(uGlowFloor)) * uGlowColor * vColor.a * below;
+    if (heat > 0.004) {
+      // Rolling fireball: hot thick core mottled by the noise; cool patches go to soot first. The glow
+      // needs optical depth: thin edges are dark soot, not a translucent orange haze.
+      T = fireballTemperature(heat, tex.b, n.a * 0.55 + n.b * 0.45) * smoothstep(0.08, 0.55, dens);
+      occ = mix(1.0, uFireOcclusion, smoothstep(0.3, 0.9, T));
+    }
+  }
+  vec3 emis = T > 0.0 ? fireRamp(T) * emisK : vec3(0.0);
+  float aOcc = a * occ;
   gl_FragColor = vec4(0.0);
   {
     #include <fog_fragment>
@@ -188,6 +309,13 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
   atlas.minFilter = THREE.LinearMipmapLinearFilter;
   atlas.magFilter = THREE.LinearFilter;
   atlas.needsUpdate = true;
+  const noiseData = generateNoiseTexture(FX.noiseSize, ((opts.seed ?? FX.seed) + 7) & 0xffff);
+  const noise = new THREE.DataTexture(noiseData.data, noiseData.width, noiseData.height, THREE.RGBAFormat);
+  noise.wrapS = noise.wrapT = THREE.RepeatWrapping;
+  noise.generateMipmaps = true;
+  noise.minFilter = THREE.LinearMipmapLinearFilter;
+  noise.magFilter = THREE.LinearFilter;
+  noise.needsUpdate = true;
 
   const geo = new THREE.InstancedBufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0], 3));
@@ -197,25 +325,35 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
     a.setUsage(THREE.DynamicDrawUsage);
     return a;
   };
-  const iPos = attr(4), iParams = attr(4), iColor = attr(4), iGround = attr(1);
+  const iPos = attr(4), iParams = attr(4), iColor = attr(4), iExtra = attr(4), iVel = attr(4);
+  const instAttrs = [iPos, iParams, iColor, iExtra, iVel];
   geo.setAttribute('iPos', iPos);
   geo.setAttribute('iParams', iParams);
   geo.setAttribute('iColor', iColor);
-  geo.setAttribute('iGround', iGround);
+  geo.setAttribute('iExtra', iExtra);
+  geo.setAttribute('iVel', iVel);
   geo.instanceCount = 0;
 
   const sunDir = new THREE.Vector3(0.45, 0.75, 0.35).normalize();
   const uniforms: Record<string, THREE.IUniform> = {
     ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
     uAtlas: { value: atlas },
+    uNoise: { value: noise },
+    uTime: { value: 0 },
     uSunView: { value: new THREE.Vector3(0, 1, 0) },
     uSunColor: { value: new THREE.Color(1.0, 0.96, 0.9) },
     uAmbient: { value: new THREE.Color(0.32, 0.37, 0.46) },
-    uGlowColor: { value: new THREE.Color(1.1, 0.42, 0.1) },
+    uGlowColor: { value: new THREE.Color(...FX.smokeGlow) },
+    uGlowFloor: { value: FX.glowFloor },
     uFireIntensity: { value: FX.fireIntensity },
     uFireOcclusion: { value: FX.fireOcclusion },
+    uSparkIntensity: { value: FX.sparkIntensity },
+    uSelfShadow: { value: FX.selfShadow },
     uNearFade: { value: FX.nearFade },
     uMaxCover: { value: FX.maxScreenCover },
+    uViewportH: { value: 900 },
+    uMinPx: { value: FX.minPixels },
+    uShutter: { value: FX.shutter },
   };
   // keep the shared atmospheric-fog array by reference (see render/fog.ts)
   const fogLib = THREE.UniformsLib.fog as Record<string, THREE.IUniform>;
@@ -231,6 +369,11 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
   mesh.name = 'fx-particles';
   mesh.frustumCulled = false;
   mesh.visible = false;
+  const viewport = new THREE.Vector4();
+  mesh.onBeforeRender = (renderer) => {
+    renderer.getCurrentViewport(viewport);
+    if (viewport.w > 0) mat.uniforms.uViewportH.value = viewport.w;
+  };
   group.add(mesh);
 
   // ── Debris ────────────────────────────────────────────────────────────────
@@ -271,6 +414,7 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
   const geom = CONFIG.aircraft.geometry;
   let disposed = false;
   let drawn = 0;
+  let clock = 0;
 
   const groundAt = (x: number, z: number, fallback: number) => {
     if (!opts.groundHeight) return fallback;
@@ -287,7 +431,9 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
     par[o] = p.rot[i]; par[o + 1] = particleAlpha(p, i); par[o + 2] = particleHeat(p, i); par[o + 3] = p.tile[i];
     colr[o] = Math.min(1, p.r[i] * light); colr[o + 1] = Math.min(1, p.g[i] * light); colr[o + 2] = Math.min(1, p.b[i] * light);
     colr[o + 3] = sim.glowAt(p.px[i], p.py[i], p.pz[i]);
-    (iGround.array as Float32Array)[slot] = Math.max(-1e6, p.groundY[i]);
+    const ex = iExtra.array as Float32Array, vel = iVel.array as Float32Array;
+    ex[o] = Math.max(-1e6, p.groundY[i]); ex[o + 1] = p.seed[i]; ex[o + 2] = Math.min(1, Math.max(0, t)); ex[o + 3] = p.aspect[i];
+    vel[o] = p.vx[i]; vel[o + 1] = p.vy[i]; vel[o + 2] = p.vz[i]; vel[o + 3] = 0;
   };
 
   return {
@@ -321,7 +467,11 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
     update(camera, dtIn, wind) {
       if (disposed) return;
       const dt = Number.isFinite(dtIn) && dtIn > 0 ? Math.min(dtIn, 0.25) : 0;
-      if (dt > 0) sim.step(dt, wind ? wind.x : 0, wind ? wind.y : 0, wind ? wind.z : 0);
+      if (dt > 0) {
+        sim.step(dt, wind ? wind.x : 0, wind ? wind.y : 0, wind ? wind.z : 0);
+        clock = (clock + dt) % TIME_WRAP;
+        mat.uniforms.uTime.value = clock;
+      }
 
       // Gather visible particles with their view depth.
       const e = camera.matrixWorld.elements;
@@ -354,14 +504,12 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
       mesh.visible = n > 0;
       if (n > 0) {
         mesh.position.set(sx / n, sy / n, sz / n); // for three's transparent-object sort only
-        for (const a of [iPos, iParams, iColor]) {
+        for (let ai = 0; ai < instAttrs.length; ai++) {
+          const a = instAttrs[ai];
           a.clearUpdateRanges();
           a.addUpdateRange(0, n * 4);
           a.needsUpdate = true;
         }
-        iGround.clearUpdateRanges();
-        iGround.addUpdateRange(0, n);
-        iGround.needsUpdate = true;
       }
       (mat.uniforms.uSunView.value as THREE.Vector3).copy(sunDir).transformDirection(camera.matrixWorldInverse);
 
@@ -418,6 +566,7 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
       geo.dispose();
       mat.dispose();
       atlas.dispose();
+      noise.dispose();
       dGeo.dispose();
       dMat.dispose();
       debris.dispose();

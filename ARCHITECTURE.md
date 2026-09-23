@@ -1,6 +1,6 @@
-# Flight Simulator Architecture
+# Tater's Flight Sim — Architecture
 
-This document explains how the Flight Simulator is built, in plain English. It is written for a
+This document explains how Tater's Flight Sim is built, in plain English. It is written for a
 developer (or an AI agent) who has never seen the code. Read `ELEVATOR_PITCH.md` first for *what*
 the project is; this file is *how* it works. `REPO_MAP.md` lists every file; `RESUME.md` says where
 the work stopped.
@@ -243,7 +243,10 @@ default-exports `{ name, order, create(ctx) }`. `systems/index.ts` finds them au
 | `ready(camera)` | before the first frame (e.g. terrain tiles around the runway) |
 | `readings(state, controls, dt)` | one system (the HUD) provides the instrument readings |
 | `cameraShake(state)` | the largest value wins |
+| `adjustControls(controls, state, dt)` | before the physics steps; chained in order (the weapons system sets `gunFiring` so the physics applies the gun's recoil) |
 | `update(frame)` | every frame, after the camera moves, before rendering |
+| `postRender(frame)` | right after the main render (extra viewports, e.g. a missile camera) |
+| `onAircraftChange(def, model)` | the player picked another aircraft (a reset follows) |
 | `onAction`, `onReset`, `onResize`, `stats`, `dispose` | as named |
 
 Current systems (order): loading (0, the start-up veil), camerafx (1, speed-dependent field of
@@ -270,6 +273,38 @@ restarts on the runway, and every system hears `onAircraftChange(def, model)`.
 `CONFIG.aircraft` — geometry first, because the physics contact points and the 3D model share it;
 (2) build its model under `src/aircraft/<name>/` implementing `AircraftModelHandle`; (3) add one
 entry to `FLEET`. Tests in `tests/fleet/` check every entry spawns resting on its gear.
+
+## 9c. Combat (src/combat) — the A-10's gun, missiles and the tanks
+
+The A-10C (and the F-16's gun) plug into the same systems layer. Everything talks through one
+**combat world** per scene (`combatWorld(scene)`, `src/combat/world.ts`, plain data + pure maths):
+
+- **Targets** — every ground vehicle is a `GroundTarget`: a hull box standing on the ground
+  (`position`, `headingDeg`, real sizes per class from `CONFIG.combat.targets`: T-72B tank, BMP-2,
+  BTR-80, Ural-4320 truck, ZSU-23-4 Shilka), health, alive / destroyed.
+- **Hits** — `raycast(from, to)` finds the first hull a round's flight segment crosses and which
+  face it struck; `applyHit` applies damage through the **armour by aspect** table
+  (`src/combat/damage.ts`: a 30 mm round barely scratches a T-72's front but goes through the top
+  and rear); `applyBlast` damages everything near an explosion, falling off with distance.
+- **Events** — `on(listener)`: gunStart / gunStop, impact, hit, destroyed, missileLaunch,
+  detonation, lock / lockLost, reload. The effects, sound and HUD react to these; nobody calls
+  anybody else directly.
+- **Status** — `world.status` is what the HUD shows: rounds, barrel spin, CCIP (where the gun's
+  rounds would land), missiles left per rail, lock state and range.
+
+Who does what:
+
+| System | Job |
+| --- | --- |
+| `weapons` | the gun: barrels spin up, rounds fly with gravity and drag (`ballistics.ts`), hit targets and ground, recoil via `adjustControls` → `Controls.gunFiring` → the physics |
+| `missiles` | the Mavericks, **arcade model**: T picks the vehicle nearest the nose, LOCK after a moment, Z fires, and the missile flies a scripted curve to it (`missile.ts`, `targeting.ts`) — deliberately not a guidance simulation |
+| `targets` | places the vehicles at the range north of the airport, moves the convoy, draws them and their wrecks |
+| `combatfx` | impact dust and sparks, explosions, the GAU-8's sound |
+| `weaponsHud` | gun cross, CCIP pipper, lock box, ammo, kills, the arrow to the range |
+
+Each aircraft's weapons are part of its config (`config.weapons`: `A10_WEAPONS`, `F16_WEAPONS`;
+the Cessna carries nothing). Keys: hold **Q** / Enter to fire the gun, **T** to pick a target,
+**Z** to fire a missile. `?spawn=range` starts you near the targets; `window.sim.combat` shows it all.
 
 ## 10. The aircraft on screen (src/aircraft)
 
@@ -326,9 +361,11 @@ both read `aircraft.geometry` from the config, and a test checks they agree with
 speed, AGL, angle of attack, RPM, engine, camera, paused, crash reason, last landing,
 `perf` (fps stats + per-system CPU ms), `render` (draw calls, triangles), and actions:
 `reset()`, `resetApproach()`, `setCamera(mode)`, `pause()`, `resume()`, `teleport({x, z, aglFt,
-headingDeg, speedKt})`, `setTimeOfDay(i)`, `debug()`. Browser tests and the QA pilot read it
-instead of reading pixels. URL options: `?spawn=x,z,aglFt,hdg,kt`, `&cam=`, `&tod=`, `&pause=1`,
-`&no=`.
+headingDeg, speedKt})`, `setTimeOfDay(i)`, `selectAircraft(id)`, `fleet()`, `debug()`, plus
+`aircraft` (the fleet id being flown) and `combat` (weapons status, stats, the range and
+`list()` of every target). Browser tests and the QA pilot read it
+instead of reading pixels. URL options: `?spawn=x,z,aglFt,hdg,kt` (or `?spawn=range`), `&cam=`,
+`&tod=`, `&pause=1`, `&no=`, `&aircraft=c172rg|f16|a10`, `&veil=0`.
 
 ## 13. Testing
 

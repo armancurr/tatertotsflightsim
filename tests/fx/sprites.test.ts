@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateParticleAtlas, ATLAS_COLS, ATLAS_ROWS, SMOKE_TILES, FLAME_TILES } from '../../src/fx/sprites';
+import { generateParticleAtlas, generateNoiseTexture, ATLAS_COLS, ATLAS_ROWS, SMOKE_TILES, FLAME_TILES, SPARK_TILE, particleKind } from '../../src/fx/sprites';
 
 const TILE = 64;
 const atlas = generateParticleAtlas(TILE, 3);
@@ -121,5 +121,60 @@ describe('generateParticleAtlas', () => {
       const rowWidth = (y0: number, y1: number) => px.filter((p) => p.y >= y0 && p.y < y1 && p.a > 40).length;
       expect(rowWidth(TILE * 0.2, TILE * 0.35)).toBeGreaterThan(rowWidth(TILE * 0.65, TILE * 0.8));
     }
+  });
+});
+
+describe('generateNoiseTexture (the animated-noise source for flames, fireballs and puff erosion)', () => {
+  const N = 64;
+  const tex = generateNoiseTexture(N, 5);
+  const at = (x: number, y: number, c: number) => tex.data[(((y + N) % N) * N + ((x + N) % N)) * 4 + c] / 255;
+  it('is square RGBA, deterministic per seed', () => {
+    expect(tex.width).toBe(N);
+    expect(tex.height).toBe(N);
+    expect(tex.data.length).toBe(N * N * 4);
+    expect(Buffer.from(generateNoiseTexture(N, 5).data).equals(Buffer.from(tex.data))).toBe(true);
+    expect(Buffer.from(generateNoiseTexture(N, 6).data).equals(Buffer.from(tex.data))).toBe(false);
+  });
+  it('tiles seamlessly: the wrap-around step is no bigger than steps inside the texture', () => {
+    for (let c = 0; c < 4; c++) {
+      let inner = 0, wrap = 0;
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N - 1; x++) inner = Math.max(inner, Math.abs(at(x + 1, y, c) - at(x, y, c)));
+        wrap = Math.max(wrap, Math.abs(at(0, y, c) - at(N - 1, y, c)));
+      }
+      for (let x = 0; x < N; x++) wrap = Math.max(wrap, Math.abs(at(x, 0, c) - at(x, N - 1, c)));
+      expect(wrap, `channel ${c}`).toBeLessThanOrEqual(inner * 1.25 + 1 / 255);
+    }
+  });
+  it('four independent channels with full contrast around a mid-grey mean', () => {
+    const mean = [0, 0, 0, 0], lo = [1, 1, 1, 1], hi = [0, 0, 0, 0];
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        for (let c = 0; c < 4; c++) {
+          const v = at(x, y, c);
+          mean[c] += v / (N * N);
+          lo[c] = Math.min(lo[c], v);
+          hi[c] = Math.max(hi[c], v);
+        }
+      }
+    }
+    for (let c = 0; c < 4; c++) {
+      expect(mean[c]).toBeGreaterThan(0.4);
+      expect(mean[c]).toBeLessThan(0.6);
+      expect(hi[c] - lo[c]).toBeGreaterThan(0.6);
+    }
+    // channels are not copies of each other
+    let diff = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) diff += Math.abs(at(x, y, 0) - at(x, y, 1));
+    expect(diff / (N * N)).toBeGreaterThan(0.08);
+  });
+});
+
+describe('particle kinds', () => {
+  it('tiles 0–3 are puffs, 4–7 flames, SPARK_TILE is a procedural streak (not in the atlas)', () => {
+    for (const t of SMOKE_TILES) expect(particleKind(t)).toBe('puff');
+    for (const t of FLAME_TILES) expect(particleKind(t)).toBe('flame');
+    expect(particleKind(SPARK_TILE)).toBe('spark');
+    expect(SPARK_TILE).toBeGreaterThanOrEqual(ATLAS_COLS * ATLAS_ROWS);
   });
 });
