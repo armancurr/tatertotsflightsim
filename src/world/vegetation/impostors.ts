@@ -10,8 +10,20 @@
  */
 import * as THREE from 'three';
 import { buildSpeciesGeometry, SPECIES_R0 } from './species';
-import { SPECIES_COUNT } from './placement';
-import { ELEVATION_COLS, ELEVATION_STEP, TILE_MARGIN, halfHeightAt, CROWN_CENTER, type ImpostorAtlasTextures } from './materials';
+import { SPECIES_COUNT, SPRUCE } from './placement';
+import { ELEVATION_COLS, ELEVATION_STEP, TILE_MARGIN, halfHeightAt, CROWN_CENTER, CLUMP_VARIATION, type ImpostorAtlasTextures } from './materials';
+
+/**
+ * Clump scale the impostors are baked with: the mean scale of the clumps a tree keeps, less half
+ * the dropped share — the average near crown, so the LOD switch neither grows nor thins the trees.
+ * Spruces are baked full size: their thin needle sprays lose coverage in the small atlas tiles,
+ * which the full-length branches make up for (tests/e2e/trees.e2e.test.ts measures both paths).
+ */
+export function bakeClumpScale(species: number): number {
+  if (species === SPRUCE) return 1;
+  const v = CLUMP_VARIATION[species];
+  return ((1 + v.minScale) / 2) * (1 - 0.5 * v.drop);
+}
 import type { FoliageTextures } from './textures';
 
 export interface ImpostorAtlas extends ImpostorAtlasTextures {
@@ -34,6 +46,9 @@ const CLEAR_LINEAR: [number, number, number][] = [
 
 const bakeVert = /* glsl */ `
 attribute float leaf;
+attribute vec4 clump;
+uniform float uBakeClump;
+uniform float uBakeSpruce;
 varying vec2 vUv;
 varying vec3 vCol;
 varying vec3 vN;
@@ -43,9 +58,12 @@ void main() {
   vUv = uv;
   vCol = color;
   vLeaf = leaf;
-  vObj = position;
+  // the average crown of the species: every clump at its mean per-tree scale (materials.ts CLUMP_VARIATION)
+  float k = (uBakeSpruce > 0.5 && clump.w < 0.5) ? 1.0 : uBakeClump;
+  vec3 p = clump.w >= 0.0 ? clump.xyz + (position - clump.xyz) * k : position;
+  vObj = p;
   vN = normalize(normalMatrix * normal);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }`;
 
 const bakeAlbedoFrag = /* glsl */ `
@@ -131,8 +149,16 @@ export function createImpostorAtlas(tileSize: number, tex: FoliageTextures): Imp
       renderer.autoClear = false;
 
       const scene = new THREE.Scene();
+      const clumpU = { value: 1 };
+      const spruceU = { value: 0 };
       const mat = (frag: string): THREE.ShaderMaterial =>
-        new THREE.ShaderMaterial({ vertexShader: bakeVert, fragmentShader: frag, uniforms: { map: { value: tex.map } }, vertexColors: true, side: THREE.DoubleSide });
+        new THREE.ShaderMaterial({
+          vertexShader: bakeVert,
+          fragmentShader: frag,
+          uniforms: { map: { value: tex.map }, uBakeClump: clumpU, uBakeSpruce: spruceU },
+          vertexColors: true,
+          side: THREE.DoubleSide,
+        });
       const albedoMat = mat(bakeAlbedoFrag);
       const normalMat = mat(bakeNormalFrag);
       const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 20);
@@ -150,6 +176,8 @@ export function createImpostorAtlas(tileSize: number, tex: FoliageTextures): Imp
           const R0 = SPECIES_R0[s];
           mesh.geometry = geoms[s];
           mesh.scale.set(R0, 1, R0); // canonical proportions: height 1, crown radius R0
+          clumpU.value = bakeClumpScale(s);
+          spruceU.value = s === SPRUCE ? 1 : 0;
           center.set(0, CROWN_CENTER, 0);
           for (let k = 0; k < cols; k++) {
             const e = k * ELEVATION_STEP;
