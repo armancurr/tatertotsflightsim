@@ -141,13 +141,20 @@ void classWeights( vec4 lc0, vec4 lc1, float slope, float nb, float nb2, float n
   w[ 0 ] = aC; w[ 1 ] = aG; w[ 2 ] = aF; w[ 3 ] = aR * ( 1.0 - screeFrac ); w[ 4 ] = aR * screeFrac;
   w[ 5 ] = aS; w[ 6 ] = aD; w[ 7 ] = aU;
 }
+// The three strongest classes and their weights (wA: classes 0–3, wB: 4–7); i1, i2 as topTwo (same
+// tie-breaking). Plain vectors, no arrays: a local array that is indexed dynamically or passed
+// between functions ends up in memory on some GPUs (Apple: ~5 ms a frame over farmland at 1440×900).
+void rankClasses( vec4 wA, vec4 wB, out int i1, out int i2, out int i3, out float w1, out float w2, out float w3 ) {
+  i1 = 0; i2 = 1; i3 = 2;
+  w1 = wA.x; w2 = wA.y; w3 = -1.0;
+  if ( wA.y > wA.x ) { i1 = 1; i2 = 0; w1 = wA.y; w2 = wA.x; }
+#define T_RANK( K, X ) { float x = X; if ( x > w1 ) { i3 = i2; w3 = w2; i2 = i1; w2 = w1; i1 = K; w1 = x; } else if ( x > w2 ) { i3 = i2; w3 = w2; i2 = K; w2 = x; } else if ( x > w3 ) { i3 = K; w3 = x; } }
+  T_RANK( 2, wA.z ) T_RANK( 3, wA.w ) T_RANK( 4, wB.x ) T_RANK( 5, wB.y ) T_RANK( 6, wB.z ) T_RANK( 7, wB.w )
+#undef T_RANK
+}
 void topTwo( float w[8], out int i1, out int i2 ) {
-  i1 = 0; i2 = 1;
-  if ( w[ 1 ] > w[ 0 ] ) { i1 = 1; i2 = 0; }
-  for ( int k = 2; k < 8; k++ ) {
-    if ( w[ k ] > w[ i1 ] ) { i2 = i1; i1 = k; }
-    else if ( w[ k ] > w[ i2 ] ) i2 = k;
-  }
+  int i3; float w1; float w2; float w3;
+  rankClasses( vec4( w[ 0 ], w[ 1 ], w[ 2 ], w[ 3 ] ), vec4( w[ 4 ], w[ 5 ], w[ 6 ], w[ 7 ] ), i1, i2, i3, w1, w2, w3 );
 }
 float heightBlend( float a1, float h1, float a2, float h2, float fade ) {
   float s = a1 + a2;

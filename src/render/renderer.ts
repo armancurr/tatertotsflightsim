@@ -41,7 +41,7 @@ import { bloomForQuality, createOutputPass, type OutputPass, type PostSettings }
 import { getAtmosphereFrameData } from './frameData';
 import { installFilmicNeutral } from './toneMapping';
 import { createGpuTimer, type GpuTimer } from './gpuTimer';
-import { planQuality, qualityFromQuery, type QualityLevel, type QualityPlan } from './quality';
+import { msaaLadder, planQuality, qualityFromQuery, type QualityLevel, type QualityPlan } from './quality';
 import { installLogDepthForShaderMaterials } from './logDepthPatch';
 
 export type DepthMode = 'reversed' | 'logarithmic' | 'standard';
@@ -185,8 +185,14 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   let maxRatio = plan.maxPixelRatio;
   let minRatio = plan.minPixelRatio;
   let pixelRatio = plan.initialPixelRatio;
+  // ?msaa=0|2|4 pins the MSAA (A/B measurements); so does opts.samples. Otherwise the 'auto' and
+  // 'medium' presets let dynamic resolution step MSAA down before the image gets blurry.
+  const url = typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+  const msaaParam = url?.get('msaa');
+  const fixedSamples = opts.samples ?? (msaaParam != null && msaaParam !== '' && Number.isFinite(Number(msaaParam)) ? Number(msaaParam) : undefined);
   const makeDyn = (initial: number): DynamicResolution =>
     createDynamicResolution({
+      msaaLevels: fixedSamples === undefined ? msaaLadder(plan) : undefined,
       targetFps: rc.targetFps,
       minPixelRatio: minRatio,
       maxPixelRatio: maxRatio,
@@ -204,7 +210,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     target = new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.HalfFloatType,
       format: THREE.RGBAFormat,
-      samples: opts.samples ?? plan.msaaSamples,
+      samples: fixedSamples ?? plan.msaaSamples,
       depthBuffer: true,
       stencilBuffer: false,
       depthTexture,
@@ -240,6 +246,13 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     }
   }
 
+  /** Re-create the HDR target's multisampled buffers with another sample count (the dynamic-resolution MSAA ladder). */
+  function setSamples(n: number) {
+    if (!target || fixedSamples !== undefined || !plan.msaaAdaptive || target.samples === n) return;
+    target.samples = n;
+    target.dispose(); // three re-allocates it (same texture objects) on the next setRenderTarget
+  }
+
   function setQuality(pr: number) {
     const next = Math.min(maxRatio, Math.max(minRatio, pr));
     if (Math.abs(next - pixelRatio) < 1e-3) return;
@@ -269,7 +282,8 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     get pixelRatio() {
       return pixelRatio;
     },
-    dynamicResolution: opts.dynamicResolution ?? rc.dynamicResolution,
+    // ?dyn=0 pins the pixel ratio (A/B performance measurements at a fixed resolution)
+    dynamicResolution: opts.dynamicResolution ?? (url?.get('dyn') === '0' ? false : rc.dynamicResolution),
     post,
     gpuTimings: () => timer.snapshot(),
     get atMinQuality() {
@@ -334,14 +348,17 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   };
   if (typeof window !== 'undefined') {
     const w = window as unknown as { __render?: Record<string, unknown> };
-    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, perPassTiming, pixelRatio: () => pixelRatio, quality: () => ({ ...plan }), benchClouds };
+    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, perPassTiming, pixelRatio: () => pixelRatio, msaa: () => (target ? target.samples : 0), quality: () => ({ ...plan }), benchClouds };
   }
 
   function renderPipeline(scene: THREE.Scene, camera: THREE.Camera) {
     const now = performance.now();
     if (lastFrame > 0 && handle.dynamicResolution) {
       const r = dyn.update((now - lastFrame) / 1000);
-      if (r !== null) setQuality(r);
+      if (r !== null) {
+        setQuality(r);
+        setSamples(dyn.msaa);
+      }
     }
     lastFrame = now;
     if (!target || !output) {
@@ -401,6 +418,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     minRatio = plan.minPixelRatio;
     const keep = Math.min(maxRatio, Math.max(minRatio, pixelRatio));
     dyn = makeDyn(keep);
+    setSamples(dyn.msaa);
     pixelRatio = -1; // force the resize below
     setQuality(keep);
     watchDpr();

@@ -43,11 +43,17 @@ export interface DynamicResolutionOptions {
   rampUpDelay?: number;
   /** Seconds of frames after start/reset that are not judged (start-up streaming, shader compiles) (default 0). */
   warmup?: number;
+  /** MSAA sample counts the controller may step through, best first (default: none — MSAA is not touched). */
+  msaaLevels?: readonly number[];
+  /** MSAA is lowered before the ratio drops below this fraction of maxPixelRatio (default 0.85). */
+  msaaKnee?: number;
 }
 
 export interface DynamicResolution {
   readonly pixelRatio: number;
-  /** Feed one frame's duration (seconds). Returns the new ratio when it changed, else null. */
+  /** MSAA samples to render with (msaaLevels[i]; 0 without a ladder). */
+  readonly msaa: number;
+  /** Feed one frame's duration (seconds). Returns the ratio when it or the MSAA changed, else null. */
   update(dt: number): number | null;
   /** Restore a ratio (default: the maximum) and clear all timers/back-off. */
   reset(pixelRatio?: number): void;
@@ -80,6 +86,10 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
   let sinceRaise = Infinity;
   let ramping = rampUpDelay > 0;
   let warm = warmupS;
+  const levels = opts.msaaLevels && opts.msaaLevels.length > 0 ? opts.msaaLevels : [0];
+  let msaaIdx = 0;
+  const knee = Math.min(maxR, Math.max(minR, maxR * (opts.msaaKnee ?? 0.85)));
+  const EPS = 1e-6;
 
   function reset(pixelRatio?: number) {
     ratio = clamp(pixelRatio ?? maxR);
@@ -91,6 +101,7 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
     sinceRaise = Infinity;
     ramping = rampUpDelay > 0;
     warm = warmupS;
+    msaaIdx = 0;
   }
 
   function update(dt: number): number | null {
@@ -117,19 +128,22 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
       fastTime = 0;
     }
 
-    if (slowTime >= downDelay && ratio > minR) {
+    const canDropMsaa = msaaIdx < levels.length - 1;
+    if (slowTime >= downDelay && (ratio > minR || canDropMsaa)) {
       if (sinceRaise < probeWindow) {
         upDelay = Math.min(maxUpDelay, upDelay * 2);
         ramping = false;
       }
-      ratio = clamp(ratio * stepDown);
+      if (canDropMsaa && (ratio <= knee + EPS || ratio <= minR)) msaaIdx++;
+      else ratio = clamp(ratio * stepDown);
       slowTime = 0;
       fastTime = 0;
       settle = settleTime;
       return ratio;
     }
-    if (fastTime >= (ramping ? Math.min(rampUpDelay, upDelay) : upDelay) && ratio < maxR) {
-      ratio = clamp(ratio / stepDown);
+    if (fastTime >= (ramping ? Math.min(rampUpDelay, upDelay) : upDelay) && (ratio < maxR || msaaIdx > 0)) {
+      if (msaaIdx > 0 && ratio >= knee - EPS) msaaIdx--;
+      else ratio = msaaIdx > 0 ? Math.max(ratio, Math.min(knee, clamp(ratio / stepDown))) : clamp(ratio / stepDown);
       fastTime = 0;
       slowTime = 0;
       settle = settleTime;
@@ -142,6 +156,9 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
   return {
     get pixelRatio() {
       return ratio;
+    },
+    get msaa() {
+      return levels[msaaIdx];
     },
     update,
     reset,

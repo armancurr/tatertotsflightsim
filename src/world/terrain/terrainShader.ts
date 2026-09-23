@@ -23,6 +23,7 @@
 import { FIELD_GLSL } from '../fields';
 import { BLEND_GLSL } from './blend';
 import { DETAIL_TILE_M } from './detailTextures';
+import { DETAIL_LOD as LOD } from './detailLod';
 
 export const MAX_TOWNS = 32;
 /** Runways the shader knows (approach corridors kept clear of woodlots): 36/18 first, then the rest. */
@@ -207,7 +208,7 @@ float tBand( float d, float w, float fw ) {
 }
 // Anti-aliased periodic stripe signal in [-1, 1] that fades to 0 once a period nears the pixel size.
 float tStripes( float x, float period, float fw ) {
-  return sin( x * 6.2831853 / period ) * ( 1.0 - smoothstep( period * 0.25, period * 0.7, fw ) );
+  return sin( x * 6.2831853 / period ) * ( 1.0 - smoothstep( period * ${f(LOD.stripeStart)}, period * ${f(LOD.stripeEnd)}, fw ) );
 }
 
 // Fall-line ("flow") frames. Projecting world xz onto the local fall direction twists the pattern
@@ -731,9 +732,9 @@ vec4 tDetail( float layer, float amt, vec2 p, out vec3 nOut ) {
   nOut = vec3( 0.0, 0.0, 1.0 );
   if ( uDetail <= 0.0 || amt <= 0.0 ) return vec4( 1.0, 1.0, 1.0, 0.5 );
   float S = DET_TILE[ int( layer + 0.5 ) ];
-  float fNear = ( 1.0 - smoothstep( S / 64.0, S / 9.0, gFwD ) ) * amt * uDetail;
-  float S2 = S * 5.3;
-  float fMid = ( 1.0 - smoothstep( S2 / 64.0, S2 / 8.0, gFwD ) ) * amt * uDetail;
+  float fNear = ( 1.0 - smoothstep( S * ${f(LOD.nearStart)}, S * ${f(LOD.nearEnd)}, gFwD ) ) * amt * uDetail;
+  float S2 = S * ${f(LOD.midScale)};
+  float fMid = ( 1.0 - smoothstep( S2 * ${f(LOD.midStart)}, S2 * ${f(LOD.midEnd)}, gFwD ) ) * amt * uDetail;
   vec3 md = vec3( 1.0 );
   float h = 0.5;
   vec2 pn = vec2( 0.0 );
@@ -852,25 +853,27 @@ vec3 terrainAlbedo( out float rough ) {
   classWeights( vLc0, vLc1, slope, nb, nb2, nSnow, streak, wp.y, w );
   int i1;
   int i2;
-  topTwo( w, i1, i2 );
-
+  int i3;
+  float w1;
+  float w2;
+  float w3;
+  rankClasses( vec4( w[ 0 ], w[ 1 ], w[ 2 ], w[ 3 ] ), vec4( w[ 4 ], w[ 5 ], w[ 6 ], w[ 7 ] ), i1, i2, i3, w1, w2, w3 );
   vec3 col = vec3( 0.0 );
   rough = 0.0;
   tBump = 0.0;
   tDetN = vec2( 0.0 );
-  // minor classes: plain colours (slivers under 1.5 % are skipped and the rest renormalised)
+  // a minor third class as a plain colour (slivers under 1.5 % — and any fourth class, which only
+  // ever holds a few per cent at a junction of four covers — are skipped and the rest renormalised)
   float wIn = 0.0;
-  for ( int k = 0; k < 8; k++ ) {
-    if ( k == i1 || k == i2 || w[ k ] < 0.015 ) continue;
-    Surf s = tClassSurf( k, wp, N );
-    wIn += w[ k ];
-    col += w[ k ] * s.col;
-    rough += w[ k ] * s.rough;
-    tBump += w[ k ] * s.bump;
+  if ( w3 >= 0.015 ) {
+    Surf s = tClassSurf( i3, wp, N );
+    wIn = w3;
+    col = w3 * s.col;
+    rough = w3 * s.rough;
+    tBump = w3 * s.bump;
   }
   // the two strongest: detail textures and a height-aware blend
-  float w1 = w[ i1 ];
-  float w2 = w[ i2 ] >= 0.004 ? w[ i2 ] : 0.0;
+  w2 = w2 >= 0.004 ? w2 : 0.0;
   Surf s1 = tClassSurf( i1, wp, N );
   vec3 n1;
   vec4 d1 = tDetail( s1.layer, s1.amt, p, n1 );
@@ -882,7 +885,7 @@ vec3 terrainAlbedo( out float rough ) {
     vec3 n2;
     vec4 d2 = tDetail( s2.layer, s2.amt, p, n2 );
     c2 = s2.col * d2.rgb * n2.z;
-    float fade = ( 1.0 - smoothstep( 0.05, 0.6, gFwD ) ) * uDetail;
+    float fade = ( 1.0 - smoothstep( ${f(LOD.blendStart)}, ${f(LOD.blendEnd)}, gFwD ) ) * uDetail;
     b2 = heightBlend( w1, d1.a, w2, d2.a, fade );
     rough += ( w1 + w2 ) * mix( s1.rough, s2.rough, b2 );
     tBump += ( w1 + w2 ) * mix( s1.bump, s2.bump, b2 );
@@ -972,7 +975,7 @@ vec3 terrainAlbedo( out float rough ) {
     }
   }
   rough = clamp( rough, 0.3, 1.0 );
-  tBumpScale = 1.0 - smoothstep( 0.2, 2.5, gFw );
+  tBumpScale = 1.0 - smoothstep( ${f(LOD.bumpStart)}, ${f(LOD.bumpEnd)}, gFw );
   return col;
 }
 
