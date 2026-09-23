@@ -16,6 +16,7 @@ import { CONFIG } from '../config';
 import { sampleDecal, rasterizeLiveryDecals, type DecalSample, type LiveryDecals } from './decals';
 import { CABIN_Z0, CABIN_Z1 } from './fuselage';
 import { wellCutDistance } from './gearKinematics';
+import { HEADER, POST, postSideDistance } from './cabinTrim';
 import {
   DOOR_OUTLINE,
   DOOR_WINDOW,
@@ -39,10 +40,15 @@ export const COLORS = {
   antiGlare: [22, 22, 24],
   seal: [28, 30, 33],
   well: [48, 48, 50],
-  headliner: [196, 188, 170],
-  wall: [150, 142, 128],
-  lowerWall: [86, 80, 74],
-  carpet: [60, 57, 54],
+  // Cabin (1980s 172RG grey interior): light vinyl headliner, grey plastic upper trim round the
+  // windows, dark grey windshield posts and header, grey vinyl sides, charcoal kick panels and carpet.
+  headliner: [168, 166, 160],
+  upperTrim: [104, 105, 107],
+  post: [54, 55, 58],
+  wall: [92, 93, 96],
+  lowerWall: [64, 65, 68],
+  carpet: [46, 47, 50],
+  windowSeal: [30, 30, 32],
 } as const;
 
 /** Fin texture covers this side-view box (z, y). */
@@ -396,20 +402,82 @@ function paintSkin(
   }
 }
 
+/**
+ * How far (m) a cabin-shell point is inside an opening of the shell (> 0 open, < 0 solid): the
+ * window openings inset by CABIN_INSET, and — next to each windshield post — the shell opened right
+ * up to the post moulding (cabinTrim.ts), so the post is the slim moulding, not a band of wall.
+ */
+export function cabinOpenDistance(x: number, y: number, z: number, sec: SectionParams): number {
+  let d = windowDistance(x, y, z, sec) - CABIN_INSET;
+  if (Math.abs(x) > 0.2 && z < -0.4 && y > POST.openY0 - 0.02 && y < POST.openY1 + 0.02) {
+    const s = postSideDistance(z, y);
+    const as = Math.abs(s);
+    if (as < POST.corridorHalf + 0.03) {
+      // Only in the strips between the moulding and a window edge (never beyond a window's end).
+      const nearWindow = s > 0 ? (y - pillarY(z)) * 0.67 + 0.016 : 0.016 - doorWindowSd(z, y);
+      const open = Math.min(as - POST.halfWidth + 0.004, nearWindow, y - POST.openY0, POST.openY1 - y);
+      d = Math.max(d, open);
+    }
+  }
+  return d;
+}
+
+/** Cheap deterministic texel noise in [−1, 1] (vinyl grain, headliner perforation). */
+function grain(x: number, y: number, z: number): number {
+  const h = Math.sin(x * 1291.7 + y * 3117.3 + z * 2371.1) * 43758.5453;
+  return (h - Math.floor(h)) * 2 - 1;
+}
+
 function paintCabin(x: number, y: number, z: number, sec: SectionParams, t: Texel) {
   t.a = 255;
-  set(t, COLORS.wall, 0, 0.9);
-  if (y > 0.8) set(t, COLORS.headliner, 0, 0.95);
-  else if (y < -0.36) set(t, COLORS.carpet, 0, 1);
-  else if (y < 0.22) set(t, COLORS.lowerWall, 0, 0.9);
-  // Door trim line and a seam between the cabin sides and headliner.
-  const seam = Math.max(lineCov(y - 0.8, 0.003), lineCov(y - 0.22, 0.0025));
-  if (seam > 0) shade(t, 1 - 0.2 * seam);
-  const dw = windowDistance(x, y, z, sec);
-  if (dw > -AA) {
-    mix(t, [118, 112, 102], 0, 0.7, cov(dw));
-    t.a = Math.round(255 * (1 - cov(dw - CABIN_INSET)));
+  const ax = Math.abs(x);
+  set(t, COLORS.wall, 0, 0.85);
+  if (y > 0.8) {
+    // Headliner: light vinyl stretched over bows every 0.25 m — seams, a little pillowing between them.
+    set(t, COLORS.headliner, 0, 0.95);
+    const f = (z + 0.47) / 0.25;
+    const u = f - Math.floor(f);
+    shade(t, 0.93 + 0.07 * Math.sin(u * Math.PI));
+    if (z > -0.45 && z < 1.9) shade(t, 1 - 0.28 * lineCov(Math.min(u, 1 - u) * 0.25, 0.0022));
+    shade(t, 1 + 0.035 * grain(x, y, z));
+  } else if (y < -0.36) {
+    set(t, COLORS.carpet, 0, 1);
+    shade(t, 1 + 0.08 * grain(x, y, z));
+  } else if (y < 0.22) {
+    set(t, z < -0.97 ? COLORS.lowerWall : COLORS.wall, 0, 0.85);
+    shade(t, 1 + 0.025 * grain(x, y, z));
+  } else {
+    set(t, COLORS.upperTrim, 0, 0.7);
+    shade(t, 1 + 0.02 * grain(x, y, z));
   }
+  // Seams: headliner edge, the upper trim over the door panels, and the door's own gap.
+  const seam = Math.max(lineCov(y - 0.8, 0.003), lineCov(y - 0.22, 0.0025));
+  if (seam > 0) shade(t, 1 - 0.3 * seam);
+  if (ax > 0.3) {
+    const gap = lineCov(doorOutlineDistance(z, y), 0.0025);
+    if (gap > 0) shade(t, 1 - 0.55 * gap);
+  }
+  // Windshield posts and header: dark grey moulded plastic (the 3D mouldings sit on this band).
+  if (ax > 0.2 && z < -0.35 && y > 0.25) {
+    const s = postSideDistance(z, y);
+    mix(t, COLORS.post, 0, 0.6, cov(POST.corridorHalf + 0.012 - Math.abs(s)));
+  }
+  if (y > 0.78) mix(t, COLORS.post, 0, 0.6, cov(Math.min(z - HEADER.z0 + 0.012, HEADER.z1 + 0.012 - z)));
+  // Window reveals: a black rubber seal at the glass, then the opening.
+  const dw = windowDistance(x, y, z, sec);
+  if (dw > CABIN_INSET - 0.02) mix(t, COLORS.windowSeal, 0, 0.6, cov(dw - CABIN_INSET + 0.006));
+  const open = cabinOpenDistance(x, y, z, sec);
+  t.a = Math.round(255 * (1 - cov(open)));
+}
+
+/** The cabin shell's paint at a shell point (sRGB 0–255 and alpha), for checks and previews. */
+export function cabinTexel(x: number, y: number, z: number, sec: SectionParams, aa = 0.004): [number, number, number, number] {
+  const prev = AA;
+  AA = aa;
+  const t: Texel = { r: 0, g: 0, b: 0, a: 255, clear: 0, rough: 1, h: 0 };
+  paintCabin(x, y, z, sec, t);
+  AA = prev;
+  return [t.r, t.g, t.b, t.a];
 }
 
 /** Signed distance to the swoosh, searching only the segments near z (the curve is monotone in z). */

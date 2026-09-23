@@ -14,6 +14,7 @@ import { PANEL, PANEL_BOTTOM_Y, PANEL_LAYOUT as PL } from './panel';
 import { fuselageSection, monotoneCurve, type SectionParams } from './shape';
 import { WELL, sectionHalfWidthAt } from './gearKinematics';
 import { compass, doorPanels, fuelSelector, headliner, seat, sunVisors, visorHinges } from './interior';
+import { cabinTrim } from './cabinTrim';
 
 export interface CockpitRig {
   group: THREE.Group;
@@ -86,16 +87,19 @@ const LIP_Z = PANEL.z + LIP_OVERHANG;
 export const LIP_Y = PANEL.topY + 0.016;
 const glareProfile = monotoneCurve([
   [-1.25, 0.245],
-  [-1.14, 0.318],
-  [-1.0, 0.39],
-  [-0.86, LIP_Y - 0.022],
-  [-0.76, LIP_Y - 0.006],
+  [-1.14, 0.316],
+  [-1.0, 0.384],
+  [-0.86, LIP_Y - 0.032],
+  [-0.76, LIP_Y - 0.013],
   [LIP_Z, LIP_Y],
 ]);
+/** The shroud crowns (droops toward the sides) ahead of z = -0.76; the padded lip itself is straight. */
+const CROWN_END_Z = -0.74;
 
 /** Top of the glareshield at (x, z): the padded shroud from the panel lip down to the windshield base. */
 export function glareshieldTopY(x: number, z: number): number {
-  return Math.min(glareProfile(z) - 0.012 * (x / 0.5) ** 2, innerTopY(x, z, 0.047));
+  const w = z >= CROWN_END_Z ? 0 : Math.min(1, (CROWN_END_Z - z) / 0.12);
+  return Math.min(glareProfile(z) - 0.012 * w * (x / 0.5) ** 2, innerTopY(x, z, 0.047));
 }
 
 /**
@@ -107,7 +111,8 @@ function glareshield(): THREE.BufferGeometry {
   const nx = 24;
   const lipZ = LIP_Z;
   const zs = [-1.24, -1.15, -1.05, -0.95, -0.85, -0.78, lipZ - 0.012, lipZ - 0.004, lipZ, lipZ + 0.002, lipZ, lipZ - 0.008, PANEL.z];
-  const drops = [0, 0, 0, 0, 0, 0, 0, 0.004, 0.012, 0.022, 0.03, 0.032, 0.032];
+  // The lip's aft face drops only 2.4 cm: the whole top row of the six-pack shows under it.
+  const drops = [0, 0, 0, 0, 0, 0, 0, 0.003, 0.009, 0.016, 0.022, 0.024, 0.024];
   zs.forEach((z, i) => {
     const ring: number[] = [];
     for (let j = 0; j <= nx; j++) {
@@ -284,6 +289,10 @@ export function buildCockpit(
   const furniture = new THREE.Mesh(merge(staticParts), interiorParts);
   furniture.name = 'cabinFurniture';
   group.add(furniture);
+  // Airframe trim (windshield posts and header): slim dark-grey mouldings, seen from outside too.
+  const trim = new THREE.Mesh(merge(cabinTrim()), interiorParts);
+  trim.name = 'cabinTrim';
+  group.add(trim);
 
   // Cockpit-only static detail (one merged mesh, drawn only from the seat): fuel selector,
   // headliner furniture, visor hinges, knob shafts, yoke collars, gear-handle slot, magneto key,

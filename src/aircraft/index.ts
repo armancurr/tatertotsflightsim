@@ -15,6 +15,7 @@ import { computeAnimation, createAnimation, createPropDisc, propDiscParams, stro
 import type { BreakupPart } from '../fleet/types';
 import { createBreakupRig, splitByTriangles } from './breakup';
 import { buildCockpit } from './cockpit';
+import { createCabinLight } from './cabinLight';
 import { buildFuselage } from './fuselage';
 import { buildGear, GEAR_PART } from './gear';
 import { createFuselageTextures, doorOutlineDistance } from './livery';
@@ -459,11 +460,20 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   const cabinFill = { value: new THREE.Color(0, 0, 0) };
   addCabinFill(mats.cabin, cabinFill);
   addCabinFill(interiorParts, cabinFill);
+  // Daylight through the glass only: sun and sky light enter the cabin by the windows (cabinLight.ts).
+  const cabinLight = createCabinLight();
+  for (const m of [mats.cabin, interiorParts, mats.panel]) cabinLight.apply(m);
+  const syncCabinLight = () => cabinLight.update(root);
+  cockpit.group.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh && o.name !== 'cabinShell') m.onBeforeRender = syncCabinLight;
+  });
   let fillScene: THREE.Object3D | null = null;
   let fillSun: THREE.DirectionalLight | null = null;
   const shell = cockpit.group.getObjectByName('cabinShell');
   if (shell) {
     shell.onBeforeRender = (_r, scene) => {
+      syncCabinLight();
       if (scene !== fillScene) {
         fillScene = scene;
         fillSun = null;

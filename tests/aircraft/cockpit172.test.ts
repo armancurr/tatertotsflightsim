@@ -117,7 +117,9 @@ describe('the 3D cockpit', () => {
     const blockers: THREE.Object3D[] = [];
     const interior = ac.root.getObjectByName('interior')!;
     interior.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh && o.name !== 'cabinShell' && o.name !== 'sunVisors') blockers.push(o);
+      // The airframe (shell, windshield post and header trim) is not furniture: the posts are
+      // checked on their own in cockpitRealism.test.ts.
+      if ((o as THREE.Mesh).isMesh && !['cabinShell', 'cabinTrim', 'sunVisors'].includes(o.name)) blockers.push(o);
     });
     const rc = new THREE.Raycaster();
     const eye = new THREE.Vector3(EYE.x, EYE.y, EYE.z);

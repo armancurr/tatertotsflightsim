@@ -134,9 +134,8 @@ describe('property: glareshield profile', () => {
       fc.property(
         fc.double({ min: -0.5, max: 0.5, noNaN: true }),
         fc.double({ min: -1.24, max: PANEL.z, noNaN: true }),
-        // Head within ±2 cm up/down and ±4 cm fore/aft of the eye point (the rebuilt 172RG panel sits at
-        // the edge of the sightline for a head 3 cm low — see RESUME.md §5).
-        fc.double({ min: -0.02, max: 0.02, noNaN: true }),
+        // Head within ±3 cm up/down and ±4 cm fore/aft of the eye point.
+        fc.double({ min: -0.03, max: 0.03, noNaN: true }),
         fc.double({ min: -0.04, max: 0.04, noNaN: true }),
         (x, z, dy, dz) => {
           const y = glareshieldTopY(x, z);
@@ -154,5 +153,27 @@ describe('property: glareshield profile', () => {
       ),
       fcParams(300),
     );
+  });
+});
+
+describe('glareshield sightline over the whole head box (grid, not sampled)', () => {
+  it('keeps ≥ 0.25° between the glareshield and the cowling sightline for a head ±3 cm up/down and ±4 cm fore/aft', () => {
+    fuselageSection(FUSE_Z0 + 0.02, sec);
+    const cowlTop = sec.top;
+    let worst = Infinity;
+    for (let dy = -0.03; dy <= 0.0301; dy += 0.01) {
+      for (let dz = -0.04; dz <= 0.0401; dz += 0.02) {
+        const ey = EYE.y + dy;
+        const ez = EYE.z + dz;
+        const cowl = Math.atan2(ey - cowlTop, ez - FUSE_Z0 - 0.02);
+        for (let x = -0.5; x <= 0.5001; x += 0.05) {
+          for (let z = -1.24; z <= PANEL.z; z += 0.004) {
+            const y = glareshieldTopY(x, z);
+            worst = Math.min(worst, (Math.atan2(ey - y, ez - z) - cowl) / DEG);
+          }
+        }
+      }
+    }
+    expect(worst).toBeGreaterThanOrEqual(0.25);
   });
 });
