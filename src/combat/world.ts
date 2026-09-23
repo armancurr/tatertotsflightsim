@@ -18,6 +18,12 @@ export interface CombatWorld {
   range: RangeInfo | null;
   readonly stats: CombatStats;
   classOf(kind: TargetKind): TargetClassConfig;
+  /** An aircraft target (box centred on `position`, full 3D orientation)? */
+  isAir(t: GroundTarget): boolean;
+  /** The aim point: hull centre (ground vehicles: half a hull above `position`; aircraft: `position`). */
+  centreOf(t: GroundTarget): Vec3;
+  /** A world-frame offset from the target's position → its body/hull frame (x right, y up, −z front). */
+  toBody(t: GroundTarget, d: Vec3): Vec3;
   addTarget(t: NewTarget): GroundTarget;
   find(id: number): GroundTarget | undefined;
   removeAll(): void;
@@ -48,6 +54,11 @@ export function emptyWeaponsStatus(): WeaponsStatus {
     missiles: 0,
     maxMissiles: 0,
     stores: [],
+    hasAirMissiles: false,
+    airMissileName: '',
+    airMissiles: 0,
+    maxAirMissiles: 0,
+    airStores: [],
     lock: { state: 'off', targetId: null, progress: 0, rangeM: null, inRange: false },
     ccip: null,
     ccipRangeM: null,
@@ -57,18 +68,39 @@ export function emptyWeaponsStatus(): WeaponsStatus {
 
 const DEG = Math.PI / 180;
 
-/** World → hull frame (x right, y up, z back; −z is the front). */
-function toLocal(t: GroundTarget, p: Vec3): Vec3 {
+/** Rotate v by the inverse of unit quaternion q (world → body). */
+function rotInv(q: { x: number; y: number; z: number; w: number }, v: Vec3): Vec3 {
+  // conj(q) · v · q, expanded (t = 2 · cross(−q.xyz, v)).
+  const qx = -q.x, qy = -q.y, qz = -q.z, qw = q.w;
+  const tx = 2 * (qy * v.z - qz * v.y);
+  const ty = 2 * (qz * v.x - qx * v.z);
+  const tz = 2 * (qx * v.y - qy * v.x);
+  return { x: v.x + qw * tx + (qy * tz - qz * ty), y: v.y + qw * ty + (qz * tx - qx * tz), z: v.z + qw * tz + (qx * ty - qy * tx) };
+}
+
+/** World direction → hull/body frame (x right, y up, z back; −z is the front). */
+function dirToLocal(t: GroundTarget, v: Vec3): Vec3 {
+  if (t.orientation) return rotInv(t.orientation, v);
   const r = t.headingDeg * DEG;
   const c = Math.cos(r);
   const s = Math.sin(r);
-  const dx = p.x - t.position.x;
-  const dz = p.z - t.position.z;
-  return { x: dx * c + dz * s, y: p.y - t.position.y, z: dz * c - dx * s };
+  return { x: v.x * c + v.z * s, y: v.y, z: v.z * c - v.x * s };
 }
 
-/** Hull frame direction → world. */
+/** World → hull frame, relative to the target's position. */
+function toLocal(t: GroundTarget, p: Vec3): Vec3 {
+  return dirToLocal(t, { x: p.x - t.position.x, y: p.y - t.position.y, z: p.z - t.position.z });
+}
+
+/** Hull/body frame direction → world. */
 function dirToWorld(t: GroundTarget, v: Vec3): Vec3 {
+  if (t.orientation) {
+    const q = t.orientation;
+    const tx = 2 * (q.y * v.z - q.z * v.y);
+    const ty = 2 * (q.z * v.x - q.x * v.z);
+    const tz = 2 * (q.x * v.y - q.y * v.x);
+    return { x: v.x + q.w * tx + (q.y * tz - q.z * ty), y: v.y + q.w * ty + (q.z * tx - q.x * tz), z: v.z + q.w * tz + (q.x * ty - q.y * tx) };
+  }
   const r = t.headingDeg * DEG;
   const c = Math.cos(r);
   const s = Math.sin(r);
@@ -92,6 +124,12 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
   const stats: CombatStats = { roundsFired: 0, roundsHit: 0, missilesFired: 0, kills: 0 };
   let nextId = 1;
   const classOf = (kind: TargetKind): TargetClassConfig => cfg.combat.targets[kind];
+  const isAir = (t: GroundTarget) => classOf(t.kind).air === true;
+  /** Height of the box's centre above `position` (0 for aircraft) and its vertical bounds. */
+  const yMid = (t: GroundTarget, cls: TargetClassConfig) => (cls.air ? 0 : cls.height / 2);
+  const yLo = (cls: TargetClassConfig) => (cls.air ? -cls.height / 2 : 0);
+  const yHi = (cls: TargetClassConfig) => (cls.air ? cls.height / 2 : cls.height);
+  const centreOf = (t: GroundTarget): Vec3 => ({ x: t.position.x, y: t.position.y + yMid(t, classOf(t.kind)), z: t.position.z });
 
   const emit = (e: CombatEvent) => {
     for (const fn of [...listeners]) {
@@ -117,6 +155,9 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
     range: null,
     stats,
     classOf,
+    isAir,
+    centreOf,
+    toBody: (t, d) => dirToLocal(t, d),
 
     addTarget(n) {
       const cls = classOf(n.kind);
@@ -131,6 +172,7 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
         alive: true,
         destroyedAt: null,
         group: n.group,
+        ...(n.orientation ? { orientation: { ...n.orientation } } : {}),
       };
       targets.push(t);
       return t;
@@ -150,7 +192,7 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
         const cls = classOf(t.kind);
         // Cheap reject: segment vs bounding sphere.
         const cx = t.position.x - from.x;
-        const cy = t.position.y + cls.height / 2 - from.y;
+        const cy = t.position.y + yMid(t, cls) - from.y;
         const cz = t.position.z - from.z;
         const dx = (to.x - from.x) / len;
         const dy = (to.y - from.y) / len;
@@ -165,8 +207,8 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
         const o = toLocal(t, from);
         const e = toLocal(t, to);
         const d = { x: e.x - o.x, y: e.y - o.y, z: e.z - o.z };
-        const lo = { x: -cls.width / 2, y: 0, z: -cls.length / 2 };
-        const hi = { x: cls.width / 2, y: cls.height, z: cls.length / 2 };
+        const lo = { x: -cls.width / 2, y: yLo(cls), z: -cls.length / 2 };
+        const hi = { x: cls.width / 2, y: yHi(cls), z: cls.length / 2 };
         let tmin = 0;
         let tmax = 1;
         let enter: HullFace | null = null;
@@ -235,11 +277,11 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
         const l = toLocal(t, center);
         const qx = Math.max(Math.abs(l.x) - cls.width / 2, 0);
         const qz = Math.max(Math.abs(l.z) - cls.length / 2, 0);
-        const qy = l.y < 0 ? -l.y : Math.max(l.y - cls.height, 0);
+        const qy = l.y < yLo(cls) ? yLo(cls) - l.y : Math.max(l.y - yHi(cls), 0);
         const dist = Math.hypot(qx, qy, qz);
         if (dist >= radius) continue;
         const f = (1 - dist / radius) ** 2;
-        const toTarget = { x: t.position.x - center.x, y: t.position.y + cls.height / 2 - center.y, z: t.position.z - center.z };
+        const toTarget = { x: t.position.x - center.x, y: t.position.y + yMid(t, cls) - center.y, z: t.position.z - center.z };
         const n = Math.hypot(toTarget.x, toTarget.y, toTarget.z) || 1;
         const r = world.applyHit(t.id, {
           weapon,
@@ -266,7 +308,7 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
         if (!t.alive) continue;
         const cls = classOf(t.kind);
         const vx = t.position.x - origin.x;
-        const vy = t.position.y + cls.height / 2 - origin.y;
+        const vy = t.position.y + yMid(t, cls) - origin.y;
         const vz = t.position.z - origin.z;
         const range = Math.hypot(vx, vy, vz);
         if (!(range > 0) || range > maxRange) continue;
@@ -302,12 +344,7 @@ export function createCombatWorld(cfg: Config = CONFIG): CombatWorld {
   return world;
 }
 
-function toLocalDir(t: GroundTarget, v: Vec3): Vec3 {
-  const r = t.headingDeg * DEG;
-  const c = Math.cos(r);
-  const s = Math.sin(r);
-  return { x: v.x * c + v.z * s, y: v.y, z: v.z * c - v.x * s };
-}
+const toLocalDir = dirToLocal;
 
 /** Hull-frame helpers, exported for the renderer and tests. */
 export const hullFrame = { toLocal, toLocalDir, dirToWorld };

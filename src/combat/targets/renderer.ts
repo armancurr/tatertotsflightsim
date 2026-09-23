@@ -8,7 +8,7 @@
  */
 import * as THREE from 'three';
 import { CONFIG } from '../../config';
-import type { TargetKind } from '../types';
+import type { GroundKind as TargetKind } from '../types';
 import { buildClassModel, TARGET_KINDS, type ClassModel, type Lod } from './models';
 
 export interface VehicleView {

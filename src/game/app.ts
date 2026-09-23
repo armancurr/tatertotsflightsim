@@ -315,6 +315,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.gunSpin = combat.status.gunSpin;
     visual.gunFiring = combat.status.gunFiring;
     visual.stores = combat.status.stores;
+    visual.airStores = combat.status.airStores;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.

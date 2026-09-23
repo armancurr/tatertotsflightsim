@@ -138,3 +138,46 @@ describe('missiles system (arcade Mavericks)', () => {
     sys.dispose!();
   });
 });
+
+describe('missiles system: Sidewinders at aircraft, Mavericks at ground vehicles', () => {
+  it('an F-16 locked on a MiG-29 fires an AIM-9 from its wingtip (Mavericks stay), and it kills the MiG', async () => {
+    const a = setup('f16');
+    // Put a MiG 3 km dead ahead at the shooter's altitude-ish (inside the nose cone), and drop the tank far away.
+    a.tank.position.z = -60000;
+    const mig = a.world.addTarget({ kind: 'fighter', position: { x: 0, y: 180, z: -3000 }, headingDeg: 0, group: 'air', orientation: { x: 0, y: 0, z: 0, w: 1 } });
+    const sys = await create(a.ctx);
+    const events: CombatEvent[] = [];
+    a.world.on((e) => events.push(e));
+    sys.update!(a.frame());
+    expect(a.world.status.hasAirMissiles).toBe(true);
+    expect(a.world.status.airMissiles).toBe(2);
+    sys.onAction!('lockTarget');
+    for (let i = 0; i < 90; i++) sys.update!(a.frame());
+    expect(a.world.status.lock.targetId).toBe(mig.id);
+    expect(a.world.status.lock.state).toBe('locked');
+    sys.onAction!('fireMissile');
+    sys.update!(a.frame());
+    expect(a.world.status.airStores).toEqual([false, true]);
+    expect(a.world.status.stores).toEqual([true, true]);
+    for (let i = 0; i < 60 * 10 && mig.alive; i++) sys.update!(a.frame());
+    expect(mig.alive).toBe(false);
+    expect(events.some((e) => e.type === 'destroyed' && e.targetId === mig.id && e.weapon === 'missile')).toBe(true);
+  });
+
+  it('an A-10 locked on a tank still fires a Maverick; the Cessna has neither', async () => {
+    const a = setup('a10');
+    const sys = await create(a.ctx);
+    sys.update!(a.frame());
+    expect(a.world.status.airMissiles).toBe(2);
+    sys.onAction!('lockTarget');
+    for (let i = 0; i < 60; i++) sys.update!(a.frame());
+    sys.onAction!('fireMissile');
+    sys.update!(a.frame());
+    expect(a.world.status.stores).toEqual([false, true, true, true]);
+    expect(a.world.status.airStores).toEqual([true, true]);
+    const c = setup('c172rg');
+    const sc = await create(c.ctx);
+    sc.update!(c.frame());
+    expect(c.world.status.hasAirMissiles).toBe(false);
+  });
+});

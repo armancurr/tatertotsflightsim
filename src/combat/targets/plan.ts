@@ -15,7 +15,7 @@
  * browser (layout.worker.ts) and directly in node tests.
  */
 import { CONFIG, type Config } from '../../config';
-import type { TargetKind } from '../types';
+import type { GroundKind as TargetKind } from '../types';
 import { clearAt, footprintOk, headingOf, openAt, slopeDeg, type RangeConfig, type RangeGround } from './ground';
 import { chaikin, makePath, nearestOnPath, newPathSample, resample, sampleAt, type TrackPath, type XZ } from './path';
 import { hash01, mulberry32 } from './rng';

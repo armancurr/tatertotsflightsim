@@ -5,7 +5,7 @@
  */
 import type { MissileConfig } from '../config';
 import type { Environment, Vec3 } from '../types';
-import type { LockState } from './types';
+import type { GroundTarget, LockState } from './types';
 import type { CombatWorld } from './world';
 import { lineOfSight } from './ground';
 
@@ -21,13 +21,16 @@ export const newLock = (): TargetLock => ({ state: 'off', targetId: null, timer:
 /** The aim point of a target (hull centre). */
 export function targetCentre(world: CombatWorld, id: number): Vec3 | null {
   const t = world.find(id);
-  if (!t) return null;
-  return { x: t.position.x, y: t.position.y + world.classOf(t.kind).height / 2, z: t.position.z };
+  return t ? world.centreOf(t) : null;
 }
 
 /** The next target to select (the one after `currentId`, wrapping), or null when nothing is in view. */
-export function selectNextTarget(world: CombatWorld, origin: Vec3, forward: Vec3, cfg: MissileConfig, currentId: number | null, env?: Environment): number | null {
+export function selectNextTarget(
+  world: CombatWorld, origin: Vec3, forward: Vec3, cfg: Pick<MissileConfig, 'selectConeDeg' | 'maxRangeM'>, currentId: number | null, env?: Environment,
+  accept: (t: GroundTarget) => boolean = () => true,
+): number | null {
   const found = world.targetsInCone(origin, forward, cfg.selectConeDeg, cfg.maxRangeM).filter((c) => {
+    if (!accept(c.target)) return false;
     if (!env) return true;
     const p = targetCentre(world, c.target.id);
     return p !== null && lineOfSight(env, origin, p);
@@ -38,7 +41,7 @@ export function selectNextTarget(world: CombatWorld, origin: Vec3, forward: Vec3
 }
 
 /** Advance the lock timer. Returns 'lock' when LOCK is reached, 'lost' when the target is gone or far out of range. */
-export function stepLock(lock: TargetLock, world: CombatWorld, origin: Vec3, dt: number, cfg: MissileConfig): 'lock' | 'lost' | null {
+export function stepLock(lock: TargetLock, world: CombatWorld, origin: Vec3, dt: number, cfg: Pick<MissileConfig, 'maxRangeM' | 'lockTimeS'>): 'lock' | 'lost' | null {
   if (lock.state === 'off' || lock.targetId === null) return null;
   const t = world.find(lock.targetId);
   const p = targetCentre(world, lock.targetId);

@@ -192,7 +192,10 @@ export interface MissileConfig {
 /** What an aircraft carries. `null` = none (the Cessna carries nothing). */
 export interface WeaponsConfig {
   gun: GunConfig | null;
+  /** Air-to-ground missiles (Mavericks) — fired at a locked ground vehicle. */
   missiles: MissileConfig | null;
+  /** Air-to-air missiles (Sidewinders), same arcade model — fired at a locked aircraft. */
+  airMissiles: MissileConfig | null;
 }
 
 /** A ground vehicle class: size (m), toughness (damage units) and armour by aspect (damage multipliers). */
@@ -205,8 +208,13 @@ export interface TargetClassConfig {
   health: number;
   /** Damage multipliers for hits on the front, sides, rear and top (1 = no armour). */
   armor: { front: number; side: number; rear: number; top: number };
-  /** Road speed when moving, m/s. */
+  /** Road speed when moving, m/s (aircraft: patrol speed). */
   speed: number;
+  /**
+   * Aircraft target: `position` is its centre (CG) and it has a full 3D orientation; the box spans
+   * ±length/2 (z, nose −z), ±width/2 (x, span), ±height/2 (y). Ground vehicles sit on the ground.
+   */
+  air?: boolean;
 }
 
 
@@ -1813,7 +1821,7 @@ export const CONFIG = {
 
   // ─── Weapons carried (owned by src/combat; per aircraft — see A10_WEAPONS / F16_WEAPONS) ─────
   /** The Cessna carries nothing. */
-  weapons: { gun: null, missiles: null } as WeaponsConfig,
+  weapons: { gun: null, missiles: null, airMissiles: null } as WeaponsConfig,
 
   // ─── Combat world: targets, damage, effects budgets (owned by src/combat) ───────────────────
   combat: {
@@ -1880,6 +1888,12 @@ export const CONFIG = {
       apc: { name: 'BTR-80', length: 7.65, width: 2.9, height: 2.41, health: 50, armor: { front: 0.7, side: 1, rear: 1, top: 1 }, speed: 11 } as TargetClassConfig,
       truck: { name: 'Ural-4320', length: 7.37, width: 2.55, height: 2.87, health: 25, armor: { front: 1, side: 1, rear: 1, top: 1 }, speed: 12 } as TargetClassConfig,
       aaa: { name: 'ZSU-23-4 Shilka', length: 6.54, width: 3.13, height: 2.25, health: 45, armor: { front: 0.8, side: 1, rear: 1, top: 1 }, speed: 7 } as TargetClassConfig,
+      /** Enemy aircraft to shoot down (air: true — see TargetClassConfig). Real sizes; span as width. */
+      fighter: { name: 'MiG-29', length: 17.37, width: 11.4, height: 4.73, health: 60, armor: { front: 1, side: 1, rear: 1, top: 1 }, speed: 190, air: true } as TargetClassConfig,
+      /** The Su-25's titanium cockpit tub and armoured engine bays shrug off some hits. */
+      attack: { name: 'Su-25', length: 15.33, width: 14.36, height: 4.8, health: 90, armor: { front: 0.7, side: 0.8, rear: 0.9, top: 0.85 }, speed: 165, air: true } as TargetClassConfig,
+      /** Mi-24 Hind: fuselage + stub wings (the rotor disc isn't solid). */
+      helo: { name: 'Mi-24', length: 17.5, width: 6.5, height: 3.9, health: 80, armor: { front: 0.6, side: 0.8, rear: 0.9, top: 0.9 }, speed: 70, air: true } as TargetClassConfig,
     },
     /** Destroyed vehicles come back after a reset (R) or after this long, s (0 = only on reset). */
     respawnS: 0,
@@ -2567,6 +2581,25 @@ function makeA10(): AircraftConfig {
 
 export const A10_AIRCRAFT: AircraftConfig = makeA10();
 
+/**
+ * AIM-9M Sidewinder, arcade model like the Mavericks (a scripted flight to the locked aircraft —
+ * deliberately not a guidance simulation). Stations are set per aircraft.
+ */
+export const AIM9M: MissileConfig = {
+  name: 'AIM-9M Sidewinder',
+  stations: [],
+  diameterM: 0.127,
+  lengthM: 2.87,
+  speed: 620,
+  arc: 0.015,
+  selectConeDeg: 12,
+  maxRangeM: 6000,
+  minRangeM: 300,
+  lockTimeS: 1.0,
+  damage: 300,
+  blastRadiusM: 10,
+};
+
 /** A-10C: GAU-8/A Avenger (1,150 rounds, PGU-13/14 combat mix) + 4 × AGM-65D Maverick on two LAU-88s (stations 3 and 9). */
 export const A10_WEAPONS: WeaponsConfig = {
   gun: {
@@ -2613,6 +2646,14 @@ export const A10_WEAPONS: WeaponsConfig = {
     damage: 400,
     blastRadiusM: 18,
   },
+  /** 2 × AIM-9M on a LAU-105 dual rail at station 11 (right outer wing). */
+  airMissiles: {
+    ...AIM9M,
+    stations: [
+      { x: 6.36, y: -0.73, z: 0.35 },
+      { x: 6.84, y: -0.73, z: 0.35 },
+    ],
+  },
 };
 
 /** F-16C: M61A1 Vulcan, 511 rounds of 20 mm in the left strake, and 2 × AGM-65D on LAU-117 rails (stations 3 and 7). */
@@ -2645,6 +2686,14 @@ export const F16_WEAPONS: WeaponsConfig = {
     stations: [
       { x: -3.0, y: -0.89, z: 1.35 },
       { x: 3.0, y: -0.89, z: 1.35 },
+    ],
+  },
+  /** 2 × AIM-9M on the wingtip LAU-129 rails (fired left, right). */
+  airMissiles: {
+    ...AIM9M,
+    stations: [
+      { x: -4.754, y: -0.35, z: 1.685 },
+      { x: 4.754, y: -0.35, z: 1.685 },
     ],
   },
 };

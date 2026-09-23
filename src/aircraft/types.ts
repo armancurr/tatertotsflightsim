@@ -53,6 +53,8 @@ export interface AircraftVisualState {
   gunFiring?: boolean;
   /** Per missile station (CONFIG.weapons.missiles.stations order): a missile still hangs there. */
   stores?: boolean[];
+  /** Per air-to-air station (CONFIG.weapons.airMissiles.stations order): a Sidewinder still hangs there. */
+  airStores?: boolean[];
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */

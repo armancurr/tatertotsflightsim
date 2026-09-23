@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { TargetKind } from '../types';
+import type { GroundKind as TargetKind } from '../types';
 
 export interface ClassModel {
   hull: THREE.BufferGeometry;

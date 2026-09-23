@@ -10,7 +10,7 @@ import { CONFIG } from '../../config';
 import type { Vec3 } from '../../types';
 import type { FxSim } from '../../fx/sim';
 import { newParticleInit } from '../../fx/pool';
-import type { CombatEvent, GroundTarget, TargetKind } from '../types';
+import type { CombatEvent, GroundTarget, GroundKind as TargetKind } from '../types';
 import type { CombatWorld } from '../world';
 import type { PlannedVehicle, RangePlan } from './plan';
 import { newVehicleView, ringOf, type VehicleView } from './renderer';

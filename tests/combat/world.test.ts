@@ -243,3 +243,75 @@ describe('combat world: seeker search and events', () => {
     expect(w.range).toBeNull();
   });
 });
+
+describe('combat world: aircraft in the air (oriented boxes centred on the CG)', () => {
+  const fighter = CONFIG.combat.targets.fighter;
+  /** A MiG-29 at 1,000 m heading north (nose −Z), optionally banked (roll about −Z). */
+  function oneFighter(bankDeg = 0) {
+    const w = createCombatWorld();
+    const b = (bankDeg * Math.PI) / 180;
+    // roll about the body −Z axis: q = axis (0,0,1), angle −b (right wing down for +bank)
+    const q = { x: 0, y: 0, z: Math.sin(-b / 2), w: Math.cos(-b / 2) };
+    const t = w.addTarget({ kind: 'fighter', position: { x: 0, y: 1000, z: 0 }, headingDeg: 0, group: 'air', orientation: q });
+    return { w, t };
+  }
+
+  it('is an air target: its centre is its position, not half a hull above it', () => {
+    const { w, t } = oneFighter();
+    expect(w.isAir(t)).toBe(true);
+    expect(w.centreOf(t)).toEqual({ x: 0, y: 1000, z: 0 });
+    const g = w.addTarget({ kind: 'tank', position: { x: 0, y: 0, z: 0 }, headingDeg: 0, group: 'g' });
+    expect(w.isAir(g)).toBe(false);
+    expect(w.centreOf(g).y).toBeCloseTo(CONFIG.combat.targets.tank.height / 2, 9);
+  });
+
+  it('rounds from behind hit the tail (rear); from below hit the belly; a banked target is thinner seen from the side', () => {
+    const { w, t } = oneFighter();
+    const rear = w.raycast({ x: 0, y: 1000, z: 300 }, { x: 0, y: 1000, z: -300 });
+    expect(rear?.target).toBe(t);
+    expect(rear?.face).toBe('rear');
+    expect(rear!.point.z).toBeCloseTo(fighter.length / 2, 6);
+    const below = w.raycast({ x: 0.5, y: 700, z: 0.5 }, { x: 0.5, y: 1300, z: 0.5 });
+    expect(below?.face).toBe('bottom');
+    expect(below!.point.y).toBeCloseTo(1000 - fighter.height / 2, 6);
+    // Level: a shot 4 m to the side of the centre, horizontally, crosses the wing (span 11.4).
+    expect(oneFighter(0).w.raycast({ x: 4, y: 1000, z: 300 }, { x: 4, y: 1000, z: -300 })).not.toBeNull();
+    // Banked 90°: the wings point up/down, so the same shot misses.
+    expect(oneFighter(90).w.raycast({ x: 4, y: 1000, z: 300 }, { x: 4, y: 1000, z: -300 })).toBeNull();
+  });
+
+  it('blast and the seeker cone use the air centre', () => {
+    const { w, t } = oneFighter();
+    w.applyBlast({ x: 0, y: 1003, z: 12 }, 15, 50, 'missile', 1);
+    expect(t.health).toBeLessThan(t.maxHealth);
+    const found = w.targetsInCone({ x: 0, y: 900, z: 3000 }, { x: 0, y: 100, z: -3000 }, 5, 8000);
+    expect(found.map((f) => f.target)).toEqual([t]);
+  });
+
+  it('fuzz: hits on a randomly oriented aircraft lie on its box', () => {
+    fc.assert(
+      fc.property(
+        fc.record({ x: fc.double({ min: -1, max: 1, noNaN: true }), y: fc.double({ min: -1, max: 1, noNaN: true }), z: fc.double({ min: -1, max: 1, noNaN: true }), w: fc.double({ min: -1, max: 1, noNaN: true }) }),
+        fc.record({ x: fc.double({ min: -80, max: 80, noNaN: true }), y: fc.double({ min: 920, max: 1080, noNaN: true }), z: fc.double({ min: -80, max: 80, noNaN: true }) }),
+        (q0, from) => {
+          const n = Math.hypot(q0.x, q0.y, q0.z, q0.w);
+          fc.pre(n > 0.1);
+          const q = { x: q0.x / n, y: q0.y / n, z: q0.z / n, w: q0.w / n };
+          const w = createCombatWorld();
+          const t = w.addTarget({ kind: 'fighter', position: { x: 0, y: 1000, z: 0 }, headingDeg: 0, group: 'air', orientation: q });
+          const to = { x: -from.x * 2, y: 2000 - from.y, z: -from.z * 2 };
+          const hit = w.raycast(from, to);
+          if (!hit || hit.distance === 0) return;
+          // Into the body frame with the inverse rotation.
+          const d = { x: hit.point.x - t.position.x, y: hit.point.y - t.position.y, z: hit.point.z - t.position.z };
+          const l = w.toBody(t, d);
+          const hx = fighter.width / 2, hy = fighter.height / 2, hz = fighter.length / 2;
+          const inside = Math.abs(l.x) <= hx + 1e-3 && Math.abs(l.y) <= hy + 1e-3 && Math.abs(l.z) <= hz + 1e-3;
+          const onFace = Math.min(Math.abs(Math.abs(l.x) - hx), Math.abs(Math.abs(l.y) - hy), Math.abs(Math.abs(l.z) - hz)) < 1e-3;
+          expect(inside && onFace).toBe(true);
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+});

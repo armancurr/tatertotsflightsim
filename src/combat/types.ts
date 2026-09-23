@@ -11,9 +11,12 @@
  * `position` is the centre of the hull's footprint at ground level; the box spans x ∈ ±width/2,
  * y ∈ [0, height], z ∈ ±length/2 in the hull frame, where −Z is the front (the way it faces).
  */
-import type { SurfaceType, Vec3 } from '../types';
+import type { Quat, SurfaceType, Vec3 } from '../types';
 
-export type TargetKind = 'tank' | 'ifv' | 'apc' | 'truck' | 'aaa';
+/** Ground vehicles (the range) and aircraft to shoot down (CONFIG.combat.targets[kind].air). */
+export type GroundKind = 'tank' | 'ifv' | 'apc' | 'truck' | 'aaa';
+export type AirKind = 'fighter' | 'attack' | 'helo';
+export type TargetKind = GroundKind | AirKind;
 export type WeaponKind = 'gun' | 'missile';
 export type HullFace = 'front' | 'side' | 'rear' | 'top' | 'bottom';
 
@@ -33,6 +36,11 @@ export interface GroundTarget {
   destroyedAt: number | null;
   /** Free label: 'convoy', 'platoon', 'aaa-site'… */
   group: string;
+  /**
+   * Aircraft only: body → world rotation (three.js convention: −Z nose, +Y up, +X right wing).
+   * `position` is then the centre of the box. Ground vehicles leave it undefined (yaw from headingDeg).
+   */
+  orientation?: Quat;
 }
 
 export interface NewTarget {
@@ -41,6 +49,7 @@ export interface NewTarget {
   headingDeg: number;
   group: string;
   velocity?: Vec3;
+  orientation?: Quat;
 }
 
 export interface HitInfo {
@@ -106,6 +115,12 @@ export interface WeaponsStatus {
   maxMissiles: number;
   /** Per config station: a missile still hangs there. */
   stores: boolean[];
+  /** Air-to-air missiles (Sidewinders), same shape as the Mavericks' fields. */
+  hasAirMissiles: boolean;
+  airMissileName: string;
+  airMissiles: number;
+  maxAirMissiles: number;
+  airStores: boolean[];
   lock: {
     state: LockState;
     targetId: number | null;
