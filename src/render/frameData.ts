@@ -21,6 +21,8 @@ export interface CloudPassHook {
   readonly layerTop: number;
   /** Measured GPU ms of the last timed cloud pass (written by the renderer; NaN without a timer). */
   gpuMs: number;
+  /** Sum of every timed pass of the frame (scene + clouds + post), for the timer sanity check (cloudBudget.ts). */
+  frameGpuMs: number;
   /** The renderer's pixel ratio is at its dynamic-resolution minimum (written by the renderer). */
   atMinQuality: boolean;
 }

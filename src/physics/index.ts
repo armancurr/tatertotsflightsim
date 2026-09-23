@@ -35,3 +35,4 @@ export { airDensity, densityRatio, temperatureK, speedOfSound } from './atmosphe
 export { propThrust, powerTarget, throttleForPower, stepEngine, engineThrust, enginePowerTarget, engineThrottleForPower, steadyEngineAny } from './engine';
 export { groundContacts } from './ground';
 export { solveTrim, type TrimRequest, type TrimResult } from './trim';
+export { gunRecoil, type BodyWrench } from './recoil';

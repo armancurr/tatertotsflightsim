@@ -28,6 +28,8 @@ const mod: SystemModule = {
     const W = new THREE.Vector3();
     const SUN = new THREE.Color();
     const AMB = new THREE.Color();
+    // Stall buffet and overspeed vibration come from the aircraft being flown (not the Cessna's limits).
+    let ac = ctx.actions?.currentAircraft?.().config.aircraft ?? CONFIG.aircraft;
     let crashT: number | null = null;
     let tdT = Number.NaN;
     let tdV = Number.NaN;
@@ -38,12 +40,16 @@ const mod: SystemModule = {
           groundSpeedKt: s.derived.groundSpeed * MS_TO_KT,
           surface: env.surfaceAt(s.position.x, s.position.z),
           aoaDeg: s.derived.alpha * RAD_TO_DEG,
-          stallAoaDeg: CONFIG.aircraft.aero.stallAlphaDeg + (CONFIG.aircraft.aero.stallAlphaFlapsShiftDeg * s.flapsDeg) / 30,
+          stallAoaDeg: ac.aero.stallAlphaDeg + (ac.aero.stallAlphaFlapsShiftDeg * s.flapsDeg) / 30,
           airspeedKt: s.derived.ias * MS_TO_KT,
-          vneKt: CONFIG.aircraft.limits.vneKt,
+          vneKt: ac.limits.vneKt,
           crashAge: s.crash ? s.time - s.crash.time : null,
         }),
+      onAircraftChange(def) {
+        ac = def.config.aircraft;
+      },
       update(f) {
+        if (f.def) ac = f.def.config.aircraft;
         const s = f.state;
         P.set(s.position.x, s.position.y, s.position.z);
         V.set(s.velocity.x, s.velocity.y, s.velocity.z);

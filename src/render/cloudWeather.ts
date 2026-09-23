@@ -7,11 +7,15 @@
  *   R  column top above the cloud base = the upper surface of the cloud's puff
  *      spheres (max over puffs), capped at the cloud's height, / maxThickness
  *   G  cloud base altitude: baseMin + G·baseRange (flat condensation level)
- *   B  per-cloud density multiplier
+ *   B  column bottom above the cloud base = the lower surface of the puff
+ *      spheres (min over puffs, ≥ 0), / maxThickness; 1 where no puff is
  *   A  coverage: max over puffs of (1 − d/r), 0 at the rim → 1 at a puff's
  *      centre (soft, erodible cloud sides instead of vertical walls)
- * The volumetric raymarch (volumetricClouds.ts) turns this heightfield into a
- * 3D density — flat base, soft domed top — and erodes it with 3D noise; the
+ * So each column spans [bottom, top]: the union of the puff spheres, sliced
+ * per texel — a flat base (the spheres dip below it and are cut off) that
+ * rounds up at the rim, bulging sides and cauliflower domes instead of a
+ * cylinder with a lid. The volumetric raymarch (volumetricClouds.ts) turns
+ * this into a 3D density and erodes it with 3D noise; the
  * shadow pass integrates the same density along the sun ray. GLSL mirrors of
  * `sampleWeather` / `cloudColumnDensity` live in volumetricClouds.ts; the
  * functions here are what the tests exercise and what the CPU uses (in-cloud
@@ -30,10 +34,10 @@ import {
   type CloudField,
 } from './cloudLayout';
 
-/** Density ramps: sharp flat base (m) and soft domed top (m). */
+/** Density ramps: sharp flat base / underside (m) and the domed top surface (m). */
 export const BASE_SOFT = 40;
-export const TOP_SOFT = 300;
-/** Thin columns (column top below this, m) are weaker: frayed cloud rims. */
+export const TOP_SOFT = 120;
+/** Thin columns (column thickness below this, m) are weaker: frayed cloud rims. */
 export const EDGE_SOFT = 150;
 /** Coverage ramp: the outer part of every puff's footprint is thinner (erodible sides). */
 export const COV_SOFT = 0.45;
@@ -58,22 +62,16 @@ export interface WeatherSample {
   top: number;
   /** Base altitude, m. */
   base: number;
-  /** Density multiplier 0..1. */
-  dens: number;
+  /** Column bottom above the base, m (0 on the flat base). */
+  bottom: number;
   /** Coverage 0..1 (0 at the cloud rim). */
   cov?: number;
 }
 
 export function createWeatherMap(field: CloudField, o: WeatherMapOptions): WeatherMap {
   const data = new Uint8Array(o.size * o.size * 4);
+  for (let i = 2; i < data.length; i += 4) data[i] = 255; // no puff: the column bottom is at the top of the layer
   return { ...o, tile: field.tile, data };
-}
-
-function hash01(i: number, seed: number): number {
-  let h = Math.imul(i | 0, 374761393) ^ Math.imul(seed | 0, 668265263);
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967296;
 }
 
 /** Rasterise the field into `map` (clouds × puffs), yielding every `cloudsPerYield` clouds. */
@@ -85,7 +83,6 @@ export function* weatherRasterJob(field: CloudField, map: WeatherMap, cloudsPerY
   for (let ci = 0; ci < field.clouds.length; ci++) {
     const c = field.clouds[ci];
     const gCode = Math.max(0, Math.min(255, Math.round(((c.base - baseMin) / baseRange) * 255)));
-    const bCode = Math.round(255 * (0.78 + 0.22 * hash01(ci, 77)));
     const end = c.firstPuff + c.puffCount;
     for (let i = c.firstPuff; i < end; i++) {
       const o = i * PUFF_STRIDE;
@@ -111,14 +108,16 @@ export function* weatherRasterJob(field: CloudField, map: WeatherMap, cloudsPerY
             if (data[k] === 0) data[k + 1] = gCode; // dilate the base so bilinear edges stay on this cloud's base
             continue;
           }
-          const t = Math.min(c.height, topBase + Math.sqrt(r2 - d2));
+          const chord = Math.sqrt(r2 - d2);
+          const t = Math.min(c.height, topBase + chord);
           const code = Math.max(1, Math.min(255, Math.round((t / maxThickness) * 255)));
+          const bot = Math.max(0, Math.min(255, Math.floor((Math.max(0, topBase - chord) / maxThickness) * 255)));
           const cov = Math.round(255 * (1 - Math.sqrt(d2) / r));
           if (cov > data[k + 3]) data[k + 3] = cov;
+          if (bot < data[k + 2]) data[k + 2] = bot;
           if (code > data[k]) {
             data[k] = code;
             data[k + 1] = gCode;
-            data[k + 2] = bCode;
           }
         }
       }
@@ -153,7 +152,7 @@ export function sampleWeather(map: WeatherMap, x: number, z: number, windX: numb
   if (!Number.isFinite(fx) || !Number.isFinite(fz)) {
     out.top = 0;
     out.base = map.baseMin;
-    out.dens = 0;
+    out.bottom = 0;
     return out;
   }
   const x0 = Math.floor(fx);
@@ -176,21 +175,173 @@ export function sampleWeather(map: WeatherMap, x: number, z: number, windX: numb
   const lerp = (ch: number) => (d[a + ch] * w00 + d[b + ch] * w10 + d[c + ch] * w01 + d[e + ch] * w11) / 255;
   out.top = lerp(0) * map.maxThickness;
   out.base = map.baseMin + lerp(1) * map.baseRange;
-  out.dens = lerp(2);
+  out.bottom = lerp(2) * map.maxThickness;
   out.cov = lerp(3);
   return out;
 }
 
-const _s: WeatherSample = { top: 0, base: 0, dens: 0, cov: 0 };
+// ─── Distance field (empty-space skipping for the march) ─────────────────────
+/**
+ * A coarse periodic map (same uv convention as the weather map) of the
+ * horizontal clearance from each point to the nearest cloud column, used by
+ * the march to jump over empty sky: `sampleClearance` (and its GLSL mirror)
+ * never over-estimates — no column (bilinear weather top ≥ 1 m) lies within
+ * that distance. R8 codes of `unit` m, floor-quantised; the bilinear-sampling
+ * slack is subtracted as `margin`.
+ */
+export interface CloudDistanceField {
+  size: number;
+  tile: number;
+  /** Metres per code step. */
+  unit: number;
+  /** Metres to subtract from the bilinear sample (Lipschitz slack of bilinear interpolation). */
+  margin: number;
+  data: Uint8Array;
+}
+
+export function createDistanceField(map: WeatherMap, size: number, unit = 32): CloudDistanceField {
+  const cell = map.tile / size;
+  return { size, tile: map.tile, unit, margin: 0.75 * cell, data: new Uint8Array(size * size) };
+}
+
+const EDT_INF = 1e20;
+
+/** 1D squared Euclidean distance transform (Felzenszwalb & Huttenlocher) of f[0..n) into d. */
+function edt1d(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array) {
+  let k = 0;
+  v[0] = 0;
+  z[0] = -Infinity;
+  z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) {
+      k--;
+      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    k++;
+    v[k] = q;
+    z[k] = s;
+    z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    const dq = q - v[k];
+    d[q] = dq * dq + f[v[k]];
+  }
+}
+
+/**
+ * Build the distance field from a rasterised weather map, yielding every
+ * `linesPerYield` rows/columns. Occupancy: a cell is taken if the bilinear
+ * support (±1 texel) of any non-empty weather texel overlaps it; the exact
+ * periodic EDT between cell centres, minus the half cell diagonal, is a lower
+ * bound on the clearance at each cell centre.
+ */
+export function* distanceFieldJob(map: WeatherMap, df: CloudDistanceField, linesPerYield = 64): Generator<void, CloudDistanceField, void> {
+  const n = df.size;
+  const wn = map.size;
+  const wt = map.tile / wn;
+  const cell = df.tile / n;
+  const occ = new Uint8Array(n * n);
+  const src = map.data;
+  for (let j = 0; j < wn; j++) {
+    const y0 = Math.floor(((j - 0.5) * wt) / cell);
+    const y1 = Math.ceil(((j + 1.5) * wt) / cell) - 1;
+    for (let i = 0; i < wn; i++) {
+      if (src[(j * wn + i) * 4] === 0) continue;
+      const x0 = Math.floor(((i - 0.5) * wt) / cell);
+      const x1 = Math.ceil(((i + 1.5) * wt) / cell) - 1;
+      for (let y = y0; y <= y1; y++) {
+        const row = (((y % n) + n) % n) * n;
+        for (let x = x0; x <= x1; x++) occ[row + (((x % n) + n) % n)] = 1;
+      }
+    }
+    if (j % (linesPerYield * 4) === linesPerYield * 4 - 1) yield;
+  }
+  // periodic EDT: pad each line with wrapped cells up to the capped distance
+  const capCells = Math.ceil((255 * df.unit) / cell) + 2;
+  const pad = Math.min(n, capCells);
+  const len = n + 2 * pad;
+  const f = new Float64Array(len);
+  const d = new Float64Array(len);
+  const v = new Int32Array(len);
+  const z = new Float64Array(len + 1);
+  const g = new Float64Array(n * n);
+  for (let x = 0; x < n; x++) {
+    for (let q = 0; q < len; q++) {
+      const y = (((q - pad) % n) + n) % n;
+      f[q] = occ[y * n + x] ? 0 : EDT_INF;
+    }
+    edt1d(f, len, d, v, z);
+    for (let y = 0; y < n; y++) g[y * n + x] = d[y + pad];
+    if (x % linesPerYield === linesPerYield - 1) yield;
+  }
+  const half = Math.SQRT1_2 * cell;
+  for (let y = 0; y < n; y++) {
+    for (let q = 0; q < len; q++) {
+      const x = (((q - pad) % n) + n) % n;
+      f[q] = g[y * n + x];
+    }
+    edt1d(f, len, d, v, z);
+    for (let x = 0; x < n; x++) {
+      const dist = Math.sqrt(d[x + pad]) * cell - half;
+      df.data[y * n + x] = dist >= 255 * df.unit ? 255 : Math.max(0, Math.floor(dist / df.unit));
+    }
+    if (y % linesPerYield === linesPerYield - 1) yield;
+  }
+  return df;
+}
+
+export function buildDistanceField(map: WeatherMap, df: CloudDistanceField): CloudDistanceField {
+  const job = distanceFieldJob(map, df);
+  for (;;) {
+    const r = job.next();
+    if (r.done) return r.value;
+  }
+}
+
+/**
+ * Margin to subtract from the sampled clearance when the column lookup is
+ * displaced by up to ±warp m per axis (the GPU's noise domain warp): a point
+ * can see a column up to warp·√2 closer than its own clearance says.
+ */
+export function warpedClearanceMargin(df: CloudDistanceField, warp: number): number {
+  return df.margin + Math.max(0, warp) * Math.SQRT2;
+}
+
+/**
+ * Conservative horizontal clearance (m) from world (x, z) to the nearest
+ * cloud column (≤ 0 in or next to one). Bilinear + periodic like the GPU.
+ */
+export function sampleClearance(df: CloudDistanceField, x: number, z: number, windX: number, windZ: number): number {
+  const n = df.size;
+  const fx = ((x - windX) / df.tile + 0.5) * n - 0.5;
+  const fz = ((z - windZ) / df.tile + 0.5) * n - 0.5;
+  if (!Number.isFinite(fx) || !Number.isFinite(fz)) return -df.margin;
+  const x0 = Math.floor(fx);
+  const z0 = Math.floor(fz);
+  const tx = fx - x0;
+  const tz = fz - z0;
+  const i0 = ((x0 % n) + n) % n;
+  const i1 = (i0 + 1) % n;
+  const j0 = ((z0 % n) + n) % n;
+  const j1 = (j0 + 1) % n;
+  const d = df.data;
+  const v = (d[j0 * n + i0] * (1 - tx) + d[j0 * n + i1] * tx) * (1 - tz) + (d[j1 * n + i0] * (1 - tx) + d[j1 * n + i1] * tx) * tz;
+  return v * df.unit - df.margin;
+}
+
+const _s: WeatherSample = { top: 0, base: 0, bottom: 0, cov: 0 };
 const sat = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x);
 
-/** Base (un-eroded) cloud density 0..1 at a world point: flat base, soft domed top. */
+/** Base (un-eroded) cloud density 0..1 at a world point: inside the column [bottom, top], sharp underside, softer domed top. */
 export function cloudColumnDensity(map: WeatherMap, x: number, y: number, z: number, windX: number, windZ: number): number {
   sampleWeather(map, x, z, windX, windZ, _s);
   if (_s.top < 1) return 0;
   const h = y - _s.base;
-  if (!(h > 0) || h >= _s.top) return 0;
-  return sat(h / BASE_SOFT) * sat((_s.top - h) / TOP_SOFT) * sat(_s.top / EDGE_SOFT) * sat((_s.cov ?? 1) / COV_SOFT);
+  if (!(h > _s.bottom) || h >= _s.top) return 0;
+  return sat((h - _s.bottom) / BASE_SOFT) * sat((_s.top - h) / TOP_SOFT) * sat((_s.top - _s.bottom) / EDGE_SOFT) * sat((_s.cov ?? 1) / COV_SOFT);
 }
 
 /** Point where the ray from p toward the sun crosses the horizontal plane y = planeY. */
@@ -221,7 +372,7 @@ export function shadowOpacityAt(map: WeatherMap, qx: number, qz: number, sun: Ve
     const x = qx + sun.x * t;
     const z = qz + sun.z * t;
     const d = cloudColumnDensity(map, x, y, z, windX, windZ);
-    if (d > 0) tau += d * _s.dens * SHADOW_SIGMA * ds;
+    if (d > 0) tau += d * SHADOW_SIGMA * ds;
   }
   const op = 1 - Math.exp(-tau);
   return Number.isFinite(op) ? Math.min(1, Math.max(0, op)) : 0;

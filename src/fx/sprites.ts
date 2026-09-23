@@ -1,5 +1,7 @@
 /**
- * PURE procedural particle sprites, packed in one RGBA8 atlas (4 × 2 tiles):
+ * PURE procedural particle sprites, packed in one RGBA8 atlas (4 × 2 tiles), plus a tileable
+ * 4-channel noise texture that the particle shader scrolls to animate them (flames lick upward,
+ * fireballs roll, puffs boil and fray — every particle samples its own part of it):
  *
  *   row 0 (v = 0..½): 4 ragged billowy smoke puffs — A = density (Beer-Lambert: wispy edges, thick core), RG = sprite-space normal (xy, 0.5
  *                     = flat), B = thickness (hotter core when the puff is fire)
@@ -15,6 +17,15 @@ export const ATLAS_COLS = 4;
 export const ATLAS_ROWS = 2;
 export const SMOKE_TILES = [0, 1, 2, 3] as const;
 export const FLAME_TILES = [4, 5, 6, 7] as const;
+/** Sparks and embers: drawn procedurally (a motion-blurred hot streak), not from the atlas. */
+export const SPARK_TILE = 8;
+
+export type ParticleKind = 'puff' | 'flame' | 'spark';
+
+/** What the shader draws for a tile index (same thresholds as the GLSL: < 4 puff, < 8 flame, else spark). */
+export function particleKind(tile: number): ParticleKind {
+  return tile < 3.5 ? 'puff' : tile < 7.5 ? 'flame' : 'spark';
+}
 
 export interface Atlas {
   data: Uint8Array;
@@ -209,4 +220,61 @@ export function generateParticleAtlas(tile = 128, seed = 1): Atlas {
     writeTile(atlas, t, size, f.dens, f.nx, f.ny, f.core);
   }
   return atlas;
+}
+
+/** Periodic value noise: lattice `period` cells across the tile, wrapping. */
+function pnoise(x: number, y: number, period: number, seed: number): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const ux = fx * fx * (3 - 2 * fx);
+  const uy = fy * fy * (3 - 2 * fy);
+  const x0 = ((ix % period) + period) % period, x1 = (x0 + 1) % period;
+  const y0 = ((iy % period) + period) % period, y1 = (y0 + 1) % period;
+  const a = hash(x0, y0, seed);
+  const b = hash(x1, y0, seed);
+  const c = hash(x0, y1, seed);
+  const d = hash(x1, y1, seed);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+
+/**
+ * A seamlessly tiling RGBA8 noise texture: four independent fractal value-noise channels at rising
+ * base frequencies (R, G: 4 cells across, 4 octaves; B: 8 cells, 3 octaves; A: 16 cells, 2 octaves),
+ * each stretched to the full 0..1 range. Deterministic per seed.
+ */
+export function generateNoiseTexture(sizeIn = 128, seed = 1): Atlas {
+  const size = Math.max(8, Math.floor(sizeIn));
+  const n = size * size;
+  const data = new Uint8Array(n * 4);
+  const chans: [number, number][] = [
+    [4, 4],
+    [4, 4],
+    [8, 3],
+    [16, 2],
+  ];
+  const v = new Float32Array(n);
+  for (let c = 0; c < 4; c++) {
+    const [base, octaves] = chans[c];
+    let lo = Infinity, hi = -Infinity;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        let sum = 0, amp = 0.5, norm = 0, period = base;
+        for (let o = 0; o < octaves; o++) {
+          sum += amp * pnoise((x / size) * period, (y / size) * period, period, seed * 7919 + c * 131 + o * 17);
+          norm += amp;
+          amp *= 0.5;
+          period *= 2;
+        }
+        const val = sum / norm;
+        v[y * size + x] = val;
+        if (val < lo) lo = val;
+        if (val > hi) hi = val;
+      }
+    }
+    const k = hi > lo ? 1 / (hi - lo) : 0;
+    for (let i = 0; i < n; i++) data[i * 4 + c] = Math.round(255 * (v[i] - lo) * k);
+  }
+  return { data, width: size, height: size };
 }
