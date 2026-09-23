@@ -10,7 +10,7 @@
 import { CONFIG } from '../config';
 import type { SurfaceType, Vec3 } from '../types';
 import { ParticlePool, newParticleInit, particleHeat, type ParticleInit } from './pool';
-import { FLAME_TILES } from './sprites';
+import { FLAME_TILES, SPARK_TILE } from './sprites';
 
 const FX = CONFIG.fx;
 const MAX_EMITTERS = Math.max(1, Math.min(64, FX.maxEmitters));
@@ -37,6 +37,8 @@ interface Emitter {
   radius: number;
   smoky: boolean;
   gen: number;
+  /** Current strength of a fire (intensity × envelope × flicker), for the glow it casts on its smoke. */
+  level: number;
 }
 
 const fin = (v: number, d = 0) => (Number.isFinite(v) ? v : d);
@@ -72,11 +74,14 @@ export class FxSim {
   private glow = { x: 0, y: 0, z: 0, level: 0 };
   private dustAcc = 0;
   private sparkAcc = 0;
+  /** Slots of the burning fire emitters (for glowAt), rebuilt each step. */
+  private readonly fireSlots = new Int32Array(MAX_EMITTERS);
+  private fireCount = 0;
 
   constructor(seed: number = FX.seed) {
     this.rndState = seed >>> 0;
     for (let i = 0; i < MAX_EMITTERS; i++) {
-      this.emitters.push({ kind: Kind.None, x: 0, y: 0, z: 0, groundY: 0, t: 0, duration: 0, rate: 0, acc: 0, acc2: 0, intensity: 0, radius: 1, smoky: false, gen: 0 });
+      this.emitters.push({ kind: Kind.None, x: 0, y: 0, z: 0, groundY: 0, t: 0, duration: 0, rate: 0, acc: 0, acc2: 0, intensity: 0, radius: 1, smoky: false, gen: 0, level: 0 });
     }
     this.trailAcc = new Float32Array(this.debris.capacity);
     this.flameAcc = new Float32Array(this.debris.capacity);
@@ -103,7 +108,7 @@ export class FxSim {
     t.life = 1; t.size0 = 1; t.size1 = 1; t.growTau = 1; t.drag = 0; t.buoyancy = 0; t.buoyTau = 1e9; t.gravity = 0;
     t.alpha = 1; t.fadeIn = 0; t.fadeOut = 0; t.visibleAt = 0; t.rot = this.rnd() * 6.2832; t.rotRate = 0;
     t.heat = 0; t.heatTau = 1; t.r = t.g = t.b = 0.5; t.lighten = 0; t.tile = Math.floor(this.rnd() * 4);
-    t.groundY = -1e9; t.bounce = 0; t.friction = 0; t.turbulence = 0; t.seed = this.rnd();
+    t.groundY = -1e9; t.bounce = 0; t.friction = 0; t.turbulence = 0; t.seed = this.rnd(); t.aspect = 1;
     return t;
   }
 
@@ -126,6 +131,7 @@ export class FxSim {
     e.x = x; e.y = y; e.z = z; e.groundY = fin(groundY, y - 1);
     e.t = 0; e.duration = clampN(duration, 0.1, 600, 10); e.rate = clampN(rate, 0, 1000, 0); e.acc = 0; e.acc2 = 0;
     e.intensity = clampN(intensity, 0, 2, 1); e.radius = clampN(radius, 0.2, 20, 1); e.smoky = smoky;
+    e.level = 0;
     e.gen = (e.gen + 1) & 0xffff;
     return idx | (e.gen << SLOT_BITS);
   }
@@ -159,6 +165,7 @@ export class FxSim {
     const e = this.emitterOf(h);
     if (!e || e.kind !== Kind.Fire) return;
     e.kind = Kind.Steam;
+    e.level = 0;
     e.t = 0;
     e.duration = 3;
     e.acc = 0;
@@ -227,6 +234,7 @@ export class FxSim {
     this.flash(x, y + 1, z, 0.7 * s);
     this.puffs(x, Math.max(g + 0.5, y), z, g, 0, 0, 0, Math.min(1, s), Math.max(4, Math.round(24 * s)), 0.55 * Math.min(1.3, s));
     this.sparks(x, y + 0.5, z, 0, 4, 0, Math.round(30 * s));
+    this.embers(x, y, z, g, 0, 0, 0, Math.min(1, 0.35 * s));
     if (0.5 * s >= this.glow.level) {
       this.glow.x = x; this.glow.y = y + 2; this.glow.z = z;
     }
@@ -364,6 +372,7 @@ export class FxSim {
       t.groundY = y - 30;
       t.bounce = 0.3;
       t.friction = 4;
+      t.tile = SPARK_TILE;
       this.fire.emit(t);
     }
   }
@@ -527,6 +536,7 @@ export class FxSim {
       t.groundY = g;
       t.bounce = 0.2;
       t.friction = 4;
+      t.tile = SPARK_TILE;
       this.fire.emit(t);
     }
   }
@@ -622,11 +632,14 @@ export class FxSim {
     const C = FX.crash;
     let fireLevel = 0;
     let fx = 0, fy = 0, fz = 0;
-    for (const e of this.emitters) {
+    this.fireCount = 0;
+    for (let slot = 0; slot < this.emitters.length; slot++) {
+      const e = this.emitters[slot];
       if (e.kind === Kind.None) continue;
       e.t += dt;
       if (e.t >= e.duration) {
         e.kind = Kind.None;
+        e.level = 0;
         continue;
       }
       if (e.kind === Kind.Column) {
@@ -646,11 +659,13 @@ export class FxSim {
         const env = this.fireEnvelope(e);
         const flicker = 0.85 + 0.15 * Math.sin(e.t * 13.1 + e.gen) * Math.sin(e.t * 7.3 + 1);
         const level = e.intensity * env * flicker;
+        e.level = level;
+        if (level > 1e-3) this.fireSlots[this.fireCount++] = slot;
         if (level > fireLevel) {
           fireLevel = level;
           fx = e.x; fy = Math.max(e.y, e.groundY) + 2; fz = e.z;
         }
-        e.acc += (e.smoky ? e.rate * (0.6 + 0.2 * e.radius) : C.groundFireRate) * e.intensity * env * dt;
+        e.acc += (e.smoky ? e.rate * (0.5 + 0.35 * e.radius) : C.groundFireRate) * e.intensity * env * dt;
         let guard = 0;
         while (e.acc >= 1 && guard++ < 30) {
           e.acc -= 1;
@@ -698,18 +713,18 @@ export class FxSim {
     t.y = e.groundY + 1 + 2 * this.rnd();
     t.z = e.z + Math.sin(a) * r;
     t.vx = this.sym(1);
-    t.vy = C.smokeRise * (0.75 + 0.5 * this.rnd()) * (0.5 + 0.5 * e.intensity);
+    t.vy = C.smokeRise * (0.75 + 0.5 * this.rnd()) * (0.5 + 0.5 * Math.min(1, e.intensity));
     t.vz = this.sym(1);
     t.life = this.range(C.smokeLife);
     t.size0 = C.smokeSize[0] * (0.8 + 0.4 * this.rnd());
-    t.size1 = C.smokeSize[1] * (0.7 + 0.6 * this.rnd()) * (0.6 + 0.4 * e.intensity);
-    t.growTau = 4.5;
+    t.size1 = C.smokeSize[1] * (0.7 + 0.6 * this.rnd()) * (0.6 + 0.4 * Math.min(1, e.intensity));
+    t.growTau = C.smokeGrowTau * (0.8 + 0.4 * this.rnd());
     t.drag = C.smokeDrag;
-    t.buoyancy = C.smokeBuoyancy * (0.8 + 0.4 * this.rnd());
+    t.buoyancy = C.smokeBuoyancy * (0.8 + 0.4 * this.rnd()) * (0.6 + 0.4 * Math.min(1, e.intensity));
     t.buoyTau = C.smokeBuoyancyTau;
-    t.alpha = 0.9 * (0.55 + 0.45 * young) * Math.min(1, e.intensity);
+    t.alpha = 0.9 * (0.6 + 0.4 * young) * Math.min(1, e.intensity);
     t.fadeIn = 0.5;
-    t.fadeOut = 0.55;
+    t.fadeOut = 0.5;
     t.heat = 0.28 * young * Math.min(1, e.intensity);
     t.heatTau = 0.35;
     const shade = C.smokeAlbedo * (0.85 + 0.3 * this.rnd());
@@ -721,25 +736,40 @@ export class FxSim {
     this.smoke.emit(t);
   }
 
-  /** Thick black smoke boiling off a burning part. */
+  /** Flame height scale (m) of a fire: grows with its size and heat release (Heskestad-like), and with its envelope. */
+  private flameHeight(e: Emitter, env: number): number {
+    const F = FX.fire;
+    const I = Math.min(1, e.intensity);
+    return Math.min(F.maxHeight, e.radius * (F.heightPerRadius[0] + F.heightPerRadius[1] * I)) * (0.6 + 0.4 * env);
+  }
+
+  /** Base of a fire's flames: the ground for a ground fire, around the part for a part fire. */
+  private flameBase(e: Emitter): number {
+    return e.smoky ? Math.max(e.groundY, e.y - 0.3 * e.radius + this.sym(0.3 * e.radius)) : e.groundY;
+  }
+
+  /** Thick black oily smoke boiling off the flame tips of a burning part / vehicle. */
   private fireSmoke(e: Emitter) {
     const C = FX.crash;
     const t = this.resetTpl();
-    t.x = e.x + this.sym(e.radius * 0.6);
-    t.y = Math.max(e.y, e.groundY + 0.5) + 0.5 + this.rnd();
-    t.z = e.z + this.sym(e.radius * 0.6);
+    const env = this.fireEnvelope(e);
+    const L = this.flameHeight(e, env);
+    const I = Math.min(1, e.intensity);
+    t.x = e.x + this.sym(e.radius * 0.5);
+    t.y = this.flameBase(e) + L * (0.6 + 0.35 * this.rnd());
+    t.z = e.z + this.sym(e.radius * 0.5);
     t.vx = this.sym(0.6);
     t.vy = 2.5 + 2 * this.rnd();
     t.vz = this.sym(0.6);
-    t.life = 6 + 4 * this.rnd();
-    t.size0 = 1.5 + 0.6 * e.radius;
-    t.size1 = (6 + 4 * this.rnd()) * (0.6 + 0.4 * Math.min(1, e.intensity)) * (0.8 + 0.15 * e.radius);
-    t.growTau = 2.5;
+    t.life = 7 + 5 * this.rnd();
+    t.size0 = Math.max(1, 0.35 * L + 0.4 * e.radius);
+    t.size1 = (6 + 5 * this.rnd()) * (0.6 + 0.4 * I) * (0.8 + 0.15 * e.radius);
+    t.growTau = 3;
     t.drag = 0.5;
     t.buoyancy = 2.5;
-    t.buoyTau = 5;
-    t.alpha = 0.72;
-    t.fadeIn = 0.3;
+    t.buoyTau = 6;
+    t.alpha = 0.75;
+    t.fadeIn = 0.25;
     t.fadeOut = 0.6;
     t.heat = 0.3;
     t.heatTau = 0.4;
@@ -774,42 +804,75 @@ export class FxSim {
   }
 
   /**
-   * One lick of a fire: a small flame tongue or a burning billow that rises quickly, flickers from
-   * yellow through orange to sooty red and is gone within a second. A ground fire spreads over its
-   * radius on the ground; a part fire burns around the part (which may be in the air).
+   * One flame of a fire. A fire is a clustered volume, not a stamp: broad luminous BODY flames low
+   * in the middle, tall narrow TONGUES licking up out of them (buoyancy stretches them), and rolling
+   * BILLOWS breaking off the top that cool to soot within a second — sizes scale with the flame
+   * height L (Heskestad-like: radius × heat), central flames are taller, every one has its own seed,
+   * shape (tile, aspect) and lean. Ground fires spread over their radius; part fires burn around the part.
    */
   private flame(e: Emitter, env: number) {
+    const F = FX.fire;
     const t = this.resetTpl();
+    const L = this.flameHeight(e, env);
     const a = this.rnd() * 6.2832;
-    const r = e.radius * Math.sqrt(this.rnd()) * (0.6 + 0.4 * Math.min(1, e.intensity));
-    const billow = this.rnd() < 0.55;
-    const I = Math.min(1, e.intensity);
-    const s = (billow ? 1.0 + 1.3 * this.rnd() : 0.8 + 1.0 * this.rnd()) * (0.6 + 0.5 * I) * (0.6 + 0.4 * env);
+    const rr = Math.sqrt(this.rnd());
+    const r = e.radius * rr * (0.55 + 0.3 * Math.min(1, e.intensity));
+    const centre = 1 - 0.4 * rr;
+    const base = this.flameBase(e);
+    const u = this.rnd();
+    let s: number;
     t.x = e.x + Math.cos(a) * r;
     t.z = e.z + Math.sin(a) * r;
-    const base = e.smoky ? Math.max(e.groundY, e.y - 0.3 * e.radius + this.sym(0.3 * e.radius)) : e.groundY;
-    t.y = base + s * (billow ? 0.4 : 0.55);
-    t.vx = this.sym(0.5);
-    t.vy = 1.8 + 2.2 * this.rnd();
-    t.vz = this.sym(0.5);
-    t.life = billow ? 0.45 + 0.45 * this.rnd() : 0.3 + 0.35 * this.rnd();
-    t.size0 = s * 0.7;
-    t.size1 = s * (billow ? 1.5 : 1.2);
-    t.growTau = 0.4;
-    t.drag = 1;
-    t.buoyancy = 6;
-    t.buoyTau = 0.6;
-    t.alpha = 0.92;
-    t.fadeIn = 0.05;
-    t.fadeOut = 0.5;
-    t.heat = 1.05 + 0.25 * this.rnd();
-    t.heatTau = t.life * (billow ? 0.5 : 0.9);
-    t.r = t.g = t.b = 0.03;
-    if (billow) t.rotRate = this.sym(1.5);
-    else {
+    t.vx = this.sym(0.4);
+    t.vz = this.sym(0.4);
+    if (u < F.bodyShare) {
+      // body: broad, bright, slow
+      s = L * (0.4 + 0.3 * this.rnd()) * centre;
+      t.aspect = 0.8 + 0.25 * this.rnd();
+      t.life = 0.7 + 0.6 * this.rnd();
+      t.y = base + s * 0.3;
+      t.vy = 0.5 + 0.8 * this.rnd();
+      t.buoyancy = 3;
+      t.buoyTau = 0.8;
+      t.heat = 1.05 + 0.2 * this.rnd();
+      t.heatTau = t.life * 1.4;
+      t.tile = FLAME_TILES[Math.floor(this.rnd() * FLAME_TILES.length)];
+      t.rot = this.sym(0.2);
+    } else if (u < F.bodyShare + F.tongueShare) {
+      // tongue: tall, narrow, fast
+      s = L * (0.28 + 0.32 * this.rnd()) * centre;
+      t.aspect = 0.4 + 0.28 * this.rnd();
+      t.life = 0.35 + 0.45 * this.rnd();
+      t.y = base + s * 0.45 + L * 0.2 * this.rnd();
+      t.vy = 1.5 + 2 * this.rnd();
+      t.buoyancy = 7;
+      t.buoyTau = 0.6;
+      t.heat = 0.95 + 0.25 * this.rnd();
+      t.heatTau = t.life * 0.9;
       t.tile = FLAME_TILES[Math.floor(this.rnd() * FLAME_TILES.length)];
       t.rot = this.sym(0.3);
+    } else {
+      // billow: a rolling ball of burning gas off the top, cooling to soot
+      s = L * (0.22 + 0.25 * this.rnd());
+      t.life = 0.5 + 0.5 * this.rnd();
+      t.y = base + L * (0.45 + 0.35 * this.rnd());
+      t.vy = 2 + 1.5 * this.rnd();
+      t.buoyancy = 6;
+      t.buoyTau = 0.6;
+      t.heat = 0.8 + 0.2 * this.rnd();
+      t.heatTau = t.life * 0.45;
+      t.rotRate = this.sym(1.5);
     }
+    const billow = u >= F.bodyShare + F.tongueShare;
+    s = Math.max(0.15, Math.min(F.maxFlameSize / (billow ? 1.5 : 1.15), s));
+    t.size0 = s * 0.75;
+    t.size1 = s * (billow ? 1.5 : 1.15);
+    t.growTau = 0.35;
+    t.drag = 1.2;
+    t.alpha = 0.92;
+    t.fadeIn = 0.06;
+    t.fadeOut = 0.45;
+    t.r = t.g = t.b = 0.03;
     t.groundY = Math.min(e.groundY, base) - s;
     t.turbulence = 0.8;
     this.fire.emit(t);
@@ -848,36 +911,55 @@ export class FxSim {
       while (this.flameAcc[i] >= 1) {
         this.flameAcc[i] -= 1;
         const t = this.resetTpl();
-        const s = 0.5 + 0.7 * h;
-        t.x = d.px[i]; t.y = d.py[i] + s * 0.3; t.z = d.pz[i];
-        t.vx = d.vx[i] * 0.5; t.vy = d.vy[i] * 0.5 + 1; t.vz = d.vz[i] * 0.5;
-        t.life = 0.3 + 0.3 * this.rnd();
-        t.size0 = s;
-        t.size1 = s * 1.3;
+        const s = (0.45 + 0.7 * h) * (0.6 + 0.7 * this.rnd()) * (0.5 + d.size0[i]);
+        const billow = this.rnd() < 0.2;
+        t.x = d.px[i] + this.sym(0.3); t.y = d.py[i] + s * 0.3; t.z = d.pz[i] + this.sym(0.3);
+        t.vx = d.vx[i] * 0.5; t.vy = d.vy[i] * 0.5 + 1 + this.rnd(); t.vz = d.vz[i] * 0.5;
+        t.life = billow ? 0.4 + 0.3 * this.rnd() : 0.25 + 0.4 * this.rnd();
+        t.size0 = s * 0.8;
+        t.size1 = s * (billow ? 1.5 : 1.2);
         t.growTau = 0.3;
         t.drag = 1.5;
-        t.buoyancy = 3;
+        t.buoyancy = billow ? 4 : 5;
+        t.buoyTau = 0.6;
         t.alpha = 0.9;
         t.fadeIn = 0.04;
         t.fadeOut = 0.5;
-        t.heat = 1;
-        t.heatTau = 1;
+        t.heat = billow ? 0.8 + 0.2 * this.rnd() : 0.95 + 0.2 * this.rnd();
+        t.heatTau = billow ? t.life * 0.5 : 1;
         t.r = t.g = t.b = 0.03;
-        t.tile = FLAME_TILES[Math.floor(this.rnd() * FLAME_TILES.length)];
-        t.rot = this.sym(0.2);
+        if (billow) t.rotRate = this.sym(1.5);
+        else {
+          t.tile = FLAME_TILES[Math.floor(this.rnd() * FLAME_TILES.length)];
+          t.aspect = 0.45 + 0.5 * this.rnd();
+          t.rot = this.sym(0.3);
+        }
+        t.turbulence = 0.6;
         t.groundY = d.groundY[i] - s;
         this.fire.emit(t);
       }
     }
   }
 
-  /** Fire (and explosion-flash) illumination at a point (0 = none, ~1–3 right next to a big fire). */
+  /**
+   * Fire (and explosion-flash) illumination at a point (0 = none, ~1–3 right next to a big fire):
+   * every burning fire lights its own smoke, plus the afterglow of the latest fireball and the flash.
+   */
   glowAt(x: number, y: number, z: number): number {
     let g = 0;
-    if (this.fireLevel > 0) {
-      const dx = x - this.firePos.x, dy = y - this.firePos.y, dz = z - this.firePos.z;
+    for (let k = 0; k < this.fireCount; k++) {
+      const e = this.emitters[this.fireSlots[k]];
+      if (e.kind !== Kind.Fire || !(e.level > 0)) continue;
+      const R = 5 + 2.5 * e.radius;
+      const dx = x - e.x, dy = y - (Math.max(e.y, e.groundY) + 1 + 0.5 * e.radius), dz = z - e.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > 400 * R * R) continue;
+      g += (1.1 * Math.min(1, e.level)) / (1 + d2 / (R * R));
+    }
+    if (this.glow.level > 1e-3) {
+      const dx = x - this.glow.x, dy = y - this.glow.y, dz = z - this.glow.z;
       const R = 11;
-      g += (1.1 * this.fireLevel) / (1 + (dx * dx + dy * dy + dz * dz) / (R * R));
+      g += (1.1 * this.glow.level) / (1 + (dx * dx + dy * dy + dz * dz) / (R * R));
     }
     if (this.flashLevel > 0) {
       const dx = x - this.flashPos.x, dy = y - this.flashPos.y, dz = z - this.flashPos.z;
@@ -893,8 +975,10 @@ export class FxSim {
     this.debris.clear();
     for (const e of this.emitters) {
       e.kind = Kind.None;
+      e.level = 0;
       e.gen = (e.gen + 1) & 0xffff;
     }
+    this.fireCount = 0;
     this.fireLevel = 0;
     this.flashLevel = 0;
     this.glow.level = 0;

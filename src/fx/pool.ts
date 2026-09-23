@@ -38,14 +38,17 @@ export interface ParticleInit {
   /** Ground friction for solids, 1/s. */
   friction: number;
   turbulence: number;
+  /** 0..1 random seed: the renderer derives the particle's look from it (flip, noise offset, animation rate). */
   seed: number;
+  /** Sprite width / height (flame tongues < 1 are tall and narrow); 1 = as drawn. */
+  aspect: number;
 }
 
 export function newParticleInit(): ParticleInit {
   return {
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 1, size0: 1, size1: 1, growTau: 1, drag: 0, buoyancy: 0, buoyTau: 1e9,
     gravity: 0, alpha: 1, fadeIn: 0, fadeOut: 0, visibleAt: 0, rot: 0, rotRate: 0, heat: 0, heatTau: 1,
-    r: 0.5, g: 0.5, b: 0.5, lighten: 0, tile: 0, groundY: -1e9, bounce: 0, friction: 0, turbulence: 0, seed: 0,
+    r: 0.5, g: 0.5, b: 0.5, lighten: 0, tile: 0, groundY: -1e9, bounce: 0, friction: 0, turbulence: 0, seed: 0, aspect: 1,
   };
 }
 
@@ -69,7 +72,7 @@ export class ParticlePool {
   readonly heat: Float32Array; readonly heatTau: Float32Array;
   readonly r: Float32Array; readonly g: Float32Array; readonly b: Float32Array; readonly lighten: Float32Array;
   readonly tile: Float32Array; readonly groundY: Float32Array; readonly bounce: Float32Array; readonly friction: Float32Array;
-  readonly turbulence: Float32Array; readonly seed: Float32Array;
+  readonly turbulence: Float32Array; readonly seed: Float32Array; readonly aspect: Float32Array;
   private readonly serial: Float64Array;
   private readonly free: Int32Array;
   private freeTop: number;
@@ -90,7 +93,7 @@ export class ParticlePool {
     this.heat = f(); this.heatTau = f();
     this.r = f(); this.g = f(); this.b = f(); this.lighten = f();
     this.tile = f(); this.groundY = f(); this.bounce = f(); this.friction = f();
-    this.turbulence = f(); this.seed = f();
+    this.turbulence = f(); this.seed = f(); this.aspect = f();
     this.serial = new Float64Array(n);
     this.free = new Int32Array(n);
     this.freeTop = 0;
@@ -163,6 +166,7 @@ export class ParticlePool {
     this.friction[i] = clampF(p.friction, 0, 100, 0);
     this.turbulence[i] = clampF(p.turbulence, 0, 1e3, 0);
     this.seed[i] = clampF(p.seed, 0, 1, 0);
+    this.aspect[i] = clampF(p.aspect, 0.1, 10, 1);
     return i;
   }
 

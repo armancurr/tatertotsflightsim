@@ -1382,13 +1382,16 @@ export const CONFIG = {
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
       smokeRate: 12,
-      smokeLife: [10, 16] as [number, number],
-      smokeSize: [4, 22] as [number, number],
-      smokeRise: 9.5,
-      smokeBuoyancy: 3.2,
-      smokeBuoyancyTau: 8,
-      /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
-      smokeDrag: 0.35,
+      smokeLife: [20, 32] as [number, number],
+      /** Puff diameter at birth and fully grown (time constant smokeGrowTau s): the plume widens as it rises. */
+      smokeSize: [5, 36] as [number, number],
+      smokeGrowTau: 9,
+      /** Initial rise (m/s) and sustained buoyancy (m/s², decaying with smokeBuoyancyTau s): a column climbs ~200 m. */
+      smokeRise: 8,
+      smokeBuoyancy: 3,
+      smokeBuoyancyTau: 25,
+      /** Horizontal/vertical velocity relaxation toward the wind, 1/s (bends the column downwind). */
+      smokeDrag: 0.28,
       /** Thick oily smoke albedo near the fire (warm-black via smokeTint), lightening with age (×(1 + smokeLighten·t)). */
       smokeAlbedo: 0.04,
       smokeLighten: 2.5,
@@ -1401,6 +1404,18 @@ export const CONFIG = {
       partSmokeRate: 4,
       debrisCount: 30,
       emberCount: 80,
+    },
+    /**
+     * Fires (addFire, crash ground fires): the flame height scale L = radius × (heightPerRadius[0] +
+     * heightPerRadius[1] × intensity) (≤ maxHeight m); flames are a mix of broad bodies, tall
+     * tongues and rolling billows (the rest), each ≤ maxFlameSize m across.
+     */
+    fire: {
+      heightPerRadius: [1.0, 1.0] as [number, number],
+      maxHeight: 7,
+      maxFlameSize: 4.2,
+      bodyShare: 0.3,
+      tongueShare: 0.45,
     },
     touchdown: {
       /** Puffs per main wheel at a feather-light and at a hard touchdown. */
