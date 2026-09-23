@@ -18,6 +18,10 @@ const WHITE = mat(0xeeeeea, 0.32);
 const OFFWHITE = mat(0xdcdad2, 0.45);
 const GLASS = mat(0x0b1016, 0.06, 0.1);
 const GLASS_BLUE = mat(0x0d1a26, 0.06, 0.15);
+/** Glass that lights up at dusk (luff weight −1 → the batch material's window pattern). */
+const LIT = mat(0x0b1016, 0.06, 0.1, 0, -1);
+const LIT_BLUE = mat(0x0d1a26, 0.06, 0.15, 0, -1);
+const LIT_FAR = mat(0x3a3f45, 0.3, 0.1, 0, -1);
 const STAINLESS = mat(0xb9bec4, 0.25, 0.9);
 const MAST = mat(0xc9ccd0, 0.3, 0.8);
 const DARK = mat(0x202326, 0.5);
@@ -138,7 +142,7 @@ export function buildHull(b: MeshBuilder, s: HullSpec): void {
       const z = rings[i][0][2];
       const [z0, z1, y0, y1] = s.hullWindows;
       const ym = (bandOf[i][1] + bandOf[i][2]) / 2;
-      if (k === 1 && z >= z0 && z <= z1 && ym > y0 && ym < y1 + 1) return GLASS;
+      if (k === 1 && z >= z0 && z <= z1 && ym > y0 && ym < y1 + 1) return LIT;
     }
     if (k === 0) return s.rub;
     if (k === 1) return s.topside;
@@ -193,7 +197,7 @@ function sailHull(b: MeshBuilder, lod: number, moored: boolean): void {
   }
   // coachroof with a dark window band, sprayhood, cockpit
   b.prism(0, -1.3, 1.02, 1.32, 2.5, 4.6, 2.3, 4.2, WHITE, 0.15, false);
-  b.prism(0, -1.25, 1.32, 1.55, 2.3, 4.2, 2.1, 3.7, GLASS, 0.2, false);
+  b.prism(0, -1.25, 1.32, 1.55, 2.3, 4.2, 2.1, 3.7, LIT, 0.2, false);
   b.prism(0, -1.2, 1.55, 1.6, 2.1, 3.7, 1.9, 3.5, WHITE, 0);
   if (!lod) {
     b.prism(0, 1.3, 1.1, 1.8, 2.0, 0.9, 1.7, 0.4, CANVAS, 0.25); // sprayhood
@@ -299,7 +303,16 @@ function sailGrid(b: MeshBuilder, grid: [number, number, number][][], luff: numb
       let nx = uy * vz - uz * vy;
       let ny = uz * vx - ux * vz;
       let nz = ux * vy - uy * vx;
-      const l = Math.hypot(nx, ny, nz) || 1;
+      let l = Math.hypot(nx, ny, nz);
+      if (l < 1e-9 && i > 0) {
+        // the head of a triangular sail collapses to a point: reuse the row below's normal
+        const q = ids[i - 1][Math.min(j, ids[i - 1].length - 1)];
+        nx = b.N[q * 3];
+        ny = b.N[q * 3 + 1];
+        nz = b.N[q * 3 + 2];
+        l = 1;
+      }
+      l = l || 1;
       nx /= l;
       ny /= l;
       nz /= l;
@@ -308,7 +321,8 @@ function sailGrid(b: MeshBuilder, grid: [number, number, number][][], luff: numb
         ny = -ny;
         nz = -nz;
       }
-      ids[i].push(b.vertex(p[0], p[1], p[2], nx, ny, nz, SAIL, luff[i][j]));
+      // luff weight > 0 everywhere on the cloth (the batch shader's sail marker: flutter + translucency)
+      ids[i].push(b.vertex(p[0], p[1], p[2], nx, ny, nz, SAIL, Math.max(0.02, luff[i][j])));
     }
   }
   for (let i = 0; i < rows; i++)
@@ -326,7 +340,7 @@ function motorYacht(b: MeshBuilder, lod: number): void {
   });
   // main-deck saloon: raked windscreen, dark glass band
   b.prism(0, 0.8, 1.9, 2.6, 4.3, 9.0, 4.1, 8.6, WHITE, 0.1, false);
-  b.prism(0, 0.95, 2.6, 3.55, 4.1, 8.6, 3.9, 7.4, GLASS_BLUE, 0.5, false);
+  b.prism(0, 0.95, 2.6, 3.55, 4.1, 8.6, 3.9, 7.4, LIT_BLUE, 0.5, false);
   b.prism(0, 1.35, 3.55, 3.75, 3.9, 7.4, 3.8, 7.2, WHITE, 0.05);
   // flybridge with windscreen, hardtop on posts, radar arch
   b.prism(0, 1.9, 3.75, 4.5, 3.7, 5.4, 3.5, 5.0, WHITE, 0.1, false);
@@ -348,7 +362,7 @@ function fishingBoat(b: MeshBuilder, lod: number, deployed: boolean): void {
   });
   // wheelhouse forward
   b.prism(0, -3.6, 1.9, 3.6, 4.0, 4.4, 3.8, 4.0, WHITE, 0, false);
-  b.prism(0, -3.65, 3.6, 4.5, 3.8, 4.0, 3.9, 4.2, GLASS, -0.3, false);
+  b.prism(0, -3.65, 3.6, 4.5, 3.8, 4.0, 3.9, 4.2, LIT, -0.3, false);
   b.prism(0, -3.7, 4.5, 4.75, 4.1, 4.4, 4.1, 4.4, WHITE, 0);
   // mast + A-frame gantry aft, net drum
   b.cylinder([0, 4.7, -3.2], [0, 9.5, -3.2], 0.12, 0.08, 6, WHITE, false);
@@ -394,15 +408,15 @@ function ferry(b: MeshBuilder, lod: number): void {
   b.prism(0, 0, 7.4, 8.4, 17.6, 76, 17.8, 76, WHITE, 0);
   // passenger deck: long glass band
   b.prism(0, 0, 8.4, 9.2, 18, 62, 18, 62, WHITE, 0, false);
-  b.prism(0, 0, 9.2, 10.8, 18, 62, 17.8, 61, GLASS_BLUE, 0, false);
+  b.prism(0, 0, 9.2, 10.8, 18, 62, 17.8, 61, LIT_BLUE, 0, false);
   b.prism(0, 0, 10.8, 11.6, 17.8, 61, 17.4, 60, WHITE, 0);
   // sun deck and the two wheelhouses (double-ended)
   b.prism(0, 0, 11.6, 13.4, 13, 36, 13, 36, WHITE, 0, false);
-  b.prism(0, 0, 12.3, 13.1, 13.05, 36.05, 13.05, 36.05, GLASS, 0, false);
+  b.prism(0, 0, 12.3, 13.1, 13.05, 36.05, 13.05, 36.05, LIT, 0, false);
   b.prism(0, 0, 13.4, 13.6, 13.2, 36.2, 13.2, 36.2, WHITE, 0);
   for (const z of [-19, 19]) {
     b.prism(0, z, 13.6, 14.6, 11, 4.2, 11, 4.2, WHITE, 0, false);
-    b.prism(0, z, 14.6, 16.0, 11.2, 4.4, 11.4, 4.6, GLASS, 0, false);
+    b.prism(0, z, 14.6, 16.0, 11.2, 4.4, 11.4, 4.6, LIT, 0, false);
     b.prism(0, z, 16.0, 16.4, 12, 5, 12, 5, WHITE, 0);
   }
   // funnels (port & starboard) with a coloured band, mast
@@ -441,11 +455,11 @@ function containerShip(b: MeshBuilder, lod: number, variant: number): void {
   let y = F + 1.5;
   for (let k = 0; k < 7; k++) {
     b.prism(0, zA, y, y + 1.8, wA, dA, wA, dA, WHITE, 0, false);
-    b.prism(0, zA, y + 1.8, y + 2.8, wA + 0.02, dA + 0.02, wA + 0.02, dA + 0.02, lod ? mat(0x6a6d70, 0.4) : GLASS, 0, false);
+    b.prism(0, zA, y + 1.8, y + 2.8, wA + 0.02, dA + 0.02, wA + 0.02, dA + 0.02, lod ? LIT_FAR : LIT, 0, false);
     y += 2.8;
   }
   b.prism(0, zA, y, y + 1.2, B, dA + 1, B, dA + 1, WHITE, 0, false);
-  b.prism(0, zA, y + 1.2, y + 3.0, B + 0.02, dA + 1.02, B + 0.02, dA + 1.02, GLASS, 0, false);
+  b.prism(0, zA, y + 1.2, y + 3.0, B + 0.02, dA + 1.02, B + 0.02, dA + 1.02, LIT, 0, false);
   b.prism(0, zA, y + 3.0, y + 3.6, B + 0.6, dA + 1.6, B + 0.6, dA + 1.6, WHITE, 0);
   b.cylinder([0, y + 3.6, zA], [0, y + 10, zA], 0.35, 0.2, 6, WHITE, false);
   const zF = zA + dA / 2 + 7;
@@ -506,11 +520,11 @@ function tanker(b: MeshBuilder, lod: number, variant: number): void {
   let y = F + 1;
   for (let k = 0; k < 5; k++) {
     b.prism(0, zA, y, y + 1.8, 30, 16, 30, 16, WHITE, 0, false);
-    b.prism(0, zA, y + 1.8, y + 2.8, 30.02, 16.02, 30.02, 16.02, lod ? mat(0x6a6d70, 0.4) : GLASS, 0, false);
+    b.prism(0, zA, y + 1.8, y + 2.8, 30.02, 16.02, 30.02, 16.02, lod ? LIT_FAR : LIT, 0, false);
     y += 2.8;
   }
   b.prism(0, zA, y, y + 1.2, B, 17, B, 17, WHITE, 0, false);
-  b.prism(0, zA, y + 1.2, y + 3.0, B + 0.02, 17.02, B + 0.02, 17.02, GLASS, 0, false);
+  b.prism(0, zA, y + 1.2, y + 3.0, B + 0.02, 17.02, B + 0.02, 17.02, LIT, 0, false);
   b.prism(0, zA, y + 3.0, y + 3.6, B + 0.6, 17.6, B + 0.6, 17.6, WHITE, 0);
   b.cylinder([0, y + 3.6, zA], [0, y + 9, zA], 0.35, 0.2, 6, WHITE, false);
   b.prism(0, zA + 15, F + 1, y + 3, 10, 10, 9, 9, WHITE, 1.5, false);
