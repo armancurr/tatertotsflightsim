@@ -170,7 +170,8 @@ describe('README', () => {
     const targets = [...readme.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)].map((m) => m[1]).filter((t) => !/^[a-z]+:/i.test(t));
     expect(targets.length).toBeGreaterThan(5);
     for (const t of targets) expect(existsSync(join(ROOT, decodeURI(t))), t).toBe(true);
-    expect(readme).toMatch(/!\[[^\]]*\]\(qa\/screenshots\/[^)]+\.png\)/);
+    // At least one real screenshot of the game (the gallery lives in docs/screenshots).
+    expect(readme).toMatch(/!\[[^\]]*\]\(docs\/screenshots\/[^)]+\.(jpg|png)\)/);
   });
 
   it('keyLabel gives every KeyboardEvent.code a short non-empty label (fuzz)', () => {
