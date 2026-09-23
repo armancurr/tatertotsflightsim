@@ -16,7 +16,8 @@ import { tint, merge } from '../materials';
 import type { AircraftVisualState } from '../types';
 import type { AircraftModelHandle, BreakupPart } from '../../fleet/types';
 import { createF16Anim, stepF16Anim } from './animate';
-import { buildCockpit, combinerMatrix, drawScreens, SCREEN_ATLAS } from './cockpit';
+import { buildCockpit, combinerMatrix, LAYOUT, LIVE_ATLAS, panelFrame, STATIC_ATLAS, THROTTLE } from './cockpit';
+import { createLiveInstruments, LIVE_CFG, LIVE_STATS, paintStaticAtlas, type LiveInstruments } from './cockpitPaint';
 import { buildFuselage } from './fuselage';
 import { buildGear } from './gear';
 import { box, ellipsoid, makeHinge, tube, V } from './geom';
@@ -26,7 +27,7 @@ import { buildNozzle, buildPlume } from './nozzle';
 import { ANCHOR, GUN_MUZZLE } from './shape';
 import { F16_AIRCRAFT, F16_WEAPONS } from '../../config';
 import { buildMaverick } from '../a10/stores';
-import { buildSurfaces, type HingedPart } from './surfaces';
+import { buildAim9, buildSurfaces, type HingedPart } from './surfaces';
 
 export { createF16Anim, stepF16Anim, F16_LIMITS } from './animate';
 
@@ -39,8 +40,13 @@ export const F16_PART = {
   canopy: 'f16.canopy',
   canopyGlass: 'f16.canopy.glass',
   cockpit: 'f16.cockpit',
-  pilotHead: 'f16.pilot.head',
-  pilotBody: 'f16.pilot.body',
+  /** The helmeted pilot seen from outside (hidden in the cockpit view, where `cockpitDetail` carries the body). */
+  pilotHead: 'f16.pilot',
+  cockpitInterior: 'f16.cockpit.interior',
+  cockpitDetail: 'f16.cockpit.detail',
+  cockpitPanel: 'f16.cockpit.panel',
+  cockpitLive: 'f16.cockpit.live',
+  hudCombiner: 'f16.cockpit.hud',
   leftWing: 'f16.leftWing',
   rightWing: 'f16.rightWing',
   lefLeft: 'f16.lef.left',
@@ -132,19 +138,31 @@ export function createF16Model(): AircraftModelHandle {
   const surf = buildSurfaces();
   const pit = buildCockpit();
 
-  // ── Textures (browser only): livery atlas, roughness, panel-line bump, cockpit screens ──
+  // ── Textures (browser only): livery atlas, roughness, panel-line bump, cockpit atlas, live instruments ──
   let textures: F16Textures | null = null;
+  let liveInstruments: LiveInstruments | null = null;
   if (hasDom) {
     const liv = paintLivery(fuse.stations);
     const sc = document.createElement('canvas');
-    sc.width = SCREEN_ATLAS.width;
-    sc.height = SCREEN_ATLAS.height;
+    sc.width = STATIC_ATLAS.width;
+    sc.height = STATIC_ATLAS.height;
+    const lc = document.createElement('canvas');
+    lc.width = LIVE_ATLAS.width;
+    lc.height = LIVE_ATLAS.height;
     const sctx = sc.getContext('2d');
-    if (liv && sctx) {
-      drawScreens(sctx, sc.width, sc.height);
-      const screens = new THREE.CanvasTexture(sc);
-      screens.colorSpace = THREE.SRGBColorSpace;
-      textures = { ...liv, screens };
+    const lctx = lc.getContext('2d');
+    if (liv && sctx && lctx) {
+      paintStaticAtlas(sctx);
+      const cockpitTex = new THREE.CanvasTexture(sc);
+      cockpitTex.colorSpace = THREE.SRGBColorSpace;
+      cockpitTex.anisotropy = 8;
+      liveInstruments = createLiveInstruments(lctx);
+      // QA hook (DevTools / scripts): redraw rate and timings of the live cockpit canvas.
+      (globalThis as { __f16Cockpit?: object }).__f16Cockpit = { cfg: LIVE_CFG, stats: LIVE_STATS };
+      const liveTex = new THREE.CanvasTexture(lc);
+      liveTex.colorSpace = THREE.SRGBColorSpace;
+      liveTex.anisotropy = 4;
+      textures = { ...liv, cockpit: cockpitTex, live: liveTex };
     }
   }
   const mats = createF16Materials(textures);
@@ -165,13 +183,17 @@ export function createF16Model(): AircraftModelHandle {
   fuselage.add(muzzle);
 
   const cockpit = group(F16_PART.cockpit, fuselage);
-  mesh(pit.interior, mats.interior, 'f16.cockpit.interior', cockpit, false).receiveShadow = true;
-  mesh(pit.pilotBody, mats.parts, F16_PART.pilotBody, cockpit, false).receiveShadow = true;
-  const head = mesh(pit.pilotHead, mats.parts, F16_PART.pilotHead, cockpit, false);
+  mesh(pit.interior, mats.interior, F16_PART.cockpitInterior, cockpit, false).receiveShadow = true;
+  // Cockpit view only: the fine relief, stick, throttle and the pilot's body; the live instruments.
+  const detail = mesh(pit.detail, mats.detail, F16_PART.cockpitDetail, cockpit, false);
+  detail.receiveShadow = true;
+  const live = mesh(pit.live, mats.live, F16_PART.cockpitLive, cockpit, false);
+  // Outside: the whole pilot in one draw (hidden in the cockpit view).
+  const head = mesh(pit.pilot, mats.parts, F16_PART.pilotHead, cockpit, false);
   head.receiveShadow = true;
-  mesh(pit.screens, mats.screens, 'f16.cockpit.screens', cockpit, false);
-  mesh(pit.panelFace, mats.panel, 'f16.cockpit.panel', cockpit, false).receiveShadow = true;
-  const hudGlass = mesh(pit.hudGlass, mats.hud, 'f16.cockpit.hud', cockpit, false);
+  pit.pilotHead.dispose();
+  mesh(pit.panelFace, mats.panel, F16_PART.cockpitPanel, cockpit, false).receiveShadow = true;
+  const hudGlass = mesh(pit.hudGlass, mats.hud, F16_PART.hudCombiner, cockpit, false);
   combinerMatrix().decompose(hudGlass.position, hudGlass.quaternion, hudGlass.scale);
   hudGlass.renderOrder = 2;
 
@@ -233,6 +255,14 @@ export function createF16Model(): AircraftModelHandle {
     const mav = mesh(mavGeo, mats.parts, `f16.store.${i}`, wing);
     mav.position.set(st.x, st.y, st.z);
     storeMeshes.push(mav);
+  });
+
+  // ── AIM-9M Sidewinders on the wingtip rails (hidden once fired; the rails stay) ──
+  const aim9Meshes: THREE.Mesh[] = [];
+  (F16_WEAPONS.airMissiles?.stations ?? []).forEach((st, i) => {
+    const m9 = mesh(buildAim9(st.x < 0 ? -1 : 1), mats.parts, `f16.aim9.${i}`, st.x < 0 ? wl.g : wr.g);
+    m9.position.set(st.x, st.y, st.z);
+    aim9Meshes.push(m9);
   });
 
   // ── Tail: fin, rudder, fin details and lights ──
@@ -396,12 +426,21 @@ export function createF16Model(): AircraftModelHandle {
   const lampOn = new THREE.Color(0xfff6e8).multiplyScalar(5);
   const gi = glowIntensity.array as Float32Array;
   const _v = new THREE.Vector3();
+  const _zero = new THREE.Vector3();
   const _inv = new THREE.Matrix4();
   let wrecked = false;
+  // Cockpit motion and live instruments.
+  let handleDown = true;
+  let lastGear = 1;
+  let liveClock = Infinity;
+  const handleUp = new THREE.Vector3().setFromMatrixColumn(panelFrame(LAYOUT.gearHandle.x, LAYOUT.gearHandle.y), 1).multiplyScalar(0.05);
+  const switchUp = new THREE.Vector3().setFromMatrixColumn(panelFrame(LAYOUT.landingSwitch.x, LAYOUT.landingSwitch.y), 1).multiplyScalar(0.012);
+  const finite = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
 
   function setVisualState(v: AircraftVisualState, dt: number) {
     stepF16Anim(v, anim, dt);
     for (let i = 0; i < storeMeshes.length; i++) storeMeshes[i].visible = v.stores?.[i] ?? true;
+    for (let i = 0; i < aim9Meshes.length; i++) aim9Meshes[i].visible = v.airStores?.[i] ?? true;
     const crashed = v.crashed === true;
     mats.char.value = crashed ? Math.min(1, Math.max(0, Number(v.crashAge ?? 0)) / 6) : 0;
     if (crashed !== wrecked) {
@@ -457,11 +496,34 @@ export function createF16Model(): AircraftModelHandle {
       landingLight.target.position.set(gpos[12], gpos[13] - 4, gpos[14] - 50);
     }
 
+    // Gear handle: follows the direction the gear is moving (DN when down, UP when up).
+    const g = Math.min(1, Math.max(0, Number.isFinite(v.gearPos) ? v.gearPos : 1));
+    if (g > lastGear + 1e-6 || g >= 0.999) handleDown = true;
+    else if (g < lastGear - 1e-6 || g <= 0.001) handleDown = false;
+    lastGear = g;
+
     // Cockpit presentation.
+    if (v.cameraMode === 'cockpit' && !crashed) {
+      const M = mats.motion;
+      const lever = Math.min(1, Math.max(0, finite(v.instruments?.throttlePct) / 100));
+      M.throttle.set(0, 0, -THROTTLE.travel * (lever - THROTTLE.build));
+      M.handle.copy(handleDown ? _zero : handleUp);
+      // The F-16's side-stick is a force stick: it moves a few millimetres.
+      M.stick.set(Math.max(-1, Math.min(1, finite(v.aileron))) * 0.006, 0, Math.max(-1, Math.min(1, finite(v.elevator))) * 0.006);
+      M.landing.copy(switchUp).multiplyScalar(v.lights?.landing ? 1 : v.lights?.taxi ? -1 : 0);
+      liveClock += Number.isFinite(dt) && dt > 0 ? dt : 0;
+      if (liveInstruments && textures && LIVE_CFG.hz > 0 && liveClock >= 1 / LIVE_CFG.hz) {
+        liveClock = 0;
+        liveInstruments.draw(v, handleDown);
+        textures.live.needsUpdate = true;
+      }
+    } else liveClock = Infinity;
     if (v.cameraMode !== lastMode) {
       lastMode = v.cameraMode;
       const inCockpit = v.cameraMode === 'cockpit';
       head.visible = !inCockpit;
+      detail.visible = inCockpit;
+      live.visible = inCockpit;
       mats.canopy.opacity = inCockpit ? 0.12 : 0.34;
       mats.canopy.envMapIntensity = inCockpit ? 0.35 : 1.3;
       mats.interior.color.setScalar(inCockpit ? 1 : 0.7);
