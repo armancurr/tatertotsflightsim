@@ -77,6 +77,21 @@ describe('wake geometry', () => {
     for (let k = 0; k < N * WAKE_VERTS_PER_SAMPLE; k++) expect(b.data[k * 4 + 3]).toBe(0);
   });
 
+  it('the foam factor scales the stern trail only (a yacht leaves a faint track, its Kelvin waves unchanged)', () => {
+    const ages = new Float32Array(N);
+    wakeAges(N, spec.maxAge, ages);
+    const s = Array.from(ages, (a, j) => ({ x: 0, z: j * 4, course: 0, speed: 4, travelled: 1000 - j * 4, age: a }));
+    const full = buffers();
+    const faint = buffers();
+    writeWake(full, 0, s, N, spec);
+    writeWake(faint, 0, s, N, { ...spec, foam: 0.25 });
+    for (let j = 0; j < N; j++) {
+      expect(faint.data[(2 * j) * 4 + 3]).toBeCloseTo(full.data[(2 * j) * 4 + 3] * 0.25, 6); // foam
+      const arm = (2 * N + 2 * j) * 4 + 3;
+      expect(faint.data[arm]).toBeCloseTo(full.data[arm], 6); // Kelvin arm
+    }
+  });
+
   it('index buffer stitches three strips per vessel within range', () => {
     const idx = wakeIndices(3, N);
     expect(idx.length).toBe(3 * 3 * (N - 1) * 6);

@@ -22,7 +22,7 @@ const ROCKS = [0x6f6d68, 0x86837b, 0x5d5b57, 0x9a968d, 0x77736b, 0x8d887f].map((
 const RED = mat(0xb3261e, 0.5);
 const GREEN = mat(0x1f7a3a, 0.5);
 const WHITE = mat(0xeeeeea, 0.4);
-const GLASS = mat(0x10161c, 0.08, 0.1);
+const GLASS = mat(0x10161c, 0.08, 0.1, 0, -1); // lit windows at dusk
 const TIMBER = mat(0x5b4a3a, 0.85);
 
 /**
