@@ -4,7 +4,7 @@ import fc from 'fast-check';
 import { MeshBuilder, mat } from '../../../src/world/traffic/models/builder';
 import { buildVesselPart, buildHull, hullShape, type VesselPart } from '../../../src/world/traffic/models/vessels';
 import { buildAircraft, DISCS, LIGHTS } from '../../../src/world/traffic/models/aircraft';
-import { buildMarina, buildFerryTerminal } from '../../../src/world/traffic/models/marina';
+import { buildMarina, buildFerryTerminal, marinaStones } from '../../../src/world/traffic/models/marina';
 import { createMarina, VESSEL_DIMS, type VesselKind } from '../../../src/world/traffic/sea';
 import { getLayout } from '../../../src/world/layout';
 import type { AirKind } from '../../../src/world/traffic/air';
@@ -180,11 +180,34 @@ describe('aircraft models', () => {
 });
 
 describe('harbour structures', () => {
+  it('breakwaters are rubble mounds: armour stones on both slopes, a parapet on the seaward side (near LOD only)', () => {
+    const m = createMarina(getLayout());
+    const near = buildMarina(m, 0);
+    const far = buildMarina(m, 1);
+    const stones = marinaStones(m);
+    // ~one stone every 1.6 m of breakwater per row, several rows, both sides
+    const len = m.breakwaters.reduce((s, b) => s + b.pts.slice(1).reduce((a, p, i) => a + Math.hypot(p.u - b.pts[i].u, p.w - b.pts[i].w), 0), 0);
+    expect(stones.length).toBeGreaterThan(len * 2);
+    const inner = stones.filter((st) => !st.seaward).length;
+    expect(inner).toBeGreaterThan(stones.length * 0.3);
+    expect(inner).toBeLessThan(stones.length * 0.7);
+    for (const st of stones) {
+      expect(st.size).toBeGreaterThan(0.8);
+      expect(st.size).toBeLessThan(3.2);
+      expect(st.y).toBeGreaterThan(-2.6);
+      expect(st.y).toBeLessThan(m.breakwaters[0].crestY + 0.5);
+    }
+    expect(near.triangleCount).toBeGreaterThan(far.triangleCount * 4);
+    expect(near.triangleCount).toBeLessThan(110000);
+    expect(far.triangleCount).toBeLessThan(6000);
+  });
+
+
   it('marina and ferry terminals build within budget', () => {
     const m = createMarina(getLayout());
     const g = buildMarina(m, 0).build();
     expect(finite(g)).toBe(true);
-    expect(g.index!.count / 3).toBeLessThan(60000);
+    expect(g.index!.count / 3).toBeLessThan(110000);
     const bb = g.boundingBox!;
     expect(bb.max.x - bb.min.x).toBeGreaterThan(700);
     expect(bb.min.y).toBeLessThan(-3); // founded below the water

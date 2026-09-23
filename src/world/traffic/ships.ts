@@ -480,7 +480,7 @@ export function createShips(opts: ShipsOptions = {}): Ships {
     if (!WAKE_KIND[v.kind].spray || f.dt <= 0) return;
     const p = v.pose;
     if (p.speed < 4 || v.dist > 1500) return;
-    const rate = 55 * Math.min(1, (p.speed - 4) / 6); // particles / s
+    const rate = 90 * Math.min(1, (p.speed - 4) / 6); // particles / s
     let acc = (emitAcc.get(v) ?? 0) + rate * f.dt;
     const h = p.course * DEG;
     const fx = Math.sin(h);
@@ -501,7 +501,7 @@ export function createShips(opts: ShipsOptions = {}): Ships {
       spray.vy[i] = 1.2 + 2.2 * rand() * Math.min(1, p.speed / 12);
       spray.age[i] = 0;
       spray.life[i] = 0.7 + 0.8 * rand();
-      spray.size[i] = 0.25 + 0.35 * rand() * Math.min(1, v.L / 12);
+      spray.size[i] = 0.4 + 0.6 * rand() * Math.min(1, v.L / 12);
     }
     emitAcc.set(v, acc);
   }

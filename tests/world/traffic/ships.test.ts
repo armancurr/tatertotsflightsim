@@ -76,6 +76,13 @@ describe('ships renderer (functional)', () => {
     void far;
   });
 
+  it('sea routes float at sea level, lake routes well above 1 m (the wake shader rides only the sea\'s waves below 1 m)', () => {
+    for (const r of ships.plan!.routes) {
+      if (r.id.startsWith('lake')) expect(r.level, r.id).toBeGreaterThan(1.5);
+      else expect(r.level, r.id).toBe(0);
+    }
+  });
+
   it('small craft vanish beyond the view distance, the big ships stay visible much farther', () => {
     for (const t of [0, 900, 2700]) {
       ships.update(frame({ t, camX: 0, camY: 3000, camZ: -8000 }));

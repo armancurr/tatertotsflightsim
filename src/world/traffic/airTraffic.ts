@@ -326,11 +326,12 @@ export function createAirTraffic(opts: AirTrafficOptions): AirTraffic {
       sz /= sl;
       const age = trailAge[j];
       const age01 = age / life;
-      const width = 16 + 420 * (1 - Math.exp(-age / 110));
+      // young: two sharp engine trails ~15 m apart; old: a soft band spreading to ~700 m that thins out
+      const width = 16 + 700 * (1 - Math.exp(-age / 160));
       const dist = Math.hypot(vx, vy, vz);
       const minW = dist * pxAngle * 1.6;
       const drawn = Math.max(width, minW);
-      const opacity = smooth(0.2, 2.5, age) * (0.92 - 0.45 * age01) * (1 - smooth(0.55, 1, age01)) * (width / drawn);
+      const opacity = smooth(0.2, 2.5, age) * (0.3 + 0.62 * Math.exp(-age / 70)) * (1 - smooth(0.5, 1, age01)) * (width / drawn);
       const hw = drawn / 2;
       for (let s = -1; s <= 1; s += 2) {
         P[o * 3] = p.x + sx * hw * s;
