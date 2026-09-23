@@ -16,6 +16,7 @@ import { createRng } from '../../src/combat/rng';
 import { FLAT_ENV } from '../../src/physics';
 import weaponsSystem from '../../src/game/systems/weapons';
 import { fcParams } from '../support/fc';
+import { FxSim } from '../../src/fx/sim';
 
 function recordSink() {
   const rows: number[][] = [];
@@ -69,7 +70,7 @@ describe('tracers and muzzle flash', () => {
     }
   });
 
-  it('the glow buffer caps at its capacity and builds a hidden mesh when empty', () => {
+  it('the glow buffer caps at its capacity; the mesh stays in the scene with 0 instances when idle (no first-shot shader hitch)', () => {
     const scene = new THREE.Scene();
     const g = createGlowRenderer(scene, 3);
     expect(scene.getObjectByName('weapons-glow')).toBe(g.mesh);
@@ -81,7 +82,8 @@ describe('tracers and muzzle flash', () => {
     expect((g.mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(3);
     g.begin();
     g.end(1440, 900);
-    expect(g.mesh.visible).toBe(false);
+    expect(g.mesh.visible).toBe(true);
+    expect((g.mesh.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(0);
     g.dispose();
     expect(scene.getObjectByName('weapons-glow')).toBeUndefined();
   });
@@ -121,6 +123,15 @@ describe('gun gas', () => {
       expect(pool.pz[i]).toBeLessThanOrEqual(0.5);
       expect(pool.vz[i]).toBeLessThan(-120);
     }
+  });
+
+  it('emits into the real fx simulation (its rnd is a method: must stay bound)', () => {
+    const sim = new FxSim(5);
+    const st = createGunGasState();
+    let n = 0;
+    for (let i = 0; i < 30; i++) n += emitGunGas(sim, st, { x: 0, y: 100, z: 0 }, { x: 0, y: 0, z: -1 }, { x: 0, y: 0, z: -120 }, 1 / 60, 1);
+    expect(n).toBeGreaterThan(15);
+    expect(sim.smoke.count).toBe(n);
   });
 
   it('a 20 mm gun makes a smaller cloud, and no time step = no gas', () => {

@@ -16,9 +16,9 @@ export const STREAK_MAX_M = 22;
 export const BURN_S = 2.6;
 export const BURN_END_S = 3.4;
 /** Linear HDR radiance of a tracer core (red-orange strontium flare) and the flash (yellow-white). */
-export const TRACER_RGB = [7.5, 1.7, 0.4] as const;
+export const TRACER_RGB = [18, 3.6, 0.55] as const;
 export const FLASH_RGB = [9, 5.2, 1.8] as const;
-const TRACER_WIDTH_M = 0.14;
+const TRACER_WIDTH_M = 0.18;
 
 /** Writes every live tracer; returns how many were written. */
 export function writeTracers(pool: RoundPool, sink: GlowSink): number {

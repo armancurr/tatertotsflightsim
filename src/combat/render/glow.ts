@@ -123,8 +123,8 @@ export function createGlowRenderer(scene: THREE.Scene | null, capacity = 600): G
   const uniforms: Record<string, THREE.IUniform> = {
     ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
     uViewport: { value: new THREE.Vector2(1440, 900) },
-    uMinPx: { value: 2.2 },
-    uMinGain: { value: 0.35 },
+    uMinPx: { value: 2.6 },
+    uMinGain: { value: 0.5 },
   };
   // Keep the shared atmospheric-fog array by reference (render/fog.ts).
   const fogLib = THREE.UniformsLib.fog as Record<string, THREE.IUniform>;
@@ -149,7 +149,8 @@ export function createGlowRenderer(scene: THREE.Scene | null, capacity = 600): G
   mesh.name = 'weapons-glow';
   mesh.frustumCulled = false;
   mesh.renderOrder = 10;
-  mesh.visible = false;
+  // Always visible (0 instances when idle): three links the program on the first frame instead of
+  // hitching the frame the gun first fires.
   scene?.add(mesh);
   const H = iHead.array as Float32Array, T = iTail.array as Float32Array, C = iColor.array as Float32Array;
 
@@ -174,7 +175,6 @@ export function createGlowRenderer(scene: THREE.Scene | null, capacity = 600): G
       (uniforms.uViewport.value as THREE.Vector2).set(Math.max(1, w), Math.max(1, h));
       const n = self.count;
       geo.instanceCount = n;
-      mesh.visible = n > 0;
       if (n > 0) {
         for (const a of [iHead, iTail, iColor]) {
           a.clearUpdateRanges();
