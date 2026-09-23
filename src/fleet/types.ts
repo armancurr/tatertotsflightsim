@@ -31,6 +31,11 @@ export interface AircraftModelHandle {
   /** Cockpit panel drawer hook (steam-gauge aircraft); jets may ignore it. */
   setPanelDrawer?(fn: PanelDrawer): void;
   landingLight?: THREE.SpotLight;
+  /**
+   * Jets: the HUD combiner glass (a mesh on the model). In the cockpit view the HUD symbology is
+   * drawn inside its projected outline, so it sits on the glass and moves with it as you look around.
+   */
+  hudCombiner?: THREE.Object3D;
   /** Major parts for the crash break-up. Default when absent: the root's direct children. */
   getBreakupParts?(): BreakupPart[];
   /** Re-attach every part to its original parent with its original local transform (on reset). */

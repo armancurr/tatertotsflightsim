@@ -482,6 +482,7 @@ export function createF16Model(): AircraftModelHandle {
     root,
     setVisualState,
     landingLight,
+    hudCombiner: hudGlass,
     getBreakupParts: () => breakup,
     restoreBreakupParts() {
       for (const h of home) {
