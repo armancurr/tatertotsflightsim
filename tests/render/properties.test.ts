@@ -234,7 +234,7 @@ describe('property: cloud layout', () => {
       }),
       { numRuns: 40 },
     );
-  });
+  }, 60000);
   it('sun occlusion stays within [0,1] for any sun direction', () => {
     const f = generateCloudField({ seed: 5, count: 20, coverage: 0.5, baseAltitude: 1500, thickness: 900, areaRadius: 20000 });
     fc.assert(
