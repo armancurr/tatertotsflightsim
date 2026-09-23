@@ -1399,9 +1399,22 @@ export const CONFIG = {
      */
     fireIntensity: 2.4,
     fireOcclusion: 0.55,
+    /** Sparks/embers: emission × fireIntensity; drawn as streaks over this exposure time (s). */
+    sparkIntensity: 1.5,
+    shutter: 0.02,
+    /** Sprites smaller than this many pixels grow to it with opacity × (size/min)² (far fires stay visible as points). */
+    minPixels: 1.5,
+    /** Smoke self-shadowing strength 0..1 (2-tap density toward the sun). */
+    selfShadow: 0.85,
+    /** Fire light on smoke uses at least this albedo (black smoke still glows orange from below at night). */
+    glowFloor: 0.1,
+    /** Fire light on the smoke above it (linear RGB per unit glow): daylight swamps it, dusk shows the orange underside. */
+    smokeGlow: [0.4, 0.15, 0.035] as [number, number, number],
+    /** Side of the tiling animated-noise texture, px. */
+    noiseSize: 128,
     /** A single point light flickers at the fire (lights the ground and the wreck). Always present (intensity 0 when idle) so no shader recompiles. */
     fireLight: true,
-    fireLightIntensity: 500,
+    fireLightIntensity: 150,
     fireLightDistance: 140,
     /** The white-hot flash of an explosion lights the scene through the same point light (candela at flash level 1). */
     flashLightIntensity: 1600,
@@ -1416,13 +1429,16 @@ export const CONFIG = {
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
       smokeRate: 12,
-      smokeLife: [10, 16] as [number, number],
-      smokeSize: [4, 22] as [number, number],
-      smokeRise: 9.5,
-      smokeBuoyancy: 3.2,
-      smokeBuoyancyTau: 8,
-      /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
-      smokeDrag: 0.35,
+      smokeLife: [20, 32] as [number, number],
+      /** Puff diameter at birth and fully grown (time constant smokeGrowTau s): the plume widens as it rises. */
+      smokeSize: [5, 36] as [number, number],
+      smokeGrowTau: 9,
+      /** Initial rise (m/s) and sustained buoyancy (m/s², decaying with smokeBuoyancyTau s): a column climbs ~200 m. */
+      smokeRise: 8,
+      smokeBuoyancy: 3,
+      smokeBuoyancyTau: 25,
+      /** Horizontal/vertical velocity relaxation toward the wind, 1/s (bends the column downwind). */
+      smokeDrag: 0.28,
       /** Thick oily smoke albedo near the fire (warm-black via smokeTint), lightening with age (×(1 + smokeLighten·t)). */
       smokeAlbedo: 0.04,
       smokeLighten: 2.5,
@@ -1431,10 +1447,22 @@ export const CONFIG = {
       groundFireDuration: 16,
       groundFireRate: 55,
       /** Fires on burning parts: flame licks per second (× intensity, grows with the part's size) and smoke puffs per second. */
-      partFireRate: 26,
-      partSmokeRate: 4,
+      partFireRate: 45,
+      partSmokeRate: 7,
       debrisCount: 30,
       emberCount: 80,
+    },
+    /**
+     * Fires (addFire, crash ground fires): the flame height scale L = radius × (heightPerRadius[0] +
+     * heightPerRadius[1] × intensity) (≤ maxHeight m); flames are a mix of broad bodies, tall
+     * tongues and rolling billows (the rest), each ≤ maxFlameSize m across.
+     */
+    fire: {
+      heightPerRadius: [1.0, 1.0] as [number, number],
+      maxHeight: 7,
+      maxFlameSize: 4.2,
+      bodyShare: 0.4,
+      tongueShare: 0.4,
     },
     touchdown: {
       /** Puffs per main wheel at a feather-light and at a hard touchdown. */
