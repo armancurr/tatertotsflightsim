@@ -177,6 +177,71 @@ export function buildHull(b: MeshBuilder, s: HullSpec): void {
   }
 }
 
+/** Half-breadth of the hull at (u, y) — the same section as `buildHull` (for fittings on the side). */
+export function hullHalfAt(s: HullSpec, u: number, y: number): number {
+  const { halfB, deckY, keel } = hullShape(s, u);
+  const v = Math.min(1, Math.max(0, (deckY - y) / Math.max(1e-3, deckY - keel)));
+  const flare = y > 0 ? 1 + 0.06 * smoothstep(0.5, 1, u) * (y / Math.max(0.1, deckY)) : 1;
+  return halfB * Math.pow(Math.max(0, 1 - Math.pow(v, s.n)), 1 / s.n) * flare;
+}
+
+/** Model z of the hull station u (0 = stern, 1 = bow) at the deck edge. */
+const stationZ = (s: HullSpec, u: number) => s.L / 2 - u * s.L;
+
+/**
+ * Guard rails along both deck edges from u0 to u1: stanchions every `pitch` m and a top rail
+ * following the sheer, `inset` m inside the deck edge, `h` m tall.
+ */
+function deckRails(b: MeshBuilder, s: HullSpec, u0: number, u1: number, h: number, pitch: number, inset: number, m: Mat, bowPulpit = false): void {
+  const n = Math.max(2, Math.round(((u1 - u0) * s.L) / pitch));
+  for (const side of [-1, 1]) {
+    let prev: [number, number, number] | null = null;
+    for (let i = 0; i <= n; i++) {
+      const u = u0 + ((u1 - u0) * i) / n;
+      const { deckY } = hullShape(s, u);
+      const x = side * Math.max(0.05, hullHalfAt(s, u, deckY) - inset);
+      const z = stationZ(s, u);
+      b.cylinder([x, deckY, z], [x, deckY + h, z], 0.018, 0.018, 3, m, false);
+      const top: [number, number, number] = [x, deckY + h, z];
+      if (prev) b.cylinder(prev, top, 0.02, 0.02, 3, m, false);
+      prev = top;
+    }
+  }
+  if (bowPulpit) {
+    const { deckY } = hullShape(s, u1);
+    const z = stationZ(s, u1);
+    const x = Math.max(0.05, hullHalfAt(s, u1, deckY) - inset);
+    b.cylinder([-x, deckY + h, z], [0, deckY + h, z - 0.35], 0.02, 0.02, 3, m, false);
+    b.cylinder([x, deckY + h, z], [0, deckY + h, z - 0.35], 0.02, 0.02, 3, m, false);
+    b.cylinder([0, deckY, z - 0.3], [0, deckY + h, z - 0.35], 0.02, 0.02, 3, m, false);
+  }
+}
+
+/** A bulbous bow: a rounded torpedo below the waterline ahead of the forefoot. */
+function bulbousBow(b: MeshBuilder, s: HullSpec, r: number, len: number, lod: number, m: Mat): void {
+  const zTip = -s.L / 2 - r * 0.25;
+  const y = -s.D * 0.58;
+  const segs = lod ? 6 : 10;
+  b.cylinder([0, y * 0.95, zTip + len], [0, y, zTip + len * 0.3], r * 0.9, r, segs, m, false);
+  b.cylinder([0, y, zTip + len * 0.3], [0, y + r * 0.08, zTip + len * 0.08], r, r * 0.72, segs, m, false);
+  b.cylinder([0, y + r * 0.08, zTip + len * 0.08], [0, y + r * 0.12, zTip], r * 0.72, r * 0.25, segs, m, true);
+}
+
+/** Hull window slits (motor yachts): dark glass strips just proud of the topsides between u0..u1 at y0..y1. */
+function hullSlits(b: MeshBuilder, s: HullSpec, spans: [number, number][], y0: number, y1: number, m: Mat): void {
+  for (const side of [-1, 1])
+    for (const [u0, u1] of spans) {
+      const n = 3;
+      for (let i = 0; i < n; i++) {
+        const ua = u0 + ((u1 - u0) * i) / n;
+        const ub = u0 + ((u1 - u0) * (i + 1)) / n;
+        const P = (u: number, y: number): [number, number, number] => [side * (hullHalfAt(s, u, y) + 0.015), y, stationZ(s, u)];
+        const q = [P(ua, y0), P(ub, y0), P(ub, y1), P(ua, y1)];
+        b.poly(side > 0 ? q : [q[0], q[3], q[2], q[1]], m);
+      }
+    }
+}
+
 // ─── Models ──────────────────────────────────────────────────────────────────
 
 export type VesselPart = 'hull' | 'mainP' | 'mainS' | 'jibP' | 'jibS' | 'furled';
@@ -184,11 +249,15 @@ export type VesselPart = 'hull' | 'mainP' | 'mainS' | 'jibP' | 'jibS' | 'furled'
 /** Mast position of the sailing yacht (local z of the mast, deck height there) for scale 1. */
 export const SAIL_RIG = { mastZ: -0.9, deckY: 1.2, mastTop: 16.2, boomY: 2.4, boomLen: 4.7, forestayZ: -5.55, forestayTop: 14.0 };
 
+const SAIL_HULL: HullSpec = {
+  L: 12, B: 3.9, F: 1.05, D: 0.55, sheer: 0.22, transom: 0.8, transomDepth: 0.12, entry: 1.7, n: 2.3, rake: 0.7,
+  topside: WHITE_T, boot: mat(0x1e2c48, 0.4), bottom: ANTIFOUL_BLUE, deck: NONSKID, rub: STAINLESS, bootTop: 0.12,
+};
+
 function sailHull(b: MeshBuilder, lod: number, moored: boolean): void {
-  buildHull(b, {
-    L: 12, B: 3.9, F: 1.05, D: 0.55, sheer: 0.22, transom: 0.8, transomDepth: 0.12, entry: 1.7, n: 2.3, rake: 0.7,
-    topside: WHITE_T, boot: mat(0x1e2c48, 0.4), bottom: ANTIFOUL_BLUE, deck: NONSKID, rub: STAINLESS, bootTop: 0.12, stations: lod ? 8 : 20,
-  });
+  buildHull(b, { ...SAIL_HULL, stations: lod ? 8 : 20 });
+  // guard rails with a bow pulpit, dark port lights in the coachroof sides
+  if (!lod) deckRails(b, SAIL_HULL, 0.06, 0.93, 0.6, 1.7, 0.12, STAINLESS, true);
   // fin keel + bulb and rudder (seen through clear water from above)
   b.box(0, -1.2, -0.3, 0.16, 1.4, 1.3, ANTIFOUL_BLUE, { top: true });
   if (!lod) {
@@ -332,12 +401,16 @@ function sailGrid(b: MeshBuilder, grid: [number, number, number][][], luff: numb
     }
 }
 
+const MOTOR_HULL: HullSpec = {
+  L: 18, B: 5.0, F: 1.9, D: 0.9, sheer: 0.3, transom: 0.93, transomDepth: 0.45, entry: 1.45, n: 1.6, rake: 1.4,
+  topside: WHITE_T, boot: mat(0x2a2d31, 0.35), bottom: ANTIFOUL_BLUE, deck: TEAK, rub: STAINLESS, bootTop: 0.18,
+};
+
 function motorYacht(b: MeshBuilder, lod: number): void {
-  buildHull(b, {
-    L: 18, B: 5.0, F: 1.9, D: 0.9, sheer: 0.3, transom: 0.93, transomDepth: 0.45, entry: 1.45, n: 1.6, rake: 1.4,
-    topside: WHITE_T, boot: mat(0x2a2d31, 0.35), bottom: ANTIFOUL_BLUE, deck: TEAK, rub: STAINLESS, bootTop: 0.18,
-    hullWindows: [-3.5, 1.5, 0.9, 1.5], stations: lod ? 8 : 20,
-  });
+  buildHull(b, { ...MOTOR_HULL, stations: lod ? 8 : 20 });
+  // hull window slits (guest cabins) and a foredeck rail
+  hullSlits(b, MOTOR_HULL, lod ? [[0.4, 0.66]] : [[0.4, 0.5], [0.53, 0.66]], 1.02, 1.32, LIT);
+  if (!lod) deckRails(b, MOTOR_HULL, 0.62, 0.94, 0.75, 1.6, 0.12, STAINLESS, true);
   // main-deck saloon: raked windscreen, dark glass band
   b.prism(0, 0.8, 1.9, 2.6, 4.3, 9.0, 4.1, 8.6, WHITE, 0.1, false);
   b.prism(0, 0.95, 2.6, 3.55, 4.1, 8.6, 3.9, 7.4, LIT_BLUE, 0.5, false);
@@ -402,10 +475,15 @@ function ferry(b: MeshBuilder, lod: number): void {
     L: 92, B: 20, F: 3.6, D: 4.2, sheer: 0.18, transom: 0, transomDepth: 0.2, entry: 3.2, n: 4.2, rake: 0,
     topside: WHITE_T, boot: mat(0xf2f2ee, 0.4), bottom: ANTIFOUL_RED, deck: DECK_GREY, rub: WHITE, bootTop: 0.6, symmetric: true, stations: lod ? 10 : 26,
   });
-  // car deck enclosure: white walls with dark openings
-  b.prism(0, 0, 3.6, 4.4, 17.4, 76, 17.4, 76, WHITE, 0, false);
-  b.prism(0, 0, 4.4, 7.4, 17.4, 76, 17.4, 76, mat(0x1b1d20, 0.7), 0, false);
-  b.prism(0, 0, 7.4, 8.4, 17.6, 76, 17.8, 76, WHITE, 0);
+  // car deck enclosure: white walls with a row of openings, open (dark) at both ends
+  const CARDECK = mat(0x1b1d20, 0.7);
+  b.prism(0, 0, 3.6, 8.4, 17.4, 76, 17.6, 76, WHITE, 0, false);
+  b.prism(0, 0, 7.4, 8.4, 17.62, 76, 17.8, 76, WHITE, 0);
+  for (const z of [-38.02, 38.02]) b.box(0, 5.8, z, 14.5, 3.6, 0.1, CARDECK);
+  for (let k = 0; k < (lod ? 0 : 10); k++) {
+    const z = -33 + k * 7.3;
+    for (const x of [-8.72, 8.72]) b.box(x, 5.9, z, 0.08, 2.2, 5.2, CARDECK);
+  }
   // passenger deck: long glass band
   b.prism(0, 0, 8.4, 9.2, 18, 62, 18, 62, WHITE, 0, false);
   b.prism(0, 0, 9.2, 10.8, 18, 62, 17.8, 61, LIT_BLUE, 0, false);
@@ -428,13 +506,38 @@ function ferry(b: MeshBuilder, lod: number): void {
   b.cylinder([0, 13.6, 0], [0, 22, 0], 0.2, 0.12, 6, WHITE, false);
   if (!lod) {
     b.box(0, 21, 0, 2.6, 0.12, 0.3, DARK);
-    // lifeboats / rafts along the passenger deck
-    for (const x of [-9.3, 9.3]) for (const z of [-22, -8, 8, 22]) b.cylinder([x, 11.9, z - 2], [x, 11.9, z + 2], 0.6, 0.6, 8, ORANGE);
-    // end ramps
+    b.cylinder([0, 21.3, 0], [0, 21.6, 0], 0.45, 0.45, 8, WHITE); // radome
+    // bridge wings out to the ship's side on both wheelhouses
+    for (const z of [-19, 19]) b.box(0, 15.2, z + Math.sign(z) * 1.2, 19.4, 0.25, 1.6, WHITE);
+    // lifeboats on davits along the passenger deck, life-raft canisters
+    for (const x of [-9.3, 9.3])
+      for (const z of [-22, -8, 8, 22]) {
+        b.cylinder([x, 11.9, z - 2.2], [x, 11.9, z + 2.2], 0.75, 0.75, 8, ORANGE);
+        b.box(x, 12.55, z, 1.3, 0.25, 4.2, WHITE); // canopy
+        for (const dz of [-1.8, 1.8]) {
+          b.box(x - Math.sign(x) * 0.6, 12.4, z + dz, 0.18, 2.2, 0.18, WHITE);
+          b.box(x - Math.sign(x) * 0.1, 13.45, z + dz, 1.2, 0.18, 0.18, WHITE);
+        }
+      }
+    for (const x of [-8.2, 8.2]) for (const z of [-28, -14.5, 14.5, 28]) b.cylinder([x, 11.8, z - 0.6], [x, 11.8, z + 0.6], 0.45, 0.45, 6, WHITE);
+    // railings round the passenger and sun decks
+    const railsAt = (y: number, hw: number, hl: number) => {
+      const RAIL = mat(0xf2f2ee, 0.4);
+      for (const x of [-hw, hw]) {
+        b.box(x, y + 1.0, 0, 0.06, 0.06, 2 * hl, RAIL);
+        for (let z = -hl; z <= hl + 1e-6; z += 3) b.box(x, y + 0.5, z, 0.05, 1.0, 0.05, RAIL);
+      }
+      for (const z of [-hl, hl]) b.box(0, y + 1.0, z, 2 * hw, 0.06, 0.06, RAIL);
+    };
+    railsAt(11.6, 8.8, 30);
+    railsAt(13.6, 6.4, 17.5);
+    // end ramps (vehicle loading aprons) and the bow door frames
     for (const z of [-44, 44]) b.box(0, 4.0, z, 8, 0.4, 2.5, DECK_GREY);
   }
 }
 
+const HATCH = mat(0x5f6a60, 0.75, 0.2);
+const LASHING = mat(0xd8c24a, 0.6, 0.3);
 /** Container colours seen on real ships (Maersk blue, MSC beige, Evergreen green, Hapag orange, ONE magenta, CMA CGM blue, greys…). */
 const CONTAINER_COLORS = [0x3c9cc8, 0xcdb68a, 0x2f7a41, 0xd9641f, 0xa52a6b, 0x1d3f8f, 0x8c9196, 0xe3e1da, 0xa22b2a, 0x7a4c30, 0x2b4d99, 0x5f6b72, 0xc8c3b5, 0x3c9cc8, 0x8c9196].map((c) => mat(c, 0.62, 0.15));
 
@@ -446,16 +549,28 @@ function containerShip(b: MeshBuilder, lod: number, variant: number): void {
     L, B, F, D: 12, sheer: 0.25, transom: 0.86, transomDepth: 0.4, entry: 2.4, n: 5, rake: 7,
     topside: WHITE_T, boot: mat(0x8c2a22, 0.7), bottom: ANTIFOUL_RED, deck: DECK_GREY, rub: WHITE_T, bootTop: 1.2, stations: lod ? 12 : 30,
   });
-  // forecastle breakwater and mooring deck
+  const spec = { L, B, F, D: 12, sheer: 0.25, transom: 0.86, transomDepth: 0.4, entry: 2.4, n: 5, rake: 7 } as HullSpec;
+  bulbousBow(b, spec, 4.2, 22, lod, ANTIFOUL_RED);
+  // forecastle breakwater and mooring deck, windlasses
   b.prism(0, -L / 2 + 26, F + 1.2, F + 4.2, B * 0.78, 1.2, B * 0.75, 0.8, WHITE, 0);
+  if (!lod) {
+    for (const x of [-5, 5]) b.cylinder([x - 1.2, F + 2.6, -L / 2 + 14], [x + 1.2, F + 2.6, -L / 2 + 14], 0.9, 0.9, 8, mat(0x3a5a3a, 0.6));
+    // free-fall lifeboat on its ramp over the stern, rescue boat davit
+    const zs = L / 2 - 52 + 7 + 2;
+    b.with([0, F + 9, zs + 5], [-28, 0, 0], () => {
+      b.box(0, -0.6, 0, 3.4, 0.3, 9.5, DARK);
+      b.cylinder([0, 0.9, -4.3], [0, 0.9, 4.3], 1.4, 1.4, 8, ORANGE);
+    });
+  }
   // accommodation block aft: 7 decks with window bands, bridge + wings, funnel
   const zA = L / 2 - 52;
   const wA = 26;
   const dA = 14;
   let y = F + 1.5;
   for (let k = 0; k < 7; k++) {
-    b.prism(0, zA, y, y + 1.8, wA, dA, wA, dA, WHITE, 0, false);
-    b.prism(0, zA, y + 1.8, y + 2.8, wA + 0.02, dA + 0.02, wA + 0.02, dA + 0.02, lod ? LIT_FAR : LIT, 0, false);
+    b.prism(0, zA, y, y + 1.95, wA, dA, wA, dA, WHITE, 0, false);
+    b.prism(0, zA, y + 1.95, y + 2.65, wA + 0.02, dA + 0.02, wA + 0.02, dA + 0.02, lod ? LIT_FAR : LIT, 0, false);
+    b.prism(0, zA, y + 2.65, y + 2.8, wA, dA, wA, dA, WHITE, 0, false);
     y += 2.8;
   }
   b.prism(0, zA, y, y + 1.2, B, dA + 1, B, dA + 1, WHITE, 0, false);
@@ -480,6 +595,9 @@ function containerShip(b: MeshBuilder, lod: number, variant: number): void {
     const u = 1 - (zc + L / 2) / L;
     const hb = hullShape({ L, B, F, D: 12, sheer: 0.25, transom: 0.86, transomDepth: 0.4, entry: 2.4, n: 5, rake: 7 } as HullSpec, u).halfB;
     const nr = Math.max(3, Math.min(rows, Math.floor((2 * hb - 1.5) / rowW)));
+    // hatch cover under the stack and a lashing bridge at the bay's aft end
+    b.box(0, F + 0.5, zc, nr * rowW + 0.6, 1.0, bayLen + 0.3, HATCH, { bottom: true });
+    if (!lod && bay % 2 === 1) b.box(0, F + 3.6, zc + bayLen / 2 + 0.3, nr * rowW + 0.8, 5.2, 0.35, LASHING, { bottom: true });
     for (let r = 0; r < nr; r++) {
       const xc = (r - (nr - 1) / 2) * rowW;
       const tiers = 3 + Math.floor(h01(911 + variant, bay, r) * 4);
@@ -504,23 +622,56 @@ function tanker(b: MeshBuilder, lod: number, variant: number): void {
     L, B, F, D: 14, sheer: 0.35, transom: 0.84, transomDepth: 0.45, entry: 2.8, n: 6, rake: 5,
     topside: WHITE_T, boot: mat(0x8a2b22, 0.7), bottom: ANTIFOUL_RED, deck: variant % 2 ? DECK_RED : DECK_GREEN, rub: WHITE_T, bootTop: 0.9, stations: lod ? 12 : 30,
   });
-  // pipe rack / catwalk along the centreline, manifold with cranes midships
-  b.box(0, F + 1.6, -10, 2.4, 1.2, L * 0.72, mat(0x9aa3a8, 0.6, 0.4));
-  if (!lod) {
-    for (const x of [-6, -3, 3, 6]) b.box(x, F + 0.7, -10, 0.7, 0.7, L * 0.7, mat(0x8a9296, 0.5, 0.5));
-    for (let k = 0; k < 6; k++) b.box(0, F + 1.4, -12 + (k - 2.5) * 3, B * 0.7, 0.6, 0.6, mat(0x9aa3a8, 0.5, 0.5)); // manifold
-    for (const x of [-12, 12]) {
-      b.cylinder([x, F, -10], [x, F + 10, -10], 0.5, 0.4, 6, WHITE, false);
-      b.cylinder([x, F + 10, -10], [x * 0.3, F + 13, -18], 0.3, 0.2, 5, WHITE, false);
+  const spec = { L, B, F, D: 14, sheer: 0.35, transom: 0.84, transomDepth: 0.45, entry: 2.8, n: 6, rake: 5 } as HullSpec;
+  bulbousBow(b, spec, 5, 24, lod, ANTIFOUL_RED);
+  const PIPE = mat(0x8a9296, 0.5, 0.5);
+  const PIPE_R = mat(0x9b3a2a, 0.6, 0.3);
+  const zc0 = -L / 2 + 34;
+  const zc1 = L / 2 - 42;
+  const cl = zc1 - zc0;
+  const cm = (zc0 + zc1) / 2;
+  // raised catwalk on posts along the centreline
+  b.box(0, F + 2.4, cm, 1.4, 0.15, cl, mat(0x9aa3a8, 0.6, 0.4));
+  if (lod) b.box(0, F + 1.0, cm, 7, 1.2, cl, PIPE, { bottom: true });
+  else {
+    for (let z = zc0; z <= zc1; z += 12) b.box(0, F + 1.2, z, 0.25, 2.4, 0.25, PIPE);
+    // cargo, stripping and vapour lines either side of the catwalk (and a red fire main)
+    for (const [x, r, m] of [[-3.4, 0.45, PIPE], [-2.3, 0.35, PIPE], [-1.3, 0.3, PIPE], [1.3, 0.3, PIPE], [2.3, 0.35, PIPE], [3.4, 0.45, PIPE], [-5.2, 0.2, PIPE_R]] as [number, number, Mat][])
+      b.cylinder([x, F + 0.9, zc0], [x, F + 0.9, zc1], r, r, 6, m, false);
+    // tank hatches and ullage domes in two rows
+    for (let z = zc0 + 8; z < zc1 - 4; z += 22)
+      for (const x of [-10, 10]) {
+        b.cylinder([x, F, z], [x, F + 0.9, z], 1.1, 1.1, 8, mat(0x8b9a86, 0.7));
+        b.box(x * 1.35, F + 0.6, z + 6, 1.4, 1.2, 1.4, WHITE);
+      }
+    // manifold: transverse lines with valve blocks and drip trays at both sides, midships
+    for (let k = 0; k < 6; k++) {
+      const z = -12 + (k - 2.5) * 2.6;
+      b.cylinder([-B * 0.42, F + 1.3, z], [B * 0.42, F + 1.3, z], 0.35, 0.35, 6, PIPE, false);
+      for (const x of [-B * 0.42, B * 0.42]) b.box(x, F + 1.3, z, 1.0, 1.0, 1.0, mat(0x2b5aa0, 0.5, 0.3));
     }
+    for (const x of [-B * 0.43, B * 0.43]) b.box(x, F + 0.2, -12, 2.2, 0.4, 16, DARK);
+    // hose-handling cranes: kingpost, jib, hook block
+    for (const x of [-12, 12]) {
+      b.cylinder([x, F, -12], [x, F + 11, -12], 0.6, 0.45, 8, WHITE, false);
+      b.box(x, F + 11.5, -12, 1.6, 1.4, 2.2, WHITE);
+      b.cylinder([x, F + 11.5, -12], [x * 0.35, F + 15, -26], 0.35, 0.22, 6, WHITE, false);
+      b.cylinder([x * 0.35, F + 15, -26], [x * 0.35, F + 9, -26], 0.03, 0.03, 3, DARK, false);
+    }
+    // foam monitors on posts in front of the accommodation and along the deck
+    for (let z = zc0 + 20; z < zc1; z += 45) for (const x of [-7, 7]) b.cylinder([x, F, z], [x, F + 2.8, z], 0.12, 0.12, 5, RED, false);
   }
+  // raised forecastle with the mooring deck
+  b.prism(0, -L / 2 + 13, F, F + 2.6, B * 0.5, 22, B * 0.5, 22, WHITE_T, 0.0);
+  if (!lod) for (const x of [-4.5, 4.5]) b.cylinder([x - 1.3, F + 3.4, -L / 2 + 10], [x + 1.3, F + 3.4, -L / 2 + 10], 1.0, 1.0, 8, mat(0x3a5a3a, 0.6));
   b.prism(0, -L / 2 + 20, F + 1.0, F + 3.2, B * 0.7, 1.2, B * 0.68, 0.8, WHITE, 0);
   // accommodation aft
   const zA = L / 2 - 30;
   let y = F + 1;
   for (let k = 0; k < 5; k++) {
-    b.prism(0, zA, y, y + 1.8, 30, 16, 30, 16, WHITE, 0, false);
-    b.prism(0, zA, y + 1.8, y + 2.8, 30.02, 16.02, 30.02, 16.02, lod ? LIT_FAR : LIT, 0, false);
+    b.prism(0, zA, y, y + 1.95, 30, 16, 30, 16, WHITE, 0, false);
+    b.prism(0, zA, y + 1.95, y + 2.65, 30.02, 16.02, 30.02, 16.02, lod ? LIT_FAR : LIT, 0, false);
+    b.prism(0, zA, y + 2.65, y + 2.8, 30, 16, 30, 16, WHITE, 0, false);
     y += 2.8;
   }
   b.prism(0, zA, y, y + 1.2, B, 17, B, 17, WHITE, 0, false);
