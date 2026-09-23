@@ -69,7 +69,7 @@ export function shadowShape(length: number, width: number, height: number, headi
 export const newShadowShape = (): ShadowShape => ({ halfL: 0, halfW: 0, castX: 0, castZ: 0, minX: 0, maxX: 0, minZ: 0, maxZ: 0 });
 
 /** Occlusion (0..1) of the ground at hull-frame point (x, z) — the fragment shader's formula, for tests. */
-export function shadowAt(s: ShadowShape, x: number, z: number, strength = 1): number {
+export function shadowAt(s: ShadowShape, x: number, z: number, strength = 1, soft = SOFT): number {
   const box = (px: number, pz: number, bx: number, bz: number) => {
     const dx = Math.abs(px) - bx;
     const dz = Math.abs(pz) - bz;
@@ -79,12 +79,12 @@ export function shadowAt(s: ShadowShape, x: number, z: number, strength = 1): nu
     const t = Math.min(1, Math.max(0, (v - e0) / (e1 - e0)));
     return t * t * (3 - 2 * t);
   };
-  const ao = 1 - sm(-0.6, SOFT, box(x, z, s.halfW, s.halfL));
+  const ao = 1 - sm(-0.6, soft, box(x, z, s.halfW, s.halfL));
   let cast = 0;
   for (let k = 0; k < 4; k++) {
     const t = k / 3;
-    const soft = 0.35 + 0.7 * t;
-    cast = Math.max(cast, (1 - sm(-soft, soft, box(x - s.castX * t, z - s.castZ * t, s.halfW * 0.92, s.halfL * 0.92))) * (1 - 0.3 * t));
+    const sc = 0.35 + 0.7 * t;
+    cast = Math.max(cast, (1 - sm(-sc, sc, box(x - s.castX * t, z - s.castZ * t, s.halfW * 0.92, s.halfL * 0.92))) * (1 - 0.3 * t));
   }
   return Math.min(0.9, Math.max(ao * 0.8, cast * 0.62) * strength);
 }
@@ -97,11 +97,14 @@ attribute vec4 aMisc;  // strength, scorch 0..1, -, -
 uniform float uLift;
 uniform float uPull;
 uniform vec2 uFar;
+uniform float uGrow;
 varying vec2 vLocal;
 varying vec4 vBox;
-varying vec2 vMisc;
+varying vec3 vMisc;
 void main() {
-  float soft = ${SOFT.toFixed(2)} + 1.6 * aMisc.y;
+  // the soft rim widens with distance (the patch keeps a few pixels at 2 km)
+  float dc = distance((modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, cameraPosition);
+  float soft = ${SOFT.toFixed(2)} + 1.6 * aMisc.y + uGrow * dc;
   vec2 lo = vec2(-aBox.y - soft + min(0.0, aBox.z), -aBox.x - soft + min(0.0, aBox.w));
   vec2 hi = vec2(aBox.y + soft + max(0.0, aBox.z), aBox.x + soft + max(0.0, aBox.w));
   vec2 lp = mix(lo, hi, position.xz + 0.5);
@@ -111,7 +114,7 @@ void main() {
   vec4 w = modelMatrix * instanceMatrix * vec4(lp.x, 0.2, lp.y, 1.0);
   float d = distance(w.xyz, cameraPosition);
   w.y += uLift * d;
-  vMisc = vec2(aMisc.x * (1.0 - 0.45 * smoothstep(uFar.x, uFar.y, d)), aMisc.y);
+  vMisc = vec3(aMisc.x * (1.0 - 0.45 * smoothstep(uFar.x, uFar.y, d)), aMisc.y, soft);
   vec4 mv = viewMatrix * w;
   mv.xyz *= 1.0 - uPull;
   gl_Position = projectionMatrix * mv;
@@ -123,7 +126,7 @@ const FRAG = /* glsl */ `
 #include <logdepthbuf_pars_fragment>
 varying vec2 vLocal;
 varying vec4 vBox;
-varying vec2 vMisc;
+varying vec3 vMisc;
 float boxSdf(vec2 p, vec2 b) {
   vec2 d = abs(p) - b;
   return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
@@ -132,7 +135,7 @@ void main() {
   #include <logdepthbuf_fragment>
   vec2 hb = vec2(vBox.y, vBox.x);
   float scorch = vMisc.y;
-  float ao = 1.0 - smoothstep(-0.6, ${SOFT.toFixed(2)} + 1.6 * scorch, boxSdf(vLocal, hb));
+  float ao = 1.0 - smoothstep(-0.6, vMisc.z, boxSdf(vLocal, hb));
   float cst = 0.0;
   for (int k = 0; k < 4; k++) {
     float t = float(k) / 3.0;
@@ -167,7 +170,7 @@ export function createShadowRenderer(capacity: number, cfg: ShadowConfig = CONFI
   geo.setAttribute('aMisc', aMisc);
   const mat = new THREE.ShaderMaterial({
     name: 'targets-shadow',
-    uniforms: { uLift: { value: cfg.lift }, uPull: { value: cfg.pull }, uFar: { value: new THREE.Vector2(cfg.farFade[0], cfg.farFade[1]) } },
+    uniforms: { uLift: { value: cfg.lift }, uPull: { value: cfg.pull }, uGrow: { value: cfg.grow }, uFar: { value: new THREE.Vector2(cfg.farFade[0], cfg.farFade[1]) } },
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,

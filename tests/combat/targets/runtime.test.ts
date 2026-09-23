@@ -132,6 +132,48 @@ describe('models, levels of detail and instancing', () => {
     }
   });
 
+  it('animated parts are tagged: wheels and track runs on every tracked hull, the ZSU radar dish on its turret', () => {
+    const kinds = (g: THREE.BufferGeometry) => {
+      const a = g.getAttribute('aPart');
+      const set = new Set<number>();
+      for (let i = 0; i < a.count; i++) set.add(a.getX(i));
+      return set;
+    };
+    for (const k of ['tank', 'ifv', 'aaa'] as const) {
+      const m = buildClassModel(k, 0);
+      expect([...kinds(m.hull)]).toEqual(expect.arrayContaining([0, 1, 2]));
+    }
+    for (const k of ['apc', 'truck'] as const) expect(kinds(buildClassModel(k, 0).hull).has(1)).toBe(true);
+    expect(kinds(buildClassModel('aaa', 0).turret!).has(3)).toBe(true);
+    expect(kinds(buildClassModel('tank', 0).turret!).has(3)).toBe(false);
+  });
+
+  it('turrets slew smoothly between scan bearings (rate-limited, bounded); the dead ones stay put', () => {
+    const world = createCombatWorld();
+    const rt = createRangeRuntime(world, ground, () => null);
+    rt.install(plan);
+    const prev = rt.views.map((v) => v.turretYaw);
+    const moved = new Set<number>();
+    const dt = 0.1;
+    for (let k = 0; k < 600; k++) {
+      rt.update(dt);
+      rt.views.forEach((v, i) => {
+        expect(Math.abs(v.turretYaw - prev[i])).toBeLessThanOrEqual(CONFIG.combat.range.turret.slewDeg * 1.6 * (Math.PI / 180) * dt + 1e-9);
+        expect(Math.abs(v.turretYaw)).toBeLessThan(Math.PI);
+        if (Math.abs(v.turretYaw - prev[i]) > 1e-6) moved.add(i);
+        prev[i] = v.turretYaw;
+      });
+    }
+    const turreted = rt.vehicles.filter((v) => v.target.kind !== 'truck').length;
+    expect(moved.size).toBeGreaterThanOrEqual(turreted - 1);
+    const t = rt.vehicles.find((v) => v.target.kind === 'aaa')!;
+    kill(world, t.target.id);
+    rt.update(dt);
+    const y0 = t.view.turretYaw;
+    for (let k = 0; k < 100; k++) rt.update(dt);
+    expect(t.view.turretYaw).toBe(y0);
+  });
+
   it('instances: one per vehicle per part at its LOD, ≤ 30 meshes', () => {
     const world = createCombatWorld();
     const rt = createRangeRuntime(world, ground, () => null);

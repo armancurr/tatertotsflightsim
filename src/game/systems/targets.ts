@@ -94,7 +94,7 @@ const mod: SystemModule = {
       look(x: number | null, y = 0, z = 0, tx = 0, ty = 0, tz = 0, fov = 40) {
         debugCam = x === null ? null : { x, y, z, tx, ty, tz, fov };
       },
-      stats: () => ({ ...runtime.stats(), draws: renderer?.activeMeshes() ?? 0, counts: renderer?.counts() ?? {}, convoy: runtime.convoy ? { phase: runtime.convoy.phase(), dir: runtime.convoy.dir() } : null }),
+      stats: () => ({ ...runtime.stats(), draws: renderer?.activeMeshes() ?? 0, cpuMs: +cpuMs.toFixed(3), counts: renderer?.counts() ?? {}, convoy: runtime.convoy ? { phase: runtime.convoy.phase(), dir: runtime.convoy.dir() } : null }),
       /** The march column's units (s, lat, speed, mode) for QA. */
       convoy: () => runtime.convoy?.units.map((u) => ({ slot: u.slot, kind: u.kind, alive: u.alive, mode: u.mode, s: +u.s.toFixed(1), lat: +u.lat.toFixed(1), speed: +u.speed.toFixed(2), x: u.x, z: u.z })) ?? [],
       plan: () => plan,
@@ -110,6 +110,8 @@ const mod: SystemModule = {
       }
     };
     const baseFov = { v: 0 };
+    /** Smoothed CPU time of the range per frame (runtime + instance refill), ms. */
+    let cpuMs = 0;
 
     return {
       async ready() {
@@ -120,6 +122,7 @@ const mod: SystemModule = {
         installDebug();
         if (!installed && plan) install();
         if (!installed || !renderer) return;
+        const c0 = performance.now();
         runtime.update(f.paused ? 0 : f.dt);
         if (debugCam) {
           if (!baseFov.v) baseFov.v = f.camera.fov;
@@ -130,6 +133,7 @@ const mod: SystemModule = {
           f.camera.updateMatrixWorld();
         }
         renderer.update(f.camera, runtime.views, ctx.atmosphere.sunDirection, f.time);
+        cpuMs += (performance.now() - c0 - cpuMs) * 0.05;
       },
       onReset() {
         runtime.reset();
@@ -140,6 +144,8 @@ const mod: SystemModule = {
         plan: plan ? { ...(plan as RangePlan).stats, track: (plan as RangePlan).track?.kind ?? 'none', vehicles: (plan as RangePlan).vehicles.length } : null,
         ...runtime.stats(),
         draws: renderer?.activeMeshes() ?? 0,
+        cpuMs: +cpuMs.toFixed(3),
+        convoy: runtime.convoy ? runtime.convoy.phase() : null,
       }),
       dispose() {
         worker?.terminate();

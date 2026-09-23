@@ -106,7 +106,7 @@ const SHADER_COLOR = /* glsl */ `
   // dust and dried mud, heaviest low down; a little everywhere
   float n = tgNoise(vObj * 2.3 + vState.y * 13.0);
   float low = smoothstep(1.4, 0.15, vObj.y);
-  float dust = clamp(low * (0.45 + 0.5 * n) + 0.12 * n, 0.0, 0.85);
+  float dust = clamp(low * (0.45 + 0.5 * n) + 0.05 * n, 0.0, 0.85);
   base = mix(base, vec3(0.2, 0.165, 0.115), dust * 0.75);
   // charred wreck: soot black, burnt paint gone to rust-brown in patches, grey ash
   float c = vState.x;
@@ -311,6 +311,8 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
         E.set(v.pitch, -v.headingDeg * DEG, v.roll, 'YXZ');
         Q.setFromEuler(E);
         P.set(v.x, v.y, v.z);
+        const k = farScaleAt(dist);
+        S.set(k, k, k);
         M.compose(P, Q, S);
         const cls = CONFIG.combat.targets[v.kind];
         shadowShape(cls.length, cls.width, cls.height, v.headingDeg, sun, rc.shadow.castMax, shape);
@@ -320,7 +322,7 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
         const tur = slots.get(key(v.kind, 'turret', lod));
         if (!tur || v.turretGone) continue;
         if (v.turretFree) {
-          M.compose(v.turretPos, v.turretQuat, S);
+          M.compose(v.turretPos, v.turretQuat, S.set(1, 1, 1));
         } else {
           T.makeTranslation(0, model.ring.y, model.ring.z);
           R.makeRotationY(-v.turretYaw);
@@ -362,6 +364,13 @@ export function createTargetsRenderer(capacity: Partial<Record<TargetKind, numbe
       group.removeFromParent();
     },
   };
+}
+
+/** Drawing scale of a vehicle at camera distance d (the far-visibility aid, CONFIG.combat.range.farScale). */
+export function farScaleAt(d: number, f: readonly [number, number, number] = CONFIG.combat.range.farScale): number {
+  if (!(d > f[0])) return 1;
+  const t = Math.min(1, (d - f[0]) / Math.max(1, f[1] - f[0]));
+  return 1 + (f[2] - 1) * t * t * (3 - 2 * t);
 }
 
 /** Turret ring (hull frame) and its tossed centre-of-mass height, per class (LOD 0). */
