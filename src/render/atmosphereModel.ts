@@ -45,6 +45,12 @@ export interface AtmosphereParams {
   ozoneWidth: number;
   /** Strength of the isotropic multiple-scattering approximation (0 = single scattering only). */
   multiScatter: number;
+  /**
+   * Skylight floor of the multiple-scattering source (per unit top-of-atmosphere sun): the air is lit
+   * by the blue sky as well as by the sun, which is what keeps twilight haze blue-violet instead of
+   * the brown of reddened sunlight alone.
+   */
+  multiScatterFloor: RGB;
   /** Top-of-atmosphere solar irradiance in scene units (three.js light intensity units). */
   sunIlluminance: number;
   /** Colour of sunlight above the atmosphere (acts as the camera white balance). */
@@ -68,6 +74,7 @@ export function defaultAtmosphereParams(cfg: AtmoCfg = CONFIG.atmosphere): Atmos
     ozoneCenter: 25e3,
     ozoneWidth: 15e3,
     multiScatter: cfg.multiScatter,
+    multiScatterFloor: { r: 0.02, g: 0.02, b: 0.02 },
     sunIlluminance: cfg.sunIntensity,
     sunColor: { r: cfg.sunColor[0], g: cfg.sunColor[1], b: cfg.sunColor[2] },
   };
@@ -208,9 +215,9 @@ export function skyRadiance(p: AtmosphereParams, dir: Vec3, sunDir: Vec3, camera
     const muS = (r0 * sunDir.y + tm * nu) / r;
     transmittanceToSpace(p, h, muS, _ts);
     // Multiple scattering: isotropic source proportional to the local sunlight (plus a skylight floor).
-    const msr = ms * iso * (_ts.r + 0.02);
-    const msg = ms * iso * (_ts.g + 0.02);
-    const msb = ms * iso * (_ts.b + 0.02);
+    const msr = ms * iso * (_ts.r + p.multiScatterFloor.r);
+    const msg = ms * iso * (_ts.g + p.multiScatterFloor.g);
+    const msb = ms * iso * (_ts.b + p.multiScatterFloor.b);
     const Sr = _ts.r * (sRr * phR + sMs * phM) + (sRr + sMs) * msr;
     const Sg = _ts.g * (sRg * phR + sMs * phM) + (sRg + sMs) * msg;
     const Sb = _ts.b * (sRb * phR + sMs * phM) + (sRb + sMs) * msb;

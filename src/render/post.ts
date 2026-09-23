@@ -2,17 +2,21 @@
  * HDR → display output pass: one full-screen triangle that applies, in order,
  * the volumetric clouds (depth-aware upsampling of the low-resolution cloud
  * buffer, composited as scene·T + L; see volumetricClouds.ts), the lens flare
- * (lensflare.ts, occluded by the clouds too), the in-cloud whiteout, a mild optical
- * vignette and saturation grade, filmic tone mapping (renderer.toneMapping),
- * sRGB encoding and a triangular dither against banding in sky gradients.
- * All of it costs one texture read per pixel plus ALU (≈0.2 ms at 1440×900).
- * Bloom is intentionally not used: the flare's glare term gives the sun its
- * photographic halo at a fraction of the cost of a blur chain.
+ * (lensflare.ts, occluded by the clouds too), bloom (bloom.ts: a ½-res dual-filter
+ * chain of the HDR highlights, rendered from this mesh's onBeforeRender), the
+ * in-cloud whiteout, the camera white balance (atmosphereState.ts), a mild optical
+ * vignette and saturation grade, filmic tone mapping (renderer.toneMapping, with the
+ * camera's auto exposure in renderer.toneMappingExposure), sRGB encoding and a
+ * triangular dither against banding in sky gradients.
+ * Cost at 1440×900 on an M2 Max: ≈0.2 ms for this pass + ≈0.1–0.2 ms of bloom.
  */
 import * as THREE from 'three';
 import { FLARE_FRAGMENT_GLSL, FLARE_VERTEX_GLSL, flareEdgeFade, sunScreenPosition, type SunScreen } from './lensflare';
 import type { AtmosphereFrameData, CloudPassHook } from './frameData';
 import type { DepthMode } from './renderer';
+import type { QualityPlan } from './quality';
+import { createBloom, type BloomSettings } from './bloom';
+import { CONFIG } from '../config';
 
 export interface PostSettings {
   /** 0..1 corner darkening. */
@@ -24,6 +28,13 @@ export interface PostSettings {
   flareGhosts: number;
   flareStarburst: number;
   dither: boolean;
+  /** Bloom intensity (0 = off; default config.render.bloom.intensity). The 'low' quality preset turns it off. */
+  bloom?: number;
+}
+
+/** Bloom intensity for a quality plan: off on the 'low' preset and on software renderers. */
+export function bloomForQuality(plan: Pick<QualityPlan, 'level' | 'tier'>, intensity: number = CONFIG.render.bloom.intensity): number {
+  return plan.level === 'low' || plan.tier === 'software' ? 0 : intensity;
 }
 
 const VERTEX = /* glsl */ `
@@ -51,6 +62,9 @@ uniform sampler2D tHDR;
 uniform vec2 uTexel;
 uniform vec4 uImmersion;
 uniform vec3 uGrade; // saturation, vignette, dither
+uniform vec3 uWB;    // camera white-balance gains
+uniform sampler2D tBloom;
+uniform float uBloom;
 uniform sampler2D tCloudA;
 uniform sampler2D tCloudB;
 uniform sampler2D tDepth;
@@ -139,7 +153,9 @@ void main() {
 		}
 	}
 	c += lensFlare( vUv );
+	if ( uBloom > 0.0 ) c += texture2D( tBloom, vUv ).rgb * uBloom;
 	c = mix( c, uImmersion.rgb, uImmersion.a );
+	c *= uWB;
 	vec2 q = ( vUv - 0.5 ) * vec2( uFlareParams.w, 1.0 );
 	c *= 1.0 - uGrade.y * smoothstep( 0.3, 1.05, length( q ) );
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
@@ -176,6 +192,9 @@ export function createOutputPass(): OutputPass {
       uTexel: { value: new THREE.Vector2(1, 1) },
       uImmersion: { value: new THREE.Vector4(1, 1, 1, 0) },
       uGrade: { value: new THREE.Vector3(1, 0.15, 1) },
+      uWB: { value: new THREE.Vector3(1, 1, 1) },
+      tBloom: { value: null },
+      uBloom: { value: 0 },
       uFlareSun: { value: new THREE.Vector4() },
       uFlareThreshold: { value: 1000 },
       uFlareSampleRadius: { value: 2 },
@@ -198,6 +217,43 @@ export function createOutputPass(): OutputPass {
   });
   const mesh = new THREE.Mesh(geo, material);
   mesh.frustumCulled = false;
+  const bloom = createBloom();
+  const bc = CONFIG.render.bloom;
+  const bloomSettings: BloomSettings = { intensity: bc.intensity, threshold: bc.threshold, knee: bc.knee, clamp: bc.clamp };
+  let bloomCloud: THREE.Texture | null = null;
+  // Bloom runs right before this pass draws (nested renders into its own targets, like three's Reflector).
+  let lastRenderer: THREE.WebGLRenderer | null = null;
+  mesh.onBeforeRender = (renderer) => {
+    lastRenderer = renderer;
+    const src = material.uniforms.tHDR.value as THREE.Texture | null;
+    if (!src || !(bloomSettings.intensity > 0)) return;
+    bloom.render(renderer, src, bloomCloud, renderer.toneMappingExposure, bloomSettings);
+  };
+  // Profiling: window.__render.benchBloom(n) = GPU-synchronised ms of one bloom chain on the last frame.
+  if (typeof window !== 'undefined') {
+    const px = new Uint16Array(4);
+    const benchBloom = (n = 30): number => {
+      const r = lastRenderer;
+      const src = material.uniforms.tHDR.value as THREE.Texture | null;
+      if (!r || !src) return NaN;
+      // reading a texel of the bloom result blocks until the GPU has finished the chain
+      const sync = () => r.readRenderTargetPixels(bloom.target, 0, 0, 1, 1, px);
+      const run = (k: number) => {
+        sync();
+        const t0 = performance.now();
+        for (let i = 0; i < k; i++) bloom.render(r, src, bloomCloud, r.toneMappingExposure, { ...bloomSettings, intensity: 1 });
+        sync();
+        return performance.now() - t0;
+      };
+      run(2);
+      const a = run(1);
+      const b = run(n + 1);
+      return Math.round(((b - a) / n) * 1000) / 1000;
+    };
+    const w = window as unknown as { __render?: Record<string, unknown> };
+    w.__render = { ...(w.__render ?? {}), benchBloom, bloomLevels: () => bloom.levels };
+  }
+  material.uniforms.tBloom.value = bloom.texture;
   const scene = new THREE.Scene();
   scene.add(mesh);
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -219,6 +275,8 @@ export function createOutputPass(): OutputPass {
       material.uniforms.tHDR.value = texture;
       material.uniforms.uTexel.value.set(1 / width, 1 / height);
       texH = height;
+      bloom.setSize(width, height);
+      material.uniforms.tBloom.value = bloom.texture;
     },
     update(frame, cam, s, clouds, depth, depthMode) {
       const u = material.uniforms;
@@ -234,7 +292,9 @@ export function createOutputPass(): OutputPass {
         u.uDepth.value.set(pc.near ?? 0.1, far, depthMode === 'reversed' ? 1 : depthMode === 'logarithmic' ? 2 : 0, Math.log2(far + 1));
         u.uInvProj.value.copy(cam.projectionMatrixInverse);
         u.uCamWorld.value.copy(cam.matrixWorld);
+        bloomCloud = clouds.outputA;
       } else {
+        bloomCloud = null;
         u.uCloudOn.value.x = 0;
         u.tCloudA.value = blank;
         u.tCloudB.value = blank;
@@ -243,6 +303,11 @@ export function createOutputPass(): OutputPass {
       const aspect = (cam as THREE.PerspectiveCamera).aspect ?? 1;
       u.uFlareParams.value.set(s.flareGlare, s.flareGhosts, s.flareStarburst, aspect);
       u.uGrade.value.set(s.saturation, s.vignette, s.dither ? 1 : 0);
+      bloomSettings.intensity = s.bloom ?? bc.intensity;
+      u.uBloom.value = bloomSettings.intensity > 0 ? bloomSettings.intensity : 0;
+      const wb = frame?.whiteBalance;
+      if (wb) u.uWB.value.set(wb.r, wb.g, wb.b);
+      else u.uWB.value.set(1, 1, 1);
       if (!frame) {
         u.uFlareSun.value.z = 0;
         u.uImmersion.value.w = 0;
@@ -269,6 +334,7 @@ export function createOutputPass(): OutputPass {
       geo.dispose();
       material.dispose();
       blank.dispose();
+      bloom.dispose();
     },
   };
 }

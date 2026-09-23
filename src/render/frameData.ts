@@ -42,6 +42,8 @@ export interface AtmosphereFrameData {
   flare: boolean;
   /** Volumetric clouds (null = none / billboard mode). */
   clouds: CloudPassHook | null;
+  /** Camera white-balance gains (atmosphereState.ts; default none). */
+  whiteBalance?: THREE.Color;
 }
 
 const KEY = '__atmosphereFrame';
