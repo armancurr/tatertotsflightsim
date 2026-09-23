@@ -435,10 +435,16 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     vec2 fp = vec2( flowS, acr );
     d1 = wDetail( fp, vec4( 0.956, 0.292, uDetailL1.z, uDetailL1.w ), uDetailOff.xy, v1 );
     d2 = wDetail( fp + vec2( 0.0, 0.37 ), vec4( 0.819, -0.574, uDetailL2.z, uDetailL2.w ), uDetailOff.zw, v2 );
-    vec2 sl = d1.xy + d2.xy;
+    // a third, larger layer (not advected, rotated 60°) and separate amplitude patches per layer
+    // hide the tiles' periodicity in the sun glitter
+    float v3;
+    vec3 d3 = wDetail( fp * 0.43 + vec2( 3.1, 0.0 ), vec4( 0.5, 0.866, uDetailL1.z, uDetailL1.w * 0.8 ), vec2( 0.0 ), v3 );
+    float m1 = 0.35 + 1.3 * wNoise( fp / 17.0 + 4.0 );
+    float m2 = 0.35 + 1.3 * wNoise( fp / 11.0 - 9.0 );
+    vec2 sl = d1.xy * m1 + d2.xy * m2 + d3.xy * ( 1.6 - 0.5 * ( m1 + m2 ) );
     float rip = ( 0.25 + 1.1 * smoothstep( 0.25, 0.75, lane ) ) * ( 1.0 + 1.4 * riffle ) * ( 1.0 + 2.2 * rapids );
-    sd = ( T * sl.x + Nn * sl.y ) * rip;
-    dvar = ( v1 + v2 ) * rip * rip;
+    sd = ( T * sl.x + Nn * sl.y ) * rip * 0.8;
+    dvar = ( v1 * m1 * m1 + v2 * m2 * m2 + v3 ) * rip * rip * 0.64;
   #else
     d1 = wDetail( p, uDetailL1, uDetailOff.xy, v1 );
     d2 = wDetail( p, uDetailL2, uDetailOff.zw, v2 );
