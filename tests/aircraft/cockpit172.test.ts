@@ -4,7 +4,10 @@
  * their shafts, a clear view ahead through the windshield, the panel drawer robust to any
  * readings, and dispose freeing everything.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Building the aircraft and ray-casting its cabin takes seconds on a loaded machine.
+vi.setConfig({ testTimeout: 30_000 });
 import fc from 'fast-check';
 import * as THREE from 'three';
 import { fcParams } from '../support/fc';

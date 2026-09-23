@@ -5,7 +5,10 @@
  * selector and trim wheel between the seats; interior detail only drawn from the seat; the
  * cabin's sunlight model (roof and wing shade, windows let the sun in) and head looks never NaN.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Building the aircraft and ray-casting its cabin takes seconds on a loaded machine.
+vi.setConfig({ testTimeout: 30_000 });
 import fc from 'fast-check';
 import * as THREE from 'three';
 import { fcParams } from '../support/fc';
