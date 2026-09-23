@@ -19,7 +19,9 @@ export interface CockpitBuild {
   interior: THREE.BufferGeometry;
   pilotBody: THREE.BufferGeometry;
   pilotHead: THREE.BufferGeometry;
+  /** HUD combiner glass in its own frame (a w × h rectangle in the local XY plane, facing +z); place it with `hudPosition` and a rotation of `HUD.tilt` about X. */
   hudGlass: THREE.BufferGeometry;
+  hudPosition: THREE.Vector3;
   screens: THREE.BufferGeometry;
   panelFace: THREE.BufferGeometry;
 }
@@ -31,6 +33,12 @@ export const SCREEN_ATLAS = { width: 1024, height: 1024 } as const;
 export const PANEL = { cy: 0.62, z: -5.02, tilt: -0.16, w: 0.9, h: 0.42 } as const;
 /** The glareshield's aft lip (limits the view over the nose). */
 export const GLARESHIELD = { y: 0.875, z: -4.98 } as const;
+/** HUD combiner glass: a wide single pane above the UFC, leaning back (size, tilt, lower edge). */
+export const HUD = { w: 0.2, h: 0.155, tilt: 0.2, z: GLARESHIELD.z + 0.03, bottomY: GLARESHIELD.y + 0.035 } as const;
+/** Centre of the combiner glass. */
+export function hudCentre(): THREE.Vector3 {
+  return V(0, HUD.bottomY + (HUD.h / 2) * Math.cos(HUD.tilt), HUD.z + (HUD.h / 2) * Math.sin(HUD.tilt));
+}
 
 function quad(w: number, h: number, c: THREE.Vector3, tiltX: number, u0: number, v0: number, u1: number, v1: number): THREE.BufferGeometry {
   const g = new THREE.PlaneGeometry(w, h);
@@ -68,7 +76,7 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
       const z = CANOPY_FRONT_Z + ((CANOPY_REAR_Z - CANOPY_FRONT_Z) * i) / 18;
       const c = canopyAt(z);
       const p = V(s * (c.w + 0.006), c.sill + 0.012, z);
-      if (prev) f.push(tint(tube(prev, p, 0.028, 0.028, 6), FRAME, 0.55, 0.3));
+      if (prev) f.push(tint(tube(prev, p, 0.02, 0.02, 6), FRAME, 0.55, 0.3));
       prev = p;
     }
   }
@@ -80,7 +88,7 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
     const d = canopyArch(z - width / 2, 24, depth);
     f.push(tint(loftGeometry([a, b, c2, d, a.slice()], { closed: false }), FRAME, 0.5, 0.3));
   };
-  band(WINDSCREEN_BOW_Z, 0.032, 0.02, 0.008);
+  band(WINDSCREEN_BOW_Z, 0.045, 0.024, 0.008);
   band(CANOPY_REAR_Z + 0.05, 0.1, 0.05, 0.008);
   // A-pillars: follow the front panel's corners (where the arch turns from the flat front to the side).
   for (const s of [-1, 1]) {
@@ -93,14 +101,14 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
       const sn = Math.sin(t * Math.PI);
       pts.push(V(s * c.w * Math.abs(cs) ** (2 / c.n) * 1.01, c.sill + (c.top - c.sill) * Math.abs(sn) ** (2 / c.n) + 0.008, z));
     }
-    for (let i = 0; i < pts.length - 1; i++) f.push(tint(tube(pts[i], pts[i + 1], 0.017, 0.017, 6), FRAME, 0.5, 0.3));
+    for (let i = 0; i < pts.length - 1; i++) f.push(tint(tube(pts[i], pts[i + 1], 0.015, 0.015, 6), FRAME, 0.5, 0.3));
   }
   // Base of the windscreen.
   {
     const a = canopyArch(CANOPY_FRONT_Z + 0.02, 16, -0.01);
     const pts: THREE.Vector3[] = [];
     for (let k = 0; k < a.length; k += 3) pts.push(V(a[k], a[k + 1], a[k + 2]));
-    for (let i = 0; i < pts.length - 1; i++) f.push(tint(tube(pts[i], pts[i + 1], 0.025, 0.025, 6), FRAME, 0.5, 0.3));
+    for (let i = 0; i < pts.length - 1; i++) f.push(tint(tube(pts[i], pts[i + 1], 0.02, 0.02, 6), FRAME, 0.5, 0.3));
   }
   // Canopy hinge fairing and the rear actuator housing behind the head.
   f.push(tint(box(0.16, 0.08, 0.3, V(0, canopyAt(CANOPY_REAR_Z).top - 0.06, CANOPY_REAR_Z + 0.12)), FRAME, 0.55, 0.2));
@@ -110,8 +118,8 @@ function buildCanopy(): { glass: THREE.BufferGeometry; frame: THREE.BufferGeomet
 function buildInterior(): THREE.BufferGeometry {
   const g: THREE.BufferGeometry[] = [];
   const DARK = 0x2b2e30;
-  const PANEL_GREY = 0x3a3e42;
-  const BLACK = 0x111213;
+  const PANEL_GREY = 0x4a5156;
+  const BLACK = 0x1f2326;
   const CONSOLE = 0x3c4044;
   // Glareshield: an arch over the panel, its aft lip ~20° below the eye straight ahead.
   const hoodRing = (z: number, top: number, hw: number) => {
@@ -132,15 +140,21 @@ function buildInterior(): THREE.BufferGeometry {
   // Instrument panel box (its face is the painted quad), with side extensions to the consoles.
   const pc = panelPoint(0, 0, -0.025);
   g.push(tint(box(PANEL.w, PANEL.h, 0.04, pc, PANEL.tilt, 0, 0), PANEL_GREY, 0.7, 0.1));
-  // HUD: projector body under the combiner (on the glareshield), combiner frame.
-  const hudZ = G.z + 0.02;
-  g.push(tint(box(0.18, 0.05, 0.22, V(0, G.y - 0.03, hudZ - 0.12)), BLACK, 0.6, 0.2));
-  const hudBot = G.y + 0.03;
-  const hudTop = G.y + 0.17;
-  for (const s of [-1, 1]) g.push(tint(box(0.008, hudTop - hudBot + 0.02, 0.016, V(s * 0.08, (hudTop + hudBot) / 2, hudZ), 0.22, 0, 0), BLACK, 0.5, 0.3));
-  g.push(tint(box(0.17, 0.02, 0.03, V(0, hudBot - 0.01, hudZ - 0.02)), BLACK, 0.5, 0.3));
-  // UFC housing under the HUD (the keys are painted on the panel face).
-  g.push(tint(box(0.24, 0.12, 0.05, panelPoint(0, 0.15, 0.015), PANEL.tilt, 0, 0), DARK, 0.65, 0.1));
+  // HUD: projector body flush in the glareshield, a slim frame round the wide combiner glass.
+  g.push(tint(box(0.2, 0.05, 0.2, V(0, G.y - 0.03, HUD.z - 0.12)), BLACK, 0.6, 0.2));
+  const hudFrame = (w: number, h: number, c: THREE.Vector3) => {
+    const b = box(w, h, 0.012, V(0, 0, 0));
+    b.rotateX(HUD.tilt);
+    b.translate(c.x, c.y, c.z);
+    return tint(b, 0x5b6165, 0.5, 0.4);
+  };
+  const hc = hudCentre();
+  const up = V(0, Math.cos(HUD.tilt), Math.sin(HUD.tilt));
+  g.push(hudFrame(HUD.w + 0.014, 0.008, hc.clone().addScaledVector(up, HUD.h / 2 + 0.004)));
+  g.push(hudFrame(HUD.w + 0.03, 0.018, hc.clone().addScaledVector(up, -HUD.h / 2 - 0.009)));
+  for (const s of [-1, 1]) g.push(hudFrame(0.007, HUD.h, hc.clone().add(V(s * (HUD.w / 2 + 0.0035), 0, 0))));
+  // The UFC (under the HUD) is painted on the panel face with raised keys.
+  for (let k = 0; k < 12; k++) g.push(tint(box(0.03, 0.014, 0.008, panelPoint(-0.075 + (k % 4) * 0.05, 0.155 - Math.floor(k / 4) * 0.025, 0.005), PANEL.tilt, 0, 0), 0x3f464b, 0.6, 0.1));
   // MFCD bezels (the screens are separate quads).
   for (const s of [-1, 1]) g.push(tint(box(0.21, 0.21, 0.03, panelPoint(s * 0.215, -0.02, 0.006), PANEL.tilt, 0, 0), DARK, 0.6, 0.1));
   // Side consoles, cockpit sidewalls up to the sills.
@@ -223,7 +237,7 @@ export function buildCockpit(): CockpitBuild {
   const pilot = buildPilot();
   const G = GLARESHIELD;
   // HUD combiner: one glass, leaning back.
-  const hud = tint(quad(0.15, 0.15, V(0, G.y + 0.105, G.z + 0.02), 0.22, 0, 0, 1, 1), 0xffffff, 0.05, 0);
+  const hud = tint(new THREE.PlaneGeometry(HUD.w, HUD.h), 0xffffff, 0.05, 0);
   // Screens (unlit): the two MFCD faces from the top half of the screen canvas.
   const screens = merge(
     [
@@ -240,6 +254,7 @@ export function buildCockpit(): CockpitBuild {
     pilotBody: pilot.body,
     pilotHead: pilot.head,
     hudGlass: hud,
+    hudPosition: hudCentre(),
     screens,
     panelFace,
   };
@@ -252,7 +267,8 @@ function drawPanel(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const sx = w / PANEL.w;
   const sy = ph / PANEL.h;
   const P = (x: number, y: number): [number, number] => [(x + PANEL.w / 2) * sx, y0 + (PANEL.h / 2 - y) * sy];
-  ctx.fillStyle = '#2c3135';
+  // A-10C panels: medium grey (FS 36231) with lighter bezels, readable in daylight.
+  ctx.fillStyle = '#4b535a';
   ctx.fillRect(0, y0, w, ph);
   const label = (t: string, x: number, y: number, size = 9, color = '#e4e4dc') => {
     const [a, b] = P(x, y);
@@ -299,22 +315,22 @@ function drawPanel(ctx: CanvasRenderingContext2D, w: number, h: number): void {
     ctx.stroke();
   };
   // Sub-panels.
-  rect(-0.36, 0.02, 0.17, 0.4, '#30363a', '#454b50');
-  rect(0.36, 0.02, 0.17, 0.4, '#30363a', '#454b50');
-  rect(0, -0.12, 0.2, 0.2, '#30363a', '#454b50');
+  rect(-0.36, 0.0, 0.17, 0.38, '#535c63', '#6c757c');
+  rect(0.36, 0.0, 0.17, 0.38, '#535c63', '#6c757c');
+  rect(0, -0.12, 0.2, 0.17, '#535c63', '#6c757c');
   // MFCD bezels with option buttons (screens are separate quads).
   for (const s of [-1, 1]) {
-    rect(s * 0.215, -0.02, 0.21, 0.21, '#1c1f21');
+    rect(s * 0.215, -0.02, 0.21, 0.21, '#2a2f33');
     for (let k = 0; k < 5; k++) {
       const off = -0.06 + k * 0.03;
       for (const [bx, by] of [[off, 0.093], [off, -0.093], [0.093, off], [-0.093, off]]) rect(s * 0.215 + bx, -0.02 + by, 0.016, 0.012, '#6a6f74');
     }
   }
   // UFC: entry display window and keypad.
-  rect(0, 0.15, 0.24, 0.12, '#1a1d1f');
+  rect(0, 0.15, 0.24, 0.12, '#2a2f33');
   rect(0, 0.19, 0.16, 0.025, '#030603');
   label('UFC  STEER 3  N31 43.2', 0, 0.19, 9, '#58ec7a');
-  for (let k = 0; k < 12; k++) rect(-0.075 + (k % 4) * 0.05, 0.155 - Math.floor(k / 4) * 0.025, 0.036, 0.018, '#6c7176');
+  for (let k = 0; k < 12; k++) rect(-0.075 + (k % 4) * 0.05, 0.155 - Math.floor(k / 4) * 0.025, 0.036, 0.018, '#8a9096');
   // Standby instruments (right of the UFC stack): ADI, airspeed, altimeter.
   {
     const [a, b] = P(0.03, -0.12);
@@ -356,7 +372,7 @@ function drawPanel(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   gauge(0.36, -0.15, 0.032, -2.0, 12);
   label('FUEL', 0.36, -0.19, 7);
   // Caution light strip.
-  for (let k = 0; k < 8; k++) rect(-0.2 + k * 0.055, -0.205, 0.045, 0.016, k === 5 ? '#6a4212' : '#1e2124');
+  for (let k = 0; k < 8; k++) rect(-0.2 + k * 0.055, -0.19, 0.045, 0.016, k === 5 ? '#b8781c' : '#2a2e31');
 }
 
 /** Paint the screen canvas: MFCD pages (TAD and DSMS, colour) on top, the panel below. */

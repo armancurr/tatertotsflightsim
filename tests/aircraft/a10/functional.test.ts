@@ -164,7 +164,7 @@ describe('A-10 crash break-up', () => {
       });
       return box.getSize(new THREE.Vector3());
     };
-    const max: Record<string, number> = { fuselage: 12.5, noseSection: 4.8, canopy: 2.9, leftWing: 6.2, rightWing: 6.2, tail: 6.1, leftEngine: 3.4, rightEngine: 3.4, noseGear: 1.9, leftMainGear: 3.5, rightMainGear: 3.5 };
+    const max: Record<string, number> = { fuselage: 12.5, noseSection: 4.8, canopy: 3.1, leftWing: 6.2, rightWing: 6.2, tail: 6.1, leftEngine: 3.4, rightEngine: 3.4, noseGear: 1.9, leftMainGear: 3.5, rightMainGear: 3.5 };
     for (const p of m.getBreakupParts!()) {
       const s = size(p.object);
       expect(Math.max(s.x, s.y, s.z), p.name).toBeLessThan(max[p.name]);

@@ -290,32 +290,34 @@ export function bodyHalfWidth(z: number): number {
  * one frameless piece hinged at the rear.
  */
 export const CANOPY_KEYS: { z: number; w: number; sill: number; top: number; n: number }[] = [
-  { z: -5.36, w: 0.46, sill: 0.66, top: 0.7, n: 3.6 },
-  { z: -5.12, w: 0.47, sill: 0.67, top: 0.97, n: 3.4 },
-  { z: -4.9, w: 0.48, sill: 0.68, top: 1.22, n: 3.1 },
-  { z: -4.72, w: 0.5, sill: 0.68, top: 1.38, n: 2.5 },
-  { z: -4.4, w: 0.52, sill: 0.68, top: 1.53, n: 2.3 },
-  { z: -4.0, w: 0.525, sill: 0.68, top: 1.6, n: 2.25 },
-  { z: -3.6, w: 0.52, sill: 0.68, top: 1.58, n: 2.25 },
-  { z: -3.2, w: 0.5, sill: 0.69, top: 1.48, n: 2.3 },
+  // Armoured windscreen: flat raked front panel with side panels (a squarer section)…
+  { z: -5.5, w: 0.44, sill: 0.62, top: 0.66, n: 3.6 },
+  { z: -4.95, w: 0.485, sill: 0.68, top: 1.34, n: 3.0 },
+  // …then the one-piece frameless bubble, hinged at the rear.
+  { z: -4.6, w: 0.51, sill: 0.68, top: 1.5, n: 2.45 },
+  { z: -4.2, w: 0.525, sill: 0.68, top: 1.585, n: 2.25 },
+  { z: -3.9, w: 0.528, sill: 0.68, top: 1.6, n: 2.25 },
+  { z: -3.5, w: 0.52, sill: 0.68, top: 1.57, n: 2.25 },
+  { z: -3.15, w: 0.5, sill: 0.69, top: 1.47, n: 2.3 },
   { z: -2.95, w: 0.47, sill: 0.72, top: 1.34, n: 2.4 },
   { z: -2.78, w: 0.43, sill: 0.76, top: 1.18, n: 2.5 },
 ];
 export const CANOPY_FRONT_Z = CANOPY_KEYS[0].z;
 export const CANOPY_REAR_Z = CANOPY_KEYS[CANOPY_KEYS.length - 1].z;
 /** The windscreen frame bow (windscreen ↔ canopy joint). */
-export const WINDSCREEN_BOW_Z = -4.74;
+export const WINDSCREEN_BOW_Z = CANOPY_KEYS[1].z;
 
 export function canopyAt(z: number): { w: number; sill: number; top: number; n: number } {
-  const zs = CANOPY_KEYS.map((k) => k.z);
+  const bubble = CANOPY_KEYS.slice(1);
+  const zs = bubble.map((k) => k.z);
   const g = (f: (k: (typeof CANOPY_KEYS)[number]) => number) => {
     // The windscreen is flat: interpolate linearly in front of the bow.
     if (z <= WINDSCREEN_BOW_Z) {
       const a = CANOPY_KEYS[0];
-      const b = CANOPY_KEYS[3];
+      const b = CANOPY_KEYS[1];
       return lerp(f(a), f(b), clamp((z - a.z) / (b.z - a.z), 0, 1));
     }
-    return pchip(zs, CANOPY_KEYS.map(f), z);
+    return pchip(zs, bubble.map(f), z);
   };
   return { w: g((k) => k.w), sill: g((k) => k.sill), top: g((k) => k.top), n: g((k) => k.n) };
 }

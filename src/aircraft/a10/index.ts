@@ -19,7 +19,7 @@ import type { AircraftVisualState } from '../types';
 import type { AircraftModelHandle, BreakupPart } from '../../fleet/types';
 import { A10_AIRCRAFT, A10_WEAPONS } from '../../config';
 import { createA10Anim, stepA10Anim, A10_LIMITS } from './animate';
-import { buildCockpit, drawScreens, SCREEN_ATLAS } from './cockpit';
+import { buildCockpit, drawScreens, HUD, SCREEN_ATLAS } from './cockpit';
 import { buildEngine } from './engines';
 import { buildFuselage } from './fuselage';
 import { buildGear } from './gear';
@@ -82,6 +82,7 @@ export const A10_PART = {
   gunCluster: 'a10.gun.cluster',
   gunBlur: 'a10.gun.blur',
   gunMuzzle: 'a10.gunMuzzle',
+  hudCombiner: 'a10.cockpit.hud',
   store: (i: number) => `a10.store.${i}`,
   landingLight: 'a10.landingLight',
 } as const;
@@ -200,7 +201,10 @@ export function createA10Model(): AircraftModelHandle {
   const head = mesh(pit.pilotHead, mats.parts, A10_PART.pilotHead, cockpit, false);
   mesh(pit.screens, mats.screens, 'a10.cockpit.screens', cockpit, false);
   mesh(pit.panelFace, mats.panel, 'a10.cockpit.panel', cockpit, false);
-  const hudGlass = mesh(pit.hudGlass, mats.hud, 'a10.cockpit.hud', cockpit, false);
+  // HUD combiner: its geometry is the glass rectangle; the mesh transform places and tilts it.
+  const hudGlass = mesh(pit.hudGlass, mats.hud, A10_PART.hudCombiner, cockpit, false);
+  hudGlass.position.copy(pit.hudPosition);
+  hudGlass.rotation.x = HUD.tilt;
   hudGlass.renderOrder = 2;
 
   // ── Canopy ──
@@ -442,6 +446,7 @@ export function createA10Model(): AircraftModelHandle {
       mats.canopy.envMapIntensity = inCockpit ? 0.06 : 1.2;
       mats.canopy.specularIntensity = inCockpit ? 0.25 : 1;
       mats.interior.color.setScalar(inCockpit ? 1.25 : 0.75);
+      mats.hud.opacity = inCockpit ? 0.2 : 0.16;
     }
   }
 
@@ -461,6 +466,7 @@ export function createA10Model(): AircraftModelHandle {
     root,
     setVisualState,
     landingLight,
+    hudCombiner: hudGlass,
     getBreakupParts: () => breakup,
     restoreBreakupParts() {
       for (const h of home) {
