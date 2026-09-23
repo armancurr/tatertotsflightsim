@@ -621,7 +621,7 @@ export function createCars(scene: THREE.Scene, opts: CarsOptions): Cars {
       nGlowW = 0;
 
       // ── parked (static) ──
-      if (parking && (Math.hypot(cam.x - parkX, cam.z - parkZ) > 80 || parking.work(1.5))) {
+      if (parking && (Math.hypot(cam.x - parkX, cam.z - parkZ) > 150 || parking.work(1.5))) {
         parkX = cam.x;
         parkZ = cam.z;
         refreshParking();
