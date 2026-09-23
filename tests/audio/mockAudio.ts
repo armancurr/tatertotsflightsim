@@ -198,7 +198,7 @@ export class MockAudioContext {
     this.resumeCalls++;
     if (this.state !== 'closed') this.state = 'running';
   }
-  async suspend() {
+  async suspend(_t?: number) {
     this.state = 'suspended';
   }
   async close() {
@@ -263,4 +263,39 @@ export function allParams(ctx: MockAudioContext): MockParam[] {
   const out: MockParam[] = [];
   for (const n of ctx.nodes) for (const v of Object.values(n)) if (v instanceof MockParam) out.push(v);
   return out;
+}
+
+/**
+ * OfflineAudioContext stand-in: records suspend points and, in startRendering(), walks the clock
+ * through them (resolving each suspend and waiting for resume()), then returns a silent buffer.
+ * Lets node tests check the self-test's timeline logic (not the audio itself).
+ */
+export class MockOfflineContext extends MockAudioContext {
+  private points: { t: number; resolve: () => void }[] = [];
+  private resumed: (() => void) | null = null;
+  constructor(readonly numberOfChannels: number, readonly length: number, sampleRate: number) {
+    super();
+    this.sampleRate = sampleRate;
+    this.state = 'running';
+  }
+  suspend(t: number): Promise<void> {
+    if (this.points.some((p) => Math.abs(p.t - t) < 1e-9)) violations.push(`offline.suspend twice at ${t}`);
+    return new Promise((resolve) => this.points.push({ t, resolve }));
+  }
+  resume(): Promise<void> {
+    this.resumed?.();
+    return Promise.resolve();
+  }
+  async startRendering(): Promise<MockBuffer> {
+    this.points.sort((a, b) => a.t - b.t);
+    for (const p of this.points) {
+      this.currentTime = p.t;
+      await new Promise<void>((r) => {
+        this.resumed = r;
+        p.resolve();
+      });
+    }
+    this.currentTime = this.length / this.sampleRate;
+    return new MockBuffer(this.numberOfChannels, this.length, this.sampleRate);
+  }
 }

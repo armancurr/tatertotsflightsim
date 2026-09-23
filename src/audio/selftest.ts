@@ -222,7 +222,7 @@ function defaultFactory(): OfflineFactory | null {
 }
 
 /** The mix: relative levels between scenarios, and nothing clips. Appended to the results. */
-function mixChecks(r: SelfTestResult[]): SelfTestResult[] {
+export function mixChecks(r: SelfTestResult[]): SelfTestResult[] {
   const by = (n: string) => r.find((x) => x.name === n);
   const out: SelfTestResult[] = [];
   const rel = (name: string, lo: string, hi: string, minDb: number, maxDb = 60) => {
