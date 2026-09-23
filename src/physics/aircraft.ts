@@ -64,6 +64,7 @@ export function defaultControls(): Controls {
     brake: 0,
     parkingBrake: false,
     engineOn: true,
+    speedBrake: false,
   };
 }
 
