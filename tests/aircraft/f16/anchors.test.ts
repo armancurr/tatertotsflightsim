@@ -167,6 +167,32 @@ describe('F-16 model anchors match F16_AIRCRAFT.geometry', () => {
     expect(canopy.max.y - eye.y).toBeGreaterThan(0.2);
   });
 
+  it('exposes the M61A1 muzzle (gunMuzzle) in the left strake root: left side, above the strake, below the canopy sill, beside the cockpit', () => {
+    m.root.position.set(0, 0, 0);
+    m.root.quaternion.identity();
+    apply(m, state());
+    const g = bodyPos(m, 'gunMuzzle');
+    expect(g.x).toBeLessThan(-0.45);
+    expect(g.x).toBeGreaterThan(-0.8);
+    expect(g.y).toBeGreaterThan(-0.1);
+    expect(g.y).toBeLessThan(0.4);
+    expect(g.z).toBeGreaterThan(G.pilotEye.z - 0.6);
+    expect(g.z).toBeLessThan(G.pilotEye.z + 0.9);
+    // It sits on the skin: the nearest fuselage vertex is within 8 cm.
+    const skin = part(m, F16_PART.skin) as THREE.Mesh;
+    const p = skin.geometry.getAttribute('position');
+    let best = Infinity;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) best = Math.min(best, v.fromBufferAttribute(p, i).distanceTo(g));
+    expect(best).toBeLessThan(0.08);
+    // It rides with the fuselage in a crash.
+    let inFuselage = false;
+    part(m, 'gunMuzzle').traverseAncestors((a) => {
+      if (a.name === F16_PART.fuselage) inFuselage = true;
+    });
+    expect(inFuselage).toBe(true);
+  });
+
   it('with the gear up nothing hangs below the belly and the ventral fins', () => {
     m.root.position.set(0, 0, 0);
     m.root.quaternion.identity();

@@ -128,9 +128,34 @@ const presets: Record<string, { az: number; el: number; dist: number; fov: numbe
   orbit: { az: -40, el: 9, dist: 21, fov: 40 },
 };
 const p = presets[view] ?? presets.front34;
-const camera = new THREE.PerspectiveCamera(num('fov', view === 'cockpit' ? CONFIG.camera.cockpit.fov : p.fov), innerWidth / innerHeight, 0.05, 2000);
+// ?ortho=side|top|front: orthographic 3-view with a 1 m grid (for checking real dimensions).
+const ortho = q.get('ortho') as 'side' | 'top' | 'front' | null;
+const aspect = innerWidth / innerHeight;
+const halfH = 8.6 / aspect * 1.0 + 0.0;
+const camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = ortho
+  ? new THREE.OrthographicCamera(-8.6, 8.6, halfH, -halfH, 0.1, 200)
+  : new THREE.PerspectiveCamera(num('fov', view === 'cockpit' ? CONFIG.camera.cockpit.fov : p.fov), innerWidth / innerHeight, 0.05, 2000);
+if (ortho) {
+  ground.visible = false;
+  scene.background = new THREE.Color(0xd9dee3);
+  const lines: number[] = [];
+  const gy = -G.noseWheel.y; // root height above the apron
+  for (let k = -12; k <= 12; k++) {
+    if (ortho === 'side') lines.push(0, -3 + gy, k, 0, 6 + gy, k, 0, k * 0.5 + gy, -12, 0, k * 0.5 + gy, 12);
+    if (ortho === 'top') lines.push(-12, gy + 4, k, 12, gy + 4, k, k, gy + 4, -12, k, gy + 4, 12);
+    if (ortho === 'front') lines.push(k, -3 + gy, -12, k, 6 + gy, -12, -12, k * 0.5 + gy, -12, 12, k * 0.5 + gy, -12);
+  }
+  const grid = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(lines, 3)), new THREE.LineBasicMaterial({ color: 0x44505a, transparent: true, opacity: 0.35 }));
+  scene.add(grid);
+  const cam = camera as THREE.OrthographicCamera;
+  if (ortho === 'side') { cam.position.set(-60, gy + 0.9, -1.7); cam.lookAt(0, gy + 0.9, -1.7); }
+  if (ortho === 'top') { cam.position.set(0, 80, -1.7); cam.up.set(-1, 0, 0); cam.lookAt(0, 0, -1.7); }
+  if (ortho === 'front') { cam.position.set(0, gy + 0.8, -60); cam.lookAt(0, gy + 0.8, 0); }
+  cam.updateProjectionMatrix();
+}
 function placeCamera() {
   jet.root.updateMatrixWorld(true);
+  if (ortho) return;
   if (view === 'cockpit') {
     camera.position.copy(jet.root.localToWorld(new THREE.Vector3(G.pilotEye.x, G.pilotEye.y, G.pilotEye.z)));
     const yaw = num('lookYaw', 0) * DEG;
@@ -148,7 +173,7 @@ function placeCamera() {
 }
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
-  camera.aspect = innerWidth / innerHeight;
+  if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) (camera as THREE.PerspectiveCamera).aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
 });
 

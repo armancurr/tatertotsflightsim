@@ -23,7 +23,7 @@ import { box, ellipsoid, makeHinge, tube, V } from './geom';
 import { paintLivery } from './livery';
 import { createF16Materials, type F16Textures } from './materials';
 import { buildNozzle, buildPlume } from './nozzle';
-import { ANCHOR } from './shape';
+import { ANCHOR, GUN_MUZZLE } from './shape';
 import { F16_AIRCRAFT } from '../../config';
 import { buildSurfaces, type HingedPart } from './surfaces';
 
@@ -64,9 +64,12 @@ export const F16_PART = {
   axleLeft: 'f16.axle.left',
   axleRight: 'f16.axle.right',
   landingLight: 'f16.landingLight',
+  gunMuzzle: 'gunMuzzle',
 } as const;
 
 const DEG = Math.PI / 180;
+
+export { GUN_MUZZLE };
 
 function group(name: string, parent?: THREE.Object3D): THREE.Group {
   const g = new THREE.Group();
@@ -109,9 +112,10 @@ function fuselageDetails(): THREE.BufferGeometry {
   g.push(tint(box(0.012, 0.13, 0.17, V(0, -0.93, -1.9), 0.5, 0, 0), GREY, 0.55, 0.1));
   // TACAN / ECM blades under the aft fuselage.
   g.push(tint(box(0.01, 0.12, 0.16, V(0, -0.84, 1.6), 0.45, 0, 0), GREY, 0.55, 0.1));
-  // M61A1 gun port (left strake root) with its gas-vent louvres.
-  g.push(tint(ellipsoid(V(-0.585, 0.05, -3.35), 0.035, 0.035, 0.12, 10, 8), 0x0b0b0b, 0.7, 0.2));
-  for (let k = 0; k < 4; k++) g.push(tint(box(0.02, 0.006, 0.05, V(-0.6 - k * 0.028, 0.02 - k * 0.008, -3.12)), 0x121212, 0.7, 0.2));
+  // M61A1 gun port (left strake root, above the intake shoulder) with its gas-vent louvres behind.
+  const m = GUN_MUZZLE;
+  g.push(tint(ellipsoid(V(m.x + 0.005, m.y, m.z + 0.13), 0.034, 0.036, 0.14, 10, 8), 0x0b0b0b, 0.7, 0.2));
+  for (let k = 0; k < 4; k++) g.push(tint(box(0.02, 0.006, 0.05, V(m.x - 0.02 - k * 0.025, m.y - 0.035 - k * 0.006, m.z + 0.42)), 0x121212, 0.7, 0.2));
   // Intake-side position-light housings.
   for (const s of [-1, 1]) g.push(tint(box(0.012, 0.05, 0.1, V(s * 0.565, -0.46, -3.72)), 0x2a2a2a, 0.4, 0.2));
   // Chaff/flare dispensers (ALE-47) under the aft fuselage.
@@ -152,6 +156,12 @@ export function createF16Model(): AircraftModelHandle {
   mesh(fuse.duct, mats.parts, 'f16.intakeDuct', fuselage, false);
   // Small parts don't cast shadows (fewer shadow-pass draws); they still receive them.
   mesh(fuselageDetails(), mats.parts, 'f16.details', fuselage, false).receiveShadow = true;
+
+  // Gun muzzle marker for the weapons system (rides with the fuselage).
+  const muzzle = new THREE.Object3D();
+  muzzle.name = F16_PART.gunMuzzle;
+  muzzle.position.set(GUN_MUZZLE.x, GUN_MUZZLE.y, GUN_MUZZLE.z);
+  fuselage.add(muzzle);
 
   const cockpit = group(F16_PART.cockpit, fuselage);
   mesh(pit.interior, mats.interior, 'f16.cockpit.interior', cockpit, false).receiveShadow = true;
@@ -227,7 +237,9 @@ export function createF16Model(): AircraftModelHandle {
   const nozzle = buildNozzle(F16_PART.nozzle);
   engine.add(nozzle.group);
   const plume = buildPlume(F16_PART.plume);
-  engine.add(plume.mesh);
+  // The plume hangs off the root, not the engine break-up part (it goes out in a crash and must not
+  // inflate the engine's collision box).
+  root.add(plume.mesh);
   mats.all.push(nozzle.material, plume.mesh.material as THREE.Material);
 
   // ── Gear ──

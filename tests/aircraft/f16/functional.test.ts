@@ -139,6 +139,30 @@ describe('F-16 crash break-up', () => {
     expect(m2.root.parent).toBeNull();
   });
 
+  it("each part's collision box (every mesh, visible or not, as the crash director measures it) is the size of the real piece", () => {
+    const m = createF16Model();
+    m.root.updateMatrixWorld(true);
+    const size = (obj: THREE.Object3D) => {
+      const inv = obj.matrixWorld.clone().invert();
+      const box = new THREE.Box3();
+      const tmp = new THREE.Box3();
+      obj.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.geometry.computeBoundingBox();
+        tmp.copy(mesh.geometry.boundingBox!).applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, mesh.matrixWorld));
+        box.union(tmp);
+      });
+      return box.getSize(new THREE.Vector3());
+    };
+    const max: Record<string, number> = { engine: 1.6, noseCone: 2.8, canopy: 4, tail: 4, leftStab: 2.6, rightStab: 2.6, leftWing: 5, rightWing: 5, noseGear: 1.4, leftMainGear: 1.8, rightMainGear: 1.8, fuselage: 12.5 };
+    for (const p of m.getBreakupParts!()) {
+      const s = size(p.object);
+      expect(Math.max(s.x, s.y, s.z), p.name).toBeLessThan(max[p.name]);
+    }
+    m.dispose();
+  });
+
   it('a crashed jet chars, loses its glass and plume, and goes dark; reset brings it all back', () => {
     const m = createF16Model();
     const glass = m.root.getObjectByName(F16_PART.canopyGlass)!;

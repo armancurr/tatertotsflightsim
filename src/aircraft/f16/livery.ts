@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { ATLAS_SIZE, CELL, RANGE, SWATCH, cowlUV, finUV, fuselageUV, stabUV, uvToPx, wingUV, type Cell } from './atlas';
 import type { FuselageStationInfo } from './fuselage';
-import { EDGE_INDEX } from './shape';
+import { EDGE_INDEX, GUN_MUZZLE, SHOULDER_INDEX } from './shape';
 
 const S = ATLAS_SIZE;
 export const FS36118 = '#4a4f54';
@@ -51,6 +51,17 @@ function sAtLowerX(st: FuselageStationInfo, x: number): number | null {
       const t = (x - a[0]) / (b[0] - a[0]);
       return a[2] + (b[2] - a[2]) * t;
     }
+  }
+  return null;
+}
+
+/** Arc length on a station's upper side (between the shoulder and the edge) at height y. */
+function sAtUpperY(st: FuselageStationInfo, y: number): number | null {
+  const h = st.half;
+  for (let k = SHOULDER_INDEX; k < EDGE_INDEX; k++) {
+    const a = h[k];
+    const b = h[k + 1];
+    if ((a[1] - y) * (b[1] - y) <= 0 && a[1] !== b[1]) return a[2] + ((b[2] - a[2]) * (y - a[1])) / (b[1] - a[1]);
   }
   return null;
 }
@@ -275,9 +286,11 @@ function paintFuselage(col: Ctx, rough: Ctx, bump: Ctx, st: FuselageStationInfo[
   col.fillStyle = grd;
   col.fillRect(aft[0], y0, end[0] - aft[0], h);
   // Gun gas soot streaking aft from the port (left side, s < 0).
-  const gunS = -0.62;
-  const g0 = F(-3.4, gunS);
-  const g1 = F(-1.8, gunS - 0.1);
+  // Gun gas soot streaking aft from the port on the left side (s < 0).
+  const gunSt = st.reduce((a, b) => (Math.abs(b.z - GUN_MUZZLE.z) < Math.abs(a.z - GUN_MUZZLE.z) ? b : a));
+  const gunS = -(sAtUpperY(gunSt, GUN_MUZZLE.y) ?? gunSt.sShoulder + 0.4);
+  const g0 = F(GUN_MUZZLE.z - 0.05, gunS);
+  const g1 = F(GUN_MUZZLE.z + 1.5, gunS + 0.06);
   col.save();
   col.filter = 'blur(6px)';
   const gg = col.createLinearGradient(g0[0], 0, g1[0], 0);

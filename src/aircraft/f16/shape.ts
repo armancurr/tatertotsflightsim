@@ -317,7 +317,8 @@ export const AIM9 = {
 export const STAB = {
   rootX: 1.08,
   tipX: Math.abs(ANCHOR.stabTipRight.x),
-  rootY: GEO.horizontalTail.y,
+  /** Root high on the boom so the fixed tip height gives the real ~9° anhedral. */
+  rootY: -0.28,
   tipY: ANCHOR.stabTipRight.y,
   rootLeZ: 3.66,
   rootTeZ: 5.8,
@@ -333,7 +334,8 @@ export const STAB = {
 export const FIN = {
   rootY: 0.5,
   tipY: ANCHOR.finTop.y,
-  rootLeZ: 2.3,
+  /** 48° leading-edge sweep; exposed area ≈ 4.9 m² (real: 5.09 m² incl. the dorsal). */
+  rootLeZ: 2.15,
   rootTeZ: 5.42,
   tipLeZ: 5.06,
   tipTeZ: 5.82,
@@ -361,6 +363,12 @@ export const VENTRAL = {
   tipTeZ: 4.2,
   cantDeg: 15,
 } as const;
+
+/**
+ * Muzzle of the M61A1 20 mm cannon: the port in the left strake root, beside the cockpit and above
+ * the intake shoulder. The barrel points along the body −Z (the nose).
+ */
+export const GUN_MUZZLE = { x: -0.605, y: 0.03, z: -4.12 } as const;
 
 // ─── Engine nozzle ───────────────────────────────────────────────────────────
 
