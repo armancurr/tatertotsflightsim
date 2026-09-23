@@ -226,6 +226,8 @@ struct Field {
   float dEnds;    // m to the row ends (headlands)
   float arable;   // district arable share
   float key;      // per-field hash for detail variation
+  vec2 rowDir;    // world xz direction of the rows (the "along" axis)
+  vec2 acrossDir; // world xz direction of the "across" axis
 };
 bool fStripMerged( vec2 c, float si, float alongX, vec2 dc, float lc ) {
   vec2 k = vec2( c.x * 4.0 + si, c.y * 4.0 + alongX * 2.0 ) + dc * 131.0;
@@ -284,6 +286,8 @@ Field fieldAt( vec2 p, vec4 warp ) {
   F.margin = mk < 0.45 ? 0.0 : mk < 0.8 ? 1.0 : 2.0;
   F.across = mix( q.y, q.x, alongX );
   F.along = mix( q.x, q.y, alongX );
+  F.rowDir = alongX > 0.5 ? vec2( -sn, cs ) : vec2( cs, sn );
+  F.acrossDir = alongX > 0.5 ? vec2( cs, sn ) : vec2( -sn, cs );
   float lo = sub == 1.0 ? cutT : 0.0;
   float hi = ( cut && sub == 0.0 ) ? cutT : 1.0;
   F.dEnds = min( lc - lo, hi - lc ) * longLen;

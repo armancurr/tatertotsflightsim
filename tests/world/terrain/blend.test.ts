@@ -66,6 +66,35 @@ describe('class weights (fuzz)', () => {
       { numRuns: 3000 },
     );
   });
+  it('never paints a class the landcover does not have, whatever the break-up noise (no snow flecks in farmland)', () => {
+    const w = new Float32Array(CLASS_COUNT);
+    fc.assert(
+      fc.property(inputs, (i) => {
+        classWeights({ ...i, snow: 0 }, w);
+        expect(w[5]).toBeLessThan(1e-9);
+        classWeights({ ...i, forest: 0 }, w);
+        expect(w[2]).toBeLessThan(1e-9);
+        classWeights({ ...i, sand: 0 }, w);
+        expect(w[6]).toBeLessThan(1e-9);
+        classWeights({ ...i, urban: 0 }, w);
+        expect(w[7]).toBeLessThan(1e-9);
+        // rock may come from the slope alone (cliffs), never on flat ground without rock landcover
+        classWeights({ ...i, rock: 0, slope: Math.min(i.slope, 0.12) }, w);
+        expect(w[3] + w[4]).toBeLessThan(1e-9);
+      }),
+      { numRuns: 3000 },
+    );
+  });
+  it('the worst-case noise leaves lowland farmland untouched', () => {
+    const w = new Float32Array(CLASS_COUNT);
+    for (const nb of [-0.5, 0.5])
+      for (const nb2 of [-0.5, 0.5])
+        for (const nSnow of [-0.5, 0.5])
+          for (const streak of [0, 1]) {
+            classWeights({ forest: 0, field: 0.9, grass: 0.1, rock: 0, snow: 0, sand: 0, urban: 0, slope: 0.02, nb, nb2, nSnow, streak, height: 60 }, w);
+            expect(w[0] + w[1]).toBeCloseTo(1, 6);
+          }
+  });
   it('topTwo returns two distinct indices, the first the maximum', () => {
     fc.assert(
       fc.property(fc.array(unit, { minLength: CLASS_COUNT, maxLength: CLASS_COUNT }), (w) => {

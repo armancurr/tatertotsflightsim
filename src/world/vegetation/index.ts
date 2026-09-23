@@ -20,7 +20,7 @@ import { SizeClassPool, sizeClasses, type PoolHandle } from './pool';
 import { ChunkStreamer, chunkKey, type StreamChunk, type AsyncChunkSource } from './streamer';
 import { I_STRIDE, I_X, I_Y, I_Z, I_H, I_R, I_CODE, I_TINT, extractCell, type PackedChunk } from './pack';
 import { buildSpeciesGeometry } from './species';
-import { createVegUniforms, createNearMaterial, createNearDepthMaterial, createImpostorMaterial, tintColor, CROWN_CENTER, TILE_MARGIN } from './materials';
+import { createVegUniforms, createNearMaterial, createNearDepthMaterial, createImpostorMaterial, CROWN_CENTER, TILE_MARGIN } from './materials';
 import { createImpostorAtlas } from './impostors';
 import { getFoliageTextures } from './textures';
 
@@ -88,7 +88,7 @@ export function createVegetation(scene: THREE.Scene, opts: VegetationOptions): V
   scene.add(root);
 
   const tex = getFoliageTextures();
-  const uniforms = createVegUniforms(lod);
+  const uniforms = createVegUniforms(lod, cfg.translucency);
   const atlas = createImpostorAtlas(cfg.impostorTileSize, tex);
   const impMat = createImpostorMaterial(uniforms, atlas);
   const nearMat = createNearMaterial(uniforms, tex);
@@ -197,7 +197,6 @@ export function createVegetation(scene: THREE.Scene, opts: VegetationOptions): V
   const lastNear = new THREE.Vector3(Infinity, Infinity, Infinity);
   const lastDir = new THREE.Vector3(0, 0, 0);
   const counts = new Int32Array(SPECIES_COUNT);
-  const col = new THREE.Color();
   const cellBox = new THREE.Box3();
   const nearFrustum = new THREE.Frustum();
   const inflated = new THREE.Matrix4();
@@ -295,11 +294,11 @@ export function createVegetation(scene: THREE.Scene, opts: VegetationOptions): V
           e[w + 4] = 0; e[w + 5] = h; e[w + 6] = 0; e[w + 7] = 0;
           e[w + 8] = sn * r; e[w + 9] = 0; e[w + 10] = cs * r; e[w + 11] = 0;
           e[w + 12] = x; e[w + 13] = y; e[w + 14] = z; e[w + 15] = 1;
-          tintColor(a[o + I_TINT], sp, col);
+          // instanceColor = (tint hash, species, 0): the shader derives the tint and the crown variation
           const ca = m.instanceColor!.array as Float32Array;
-          ca[n * 3] = col.r;
-          ca[n * 3 + 1] = col.g;
-          ca[n * 3 + 2] = col.b;
+          ca[n * 3] = a[o + I_TINT];
+          ca[n * 3 + 1] = sp;
+          ca[n * 3 + 2] = 0;
         }
       }
     }

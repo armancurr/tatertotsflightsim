@@ -3,7 +3,8 @@
  * what the sun light, sky ambient, haze, clouds and flare will be given.
  */
 import { describe, it, expect } from 'vitest';
-import { computeAtmosphereState } from '../../src/render/atmosphereState';
+import fc from 'fast-check';
+import { autoExposure, computeAtmosphereState, lookTint, whiteBalanceGains } from '../../src/render/atmosphereState';
 import { defaultAtmosphereParams, luminance, type RGB } from '../../src/render/atmosphereModel';
 import { hazeColor } from '../../src/render/fog';
 import { sunDirectionFromAngles } from '../../src/render/sun';
@@ -68,5 +69,110 @@ describe('atmosphere lighting state per time of day', () => {
     const again = computeAtmosphereState(P, sunDirectionFromAngles(62, 175), 500, {}, s);
     expect(again).toBe(s);
     expect(again.sunDir.y).toBeCloseTo(Math.sin((62 * Math.PI) / 180), 9);
+  });
+});
+
+describe('camera: auto exposure and white balance from the atmosphere (lookdev)', () => {
+  const ae = CONFIG.atmosphere.autoExposure;
+  const base = CONFIG.atmosphere.exposure;
+  it('the default preset (morning) on the runway keeps the calibration exposure', () => {
+    const s = state(idx('Morning'), 32);
+    expect(s.exposure / base).toBeGreaterThan(0.97);
+    expect(s.exposure / base).toBeLessThan(1.03);
+  });
+  it('opens up at golden hour and more at dawn (the eye/camera adapts), closes a little at midday', () => {
+    const m = state(idx('Morning')).exposure;
+    const noon = state(idx('Midday')).exposure;
+    const gold = state(idx('Golden hour')).exposure;
+    const dawn = state(idx('Dawn')).exposure;
+    expect(noon).toBeLessThan(m);
+    expect(noon).toBeGreaterThan(0.75 * m);
+    expect(gold).toBeGreaterThan(1.5 * m);
+    expect(dawn).toBeGreaterThan(gold);
+    // …but only partially: dusk still reads darker than day (adaptation < 100 %)
+    const eM = state(idx('Morning')).illuminance;
+    const eD = state(idx('Dawn')).illuminance;
+    expect(dawn * eD).toBeLessThan(0.8 * m * eM);
+  });
+  it('autoExposure is finite, clamped and non-increasing in the illuminance for any input (property)', () => {
+    const e = fc.oneof(fc.double({ noNaN: false }), fc.constant(0), fc.constant(-1), fc.constant(Infinity), fc.double({ min: 1e-6, max: 100, noNaN: true }));
+    fc.assert(
+      fc.property(e, fc.double({ min: 0, max: 50, noNaN: true }), (E, dE) => {
+        const a = autoExposure(E, base, ae);
+        expect(Number.isFinite(a)).toBe(true);
+        expect(a).toBeGreaterThanOrEqual(base * ae.min - 1e-9);
+        expect(a).toBeLessThanOrEqual(base * ae.max + 1e-9);
+        if (Number.isFinite(E) && E > 0) expect(autoExposure(E + dE, base, ae)).toBeLessThanOrEqual(a + 1e-9);
+      }),
+      { numRuns: 500 },
+    );
+  });
+  it('white balance: identity for a neutral light, cools a warm one, keeps luminance, strength 0 = off', () => {
+    const o = { r: 0, g: 0, b: 0 };
+    whiteBalanceGains({ r: 1, g: 1, b: 1 }, 0.5, o);
+    expect(o.r).toBeCloseTo(1, 6);
+    expect(o.b).toBeCloseTo(1, 6);
+    whiteBalanceGains({ r: 1.4, g: 1, b: 0.5 }, 0.5, o);
+    expect(o.b).toBeGreaterThan(1);
+    expect(o.r).toBeLessThan(1);
+    expect(0.2126 * o.r + 0.7152 * o.g + 0.0722 * o.b).toBeCloseTo(1, 6);
+    whiteBalanceGains({ r: 1.4, g: 1, b: 0.5 }, 0, o);
+    expect([o.r, o.g, o.b]).toEqual([1, 1, 1]);
+  });
+  it('white balance gains are finite, positive and bounded for any illuminant (property)', () => {
+    const c = fc.oneof(fc.double({ noNaN: false }), fc.double({ min: 0, max: 10, noNaN: true }));
+    fc.assert(
+      fc.property(c, c, c, fc.double({ min: 0, max: 1, noNaN: true }), (r, g, b, k) => {
+        const o = whiteBalanceGains({ r, g, b }, k, { r: 0, g: 0, b: 0 });
+        for (const x of [o.r, o.g, o.b]) {
+          expect(Number.isFinite(x)).toBe(true);
+          expect(x).toBeGreaterThan(0.5);
+          expect(x).toBeLessThan(2);
+        }
+      }),
+      { numRuns: 500 },
+    );
+  });
+  it('the camera white balance is ~neutral by day and takes the brown out of dawn (cooler, not neutral)', () => {
+    const noon = state(idx('Midday')).whiteBalance;
+    expect(Math.abs(noon.b / noon.r - 1)).toBeLessThan(0.08);
+    const dawn = state(idx('Dawn')).whiteBalance;
+    expect(dawn.b / dawn.r).toBeGreaterThan(1.02);
+    expect(dawn.b / dawn.r).toBeLessThan(2);
+  });
+});
+
+describe('look: golden-hour warmth, blue-hour cool (lookdev)', () => {
+  const o = () => ({ r: 0, g: 0, b: 0 });
+  it('is neutral with the sun high, warm with it low, cool once it has set', () => {
+    for (const el of [30, 45, 62, 90]) {
+      const t = lookTint(el, o());
+      expect(t.r).toBeCloseTo(1, 9);
+      expect(t.b).toBeCloseTo(1, 9);
+    }
+    const gold = lookTint(8, o());
+    expect(gold.r).toBeGreaterThan(1.02);
+    expect(gold.b).toBeLessThan(0.97);
+    const blue = lookTint(-5, o());
+    expect(blue.b).toBeGreaterThan(1.02);
+    expect(blue.r).toBeLessThan(0.99);
+  });
+  it('keeps luminance, stays bounded and finite for any elevation (property)', () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.double(), fc.double({ min: -90, max: 90, noNaN: true })), (el) => {
+        const t = lookTint(el, o());
+        for (const x of [t.r, t.g, t.b]) {
+          expect(Number.isFinite(x)).toBe(true);
+          expect(x).toBeGreaterThan(0.75);
+          expect(x).toBeLessThan(1.25);
+        }
+        expect(0.2126 * t.r + 0.7152 * t.g + 0.0722 * t.b).toBeCloseTo(1, 9);
+      }),
+      { numRuns: 400 },
+    );
+  });
+  it('the golden-hour camera ends up warmer than neutral (the WB does not take the gold out)', () => {
+    const wb = state(idx('Golden hour')).whiteBalance;
+    expect(wb.r / wb.b).toBeGreaterThan(1.0);
   });
 });

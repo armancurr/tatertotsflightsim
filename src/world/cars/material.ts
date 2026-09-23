@@ -6,6 +6,8 @@
  *   Per instance (a data texture indexed by the batch instance id, 2 texels):
  *   paint (linear rgb + finish) and (odometer, steering angle, light flags,
  *   road kind). Vertex: wheels spin about their hub (and the fronts steer),
+ *   a per-vehicle amount of road grime (a hash of the instance) that builds
+ *   up toward the sills in splashy patches — duller, browner, no clear coat,
  *   the road's LOD lift + depth pull (roads/depth.ts) so a car never sinks into
  *   coarse terrain. Fragment: paint where aMat.x = 1 with a clear coat
  *   (reflections from scene.environment), solid/metallic/solid finishes,
@@ -91,6 +93,7 @@ uniform float uCarDataW;
 varying vec4 vCarPaint;
 varying vec4 vCarMat;
 varying float vCarFlags;
+varying vec4 vCarDirt;
 ${DEPTH_GLSL}
 float cLift = 4.0;
 float cAng = 0.0;
@@ -117,6 +120,9 @@ vec3 carRot( vec3 p ) {
   vCarMat = aMat;
   vCarFlags = d1.z;
   cLift = d1.w;
+  // road grime: a per-vehicle amount (most cars fairly clean, a few filthy), splashed up from the road
+  float dh = fract( sin( float( ci ) * 12.9898 + 4.1 ) * 43758.5453 );
+  vCarDirt = vec4( position, ( 0.12 + 0.88 * dh * dh ) * ( 1.0 - smoothstep( 0.08, 0.85, position.y ) ) );
   if ( aWheel.w != 0.0 ) {
     cAng = -d1.x / abs( aWheel.w );
     cSteer = aWheel.w < 0.0 ? d1.y : 0.0;
@@ -142,13 +148,31 @@ gl_Position = projectionMatrix * roadPull( mvPosition );`,
 varying vec4 vCarPaint;
 varying vec4 vCarMat;
 varying float vCarFlags;
+varying vec4 vCarDirt;
 uniform float uLights;
-uniform float uBlink;`,
+uniform float uBlink;
+float carNoise( vec3 p ) {
+  vec3 i = floor( p );
+  vec3 f = fract( p );
+  f = f * f * ( 3.0 - 2.0 * f );
+  float n = dot( i, vec3( 1.0, 57.0, 113.0 ) );
+  vec4 h = fract( sin( vec4( n, n + 1.0, n + 57.0, n + 58.0 ) ) * 43758.5453 );
+  vec4 h2 = fract( sin( vec4( n + 113.0, n + 114.0, n + 170.0, n + 171.0 ) ) * 43758.5453 );
+  vec2 a = mix( h.xz, h.yw, f.x );
+  vec2 b = mix( h2.xz, h2.yw, f.x );
+  return mix( mix( a.x, a.y, f.y ), mix( b.x, b.y, f.y ), f.z );
+}
+float carDirt = 0.0;`,
     );
-    f = replaceOnce(f, '#include <color_fragment>', /* glsl */ `#include <color_fragment>\ndiffuseColor.rgb = mix( diffuseColor.rgb, vCarPaint.rgb, vCarMat.x );`);
-    f = replaceOnce(f, '#include <roughnessmap_fragment>', /* glsl */ `float roughnessFactor = mix( vCarMat.y, vCarPaint.a > 0.5 ? 0.3 : 0.36, vCarMat.x );`);
+    f = replaceOnce(f, '#include <color_fragment>', /* glsl */ `#include <color_fragment>\ndiffuseColor.rgb = mix( diffuseColor.rgb, vCarPaint.rgb, vCarMat.x );
+{
+  float sp = carNoise( vCarDirt.xyz * vec3( 7.0, 5.0, 3.0 ) ) * 0.65 + carNoise( vCarDirt.xyz * 19.0 ) * 0.35;
+  carDirt = clamp( vCarDirt.w * ( 0.55 + 0.9 * sp ) - 0.08, 0.0, 1.0 ) * ( vCarMat.w > 0.5 ? 0.35 : 1.0 );
+  diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.085, 0.07, 0.052 ), carDirt * 0.6 );
+}`);
+    f = replaceOnce(f, '#include <roughnessmap_fragment>', /* glsl */ `float roughnessFactor = mix( mix( vCarMat.y, vCarPaint.a > 0.5 ? 0.3 : 0.36, vCarMat.x ), 0.92, carDirt * 0.8 );`);
     f = replaceOnce(f, '#include <metalnessmap_fragment>', /* glsl */ `float metalnessFactor = mix( vCarMat.z, vCarPaint.a < 0.5 ? 0.0 : vCarPaint.a < 1.5 ? 0.22 : 0.5, vCarMat.x );`);
-    f = replaceOnce(f, '#include <lights_physical_fragment>', /* glsl */ `#include <lights_physical_fragment>\nmaterial.clearcoat *= vCarMat.x;`);
+    f = replaceOnce(f, '#include <lights_physical_fragment>', /* glsl */ `#include <lights_physical_fragment>\nmaterial.clearcoat *= vCarMat.x * ( 1.0 - carDirt );`);
     f = replaceOnce(
       f,
       '#include <emissivemap_fragment>',
@@ -173,7 +197,7 @@ uniform float uBlink;`,
     );
     shader.fragmentShader = f;
   };
-  m.customProgramCacheKey = () => 'cars-v1';
+  m.customProgramCacheKey = () => 'cars-v2';
   return m;
 }
 

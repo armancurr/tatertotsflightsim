@@ -15,6 +15,7 @@ export {
   simStateLabel,
   classifyTouchdown,
   machNumber,
+  groundSpoilerExtension,
 } from './aircraft';
 export { applyFbw, fbwCommands, type FbwTelemetry } from './fbw';
 export { jetThrust, jetCoreTarget, jetAbTarget, stepJetEngine, steadyJetEngine, coreRpm } from './jet';
@@ -27,6 +28,8 @@ export {
   machDragFactor,
   wingStripGeometry,
   wingStripMoments,
+  aileronEffectiveness,
+  flapPlacardKt,
   type AeroResult,
   type AeroExtras,
   type SurfaceInputs,

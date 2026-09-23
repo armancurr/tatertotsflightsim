@@ -4,7 +4,7 @@ import fc from 'fast-check';
 import { MeshBuilder, mat } from '../../../src/world/traffic/models/builder';
 import { buildVesselPart, buildHull, hullShape, type VesselPart } from '../../../src/world/traffic/models/vessels';
 import { buildAircraft, DISCS, LIGHTS } from '../../../src/world/traffic/models/aircraft';
-import { buildMarina, buildFerryTerminal, marinaStones } from '../../../src/world/traffic/models/marina';
+import { buildMarina, buildFerryTerminal, marinaStones, HARBOUR_WORKS } from '../../../src/world/traffic/models/marina';
 import { createMarina, VESSEL_DIMS, type VesselKind } from '../../../src/world/traffic/sea';
 import { getLayout } from '../../../src/world/layout';
 import type { AirKind } from '../../../src/world/traffic/air';
@@ -215,4 +215,88 @@ describe('harbour structures', () => {
     expect(finite(t)).toBe(true);
     expect(t.index!.count / 3).toBeLessThan(12000);
   });
+});
+
+describe('ship and harbour detail', () => {
+  const verts = (g: THREE.BufferGeometry) => {
+    const p = g.attributes.position.array as Float32Array;
+    const a = g.attributes.aPbr.array as Float32Array;
+    return Array.from({ length: p.length / 3 }, (_, i) => ({ x: p[i * 3], y: p[i * 3 + 1], z: p[i * 3 + 2], rough: a[i * 4], metal: a[i * 4 + 1] }));
+  };
+
+  it('the container ship and the tanker have a bulbous bow ahead of the stem, below the waterline', () => {
+    for (const kind of ['container', 'tanker'] as VesselKind[]) {
+      const d = VESSEL_DIMS[kind];
+      for (const lod of [0, 1]) {
+        const v = verts(buildVesselPart(kind, 'hull', lod).build());
+        const bulb = v.filter((q) => q.z < -d.length / 2 && q.y < -2);
+        expect(bulb.length, `${kind}/${lod}`).toBeGreaterThan(5);
+        // nothing of the bulb breaks the surface
+        expect(Math.max(...bulb.map((q) => q.y))).toBeLessThan(0);
+      }
+    }
+  });
+
+  it('yachts carry guard rails along the deck edges; the tanker has deck pipework and cranes', () => {
+    const sail = verts(buildVesselPart('sail', 'hull', 0).build());
+    const railTops = sail.filter((q) => q.metal > 0.8 && q.y > 1.5 && q.y < 2.0 && Math.abs(q.x) > 1.2);
+    expect(railTops.length).toBeGreaterThan(20);
+    const tanker = verts(buildVesselPart('tanker', 'hull', 0).build());
+    const F = VESSEL_DIMS.tanker.freeboard;
+    // pipes (metal) run most of the deck length, cranes stand above them
+    const pipes = tanker.filter((q) => q.metal > 0.4 && q.y > F && q.y < F + 2);
+    const zs = pipes.map((q) => q.z);
+    expect(Math.max(...zs) - Math.min(...zs)).toBeGreaterThan(VESSEL_DIMS.tanker.length * 0.6);
+    expect(tanker.some((q) => q.y > F + 14 && Math.abs(q.x) < 14 && q.z < 0)).toBe(true);
+  });
+
+  it('the harbour works (crane, container yard, boatyard) stand on the free east end of the quay, at both LODs', () => {
+    const m = createMarina(getLayout());
+    const q = m.quay;
+    for (const lod of [0, 1]) {
+      const v = verts(buildMarina(m, lod).build());
+      // the crane: a tall structure over the works, its boom luffed up and slewed along the quay over the yard
+      const high = v.filter((p) => p.y > q.top + 25);
+      expect(high.length, `crane ${lod}`).toBeGreaterThan(8);
+      for (const p of high) {
+        expect(p.x).toBeGreaterThan(HARBOUR_WORKS.u0 - 5);
+        expect(p.x).toBeLessThan(HARBOUR_WORKS.u1 + 20);
+        expect(p.z).toBeGreaterThan(q.w0 - 5);
+        expect(p.z).toBeLessThan(q.w1 + 5);
+      }
+      expect(Math.max(...high.map((p) => p.y))).toBeGreaterThan(q.top + 45);
+      expect(HARBOUR_WORKS.crane.u - Math.min(...high.map((p) => p.x))).toBeGreaterThan(30);
+      // everything 7–25 m up on the quay (stacked containers, the hoist, boats in its slings) lies inside the works
+      // footprint (lower: quay lamps along the whole quay, the breakwater roots)
+      const mid = v.filter((p) => p.y > q.top + 7.2 && p.y < q.top + 25 && p.z < q.w1 && p.z > q.w0);
+      expect(mid.length).toBeGreaterThan(50);
+      for (const p of mid) {
+        expect(p.x).toBeGreaterThan(HARBOUR_WORKS.u0 - 1);
+        expect(p.x).toBeLessThan(HARBOUR_WORKS.u1 + 1);
+      }
+    }
+    // clear of the last pontoon's berths (u = 185 + fingers + boats)
+    expect(HARBOUR_WORKS.u0).toBeGreaterThan(Math.max(...m.pontoons.map((p) => p.u)) + 30);
+    expect(HARBOUR_WORKS.u1).toBeLessThan(q.u1);
+  });
+
+  it('fuzz: every vessel kind and variant builds finite, outward geometry within budget', () => {
+    const kinds: VesselKind[] = ['sail', 'motor', 'fish', 'launch', 'ferry', 'container', 'tanker'];
+    fc.assert(
+      fc.property(fc.constantFrom(...kinds), fc.integer({ min: 0, max: 1000 }), fc.integer({ min: 0, max: 1 }), fc.boolean(), (kind, variant, lod, moored) => {
+        const g = buildVesselPart(kind, 'hull', lod, { variant, moored, deployed: moored }).build();
+        expect(finite(g)).toBe(true);
+        expect(windingAgreement(g)).toBeGreaterThan(0.97);
+        const tris = g.index!.count / 3;
+        expect(tris).toBeLessThan(kind === 'container' ? (lod ? 12000 : 40000) : kind === 'tanker' || kind === 'ferry' ? (lod ? 3000 : 8000) : lod ? 900 : 3500);
+        const bb = g.boundingBox!;
+        const d = VESSEL_DIMS[kind];
+        expect(bb.max.z - bb.min.z).toBeLessThan(d.length * 1.12);
+        // (a trawler's outrigger booms reach far out when fishing)
+        expect(bb.max.x - bb.min.x).toBeLessThan(kind === 'fish' ? 22 : d.beam * 1.25 + 2);
+        g.dispose();
+      }),
+      { numRuns: 30 },
+    );
+  }, 60000);
 });

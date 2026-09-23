@@ -89,6 +89,39 @@
  *   Landing (flare, idle, brakes + decelerons) 129 KIAS, −308 fpm "smooth", rollout 765 m
  *   GAU-8 burst, 2 s at 300 KIAS (45 kN)       −9.8 kt vs not firing, Δpitch 1.3°, Δhdg 0°   F·t/m ≈ 10.9 kt
  *
+ * ─── Calibration: Boeing 747-400 (220 t light: OEW 178.8 t + 41 t fuel; 4 × PW4056; ISA) ───
+ * Checked by tests/physics/b747.test.ts, b747-flight.test.ts, b747-keyboard.test.ts, b747-fuzz.test.ts.
+ * Real numbers at 220 t scale the MTOW (396.9 t) ones by √(220/396.9) = 0.74 in speed.
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Thrust SL static / FL350 M 0.85 / spool    1,008 kN / 197 kN / idle → 95 % 7.4 s  4 × 252 kN / ~200 kN / 6–8 s
+ *   CLα; CLmax clean / flaps 10 / 30           5.0 / rad; 1.30 @ 14° / 1.65 / 2.35   4.9–5.3; 1.25–1.55 / — / 2.4–2.6
+ *   1-g stall clean / flaps 30; Vref30         138 / 103 KIAS; 127 KIAS              140–150 / 100–110; 125–135
+ *   Max L/D clean                              17.1                                  ~17.5
+ *   Take-off, flaps 10, Vr 145                 lift-off 152–155 KIAS at 5.5–6.2°, ground roll 915–960 m   Vr 140–150, 1,000–1,300 m
+ *     (lift-off ≈ 1,000 m past the threshold of the 1,600 m runway; tail clearance ≥ 1.4 m, strike at 9.6°)
+ *   Heavy-handed rotation (2 × column/rate)    lifts off at 6.5°, tail clears by 1.4 m   no tail strike
+ *   Initial climb, V2 + 15, flaps 10, TOGA     3,950 fpm                             3,500–5,000 fpm (light)
+ *   Climb 10,000 ft → FL350 (320 KIAS/M .84)   12.9 min                              reaches it
+ *   Cruise FL350 M 0.85                        271 KIAS, throttle 0.62 (N2 92 %), α 1.0°  M 0.85
+ *   Max level speed FL350                      M 0.894 (drag rise from M 0.86)       ~M 0.9 (MMO 0.92)
+ *   Roll rate, full wheel: approach / 300 KIAS / cruise   13 / 16 / 21 °/s        10–20 / — / 15–25 °/s
+ *     (outboard ailerons locked out flaps up: aero.aileronFlapsUpFraction 0.45)
+ *   Pitch: 0.35 column at 250 KIAS             1.5 g after 0.8 s                     slow, heavy
+ *   TOGA from the trimmed approach             nose +8° in 8 s (thrust line 2.1 m below the CG)   pitch-up with power
+ *   Yaw damper: rudder kick at 280 KIAS        β 4.2° → 0.2° in 15 s                 dutch roll damped
+ *   Hands-off cruise, 3.5° bank upset          → 1.0° in 60 s, Δalt −7 ft            stable
+ *   Stall, idle, 1 kt/s: clean / flaps 30      shaker 142 / 104, break 135 / 101 KIAS; nose −6° / −9° with the column still coming back
+ *   Stall recovery (push, TOGA)                ~650 ft lost                          < 1,500 ft
+ *   Approach, Vref30 + 5, 3° glide             α 5.1°, pitch 2.1°, throttle ≈ 0.2    α ~5°, pitch ~2°
+ *   Landing (flare at ~30 ft, idle)            smooth −150…−290 fpm at 130–135 KIAS, pitch 4.3°, no bounce
+ *   Landing roll, auto ground spoilers + max braking / half braking   735 m / 1,225 m   ~650–800 m / 900–1,300 m
+ *     (without the ground spoilers the max-braking roll from 125 kt is 1,200 m instead of 670 m)
+ *   Firm 600 fpm arrival                       rated firm/hard, stays on the ground  no bounce
+ *   RTO at 130 KIAS (idle + max braking)       abort at 683 m, stops at 1,401 m      on the runway
+ *   Full aft column at 280 KIAS                > 3.75 g → structural failure         2.5 g limit, 3.75 ultimate
+ *
  *   step() cost (M2 Max, node): C172 ~1.6 µs, C172 spinning (strips) ~4 µs, F-16 with FBW ~5 µs   ≪ 0.1 ms
  */
 import { CONFIG, MS_TO_FPM, MS_TO_KT, type Config } from '../config';
@@ -395,6 +428,19 @@ function cloneState(s: AircraftState): AircraftState {
   return structuredClone(s);
 }
 
+/**
+ * Ground spoilers (aircraft with aero.spoilers): every panel comes up while the main gear is on the
+ * ground above the wheel spin-up speed with the speed brake lever raised or the thrust levers at
+ * idle (armed auto spoilers on landing, and a rejected take-off); 0 otherwise.
+ */
+export function groundSpoilerExtension(state: AircraftState, c: Pick<Controls, 'throttle' | 'speedBrake'>, cfg: Config = CONFIG): number {
+  const sp = cfg.aircraft.aero.spoilers;
+  if (!sp || state.gearPos < 0.999) return 0;
+  if (!(state.wheelContact[1] || state.wheelContact[2])) return 0;
+  if (!(state.derived.groundSpeed * MS_TO_KT >= sp.autoMinGroundKt)) return 0;
+  return c.speedBrake === true || c.throttle <= sp.autoIdleThrottle ? 1 : 0;
+}
+
 function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environment, cfg: Config): AircraftState {
   const time = state.time + dt;
   if (state.phase === 'crashed') {
@@ -440,7 +486,8 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // ── Airframe forces (body) ──
   // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
   const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
-  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0 });
+  const groundSpoilers = groundSpoilerExtension(state, c, cfg);
+  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0, groundSpoilers });
   // Gun recoil while rounds are leaving the barrel (set by the weapons system; see ./recoil).
   const gun = gunRecoil(raw.gunFiring, cfg);
   const fAir = bodyToWorld(q, { x: aero.fx + gun.fx, y: aero.fy + gun.fy, z: aero.fz + gun.fz });

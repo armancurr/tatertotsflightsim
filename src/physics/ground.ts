@@ -53,9 +53,15 @@ function crashReasonFor(name: string, impactMs: number, gearDown: boolean, cfg: 
     case 'rightWingtip':
       return 'Wingtip strike';
     case 'tailcone':
+    case 'tailBumper':
     case 'leftStab':
     case 'rightStab':
       return 'Tail strike';
+    case 'leftInboardEngine':
+    case 'rightInboardEngine':
+    case 'leftOutboardEngine':
+    case 'rightOutboardEngine':
+      return 'Engine pod strike';
     case 'finTop':
     case 'cabinRoof':
       return 'Flipped over';
@@ -217,7 +223,8 @@ export function groundContacts(inp: GroundInput, env: Environment, cfg: Config =
     const vz = vel.z + (w.x * r.y - w.y * r.x);
     const vn = vx * n.x + vy * n.y + vz * n.z;
     const impact = -vn;
-    const tailGroup = sp.name === 'tailcone' || sp.name === 'leftStab' || sp.name === 'rightStab';
+    // The 747's tail bumper (aft-body skid point) scrapes like a tailcone.
+    const tailGroup = sp.name === 'tailcone' || sp.name === 'tailBumper' || sp.name === 'leftStab' || sp.name === 'rightStab';
     if (tailGroup && impact <= land.scrapeSpeedMs) {
       // Gentle tail scrape: the tailcone skids on the surface.
       const d = (su.ground - py) * n.y;

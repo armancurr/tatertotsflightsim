@@ -88,9 +88,16 @@ describe('createTowns (functional)', async () => {
     const cam = camAt(city.x, 300, city.z + 900, city.x, city.z);
     towns.update(cam, 0, cam.position, new THREE.Vector3(0, 1, 0));
     expect(towns.stats().night).toBe(0);
-    const low = new THREE.Vector3(Math.cos(0.07), Math.sin(0.07), 0);
-    towns.update(cam, 0, cam.position, low);
-    expect(towns.stats().night).toBeGreaterThan(0.6);
+    // Sun +4° (the dawn preset): only some lights still on — the camera opens up at dawn, so more read as glare.
+    const dawn = new THREE.Vector3(Math.cos(0.07), Math.sin(0.07), 0);
+    towns.update(cam, 0, cam.position, dawn);
+    expect(towns.stats().night).toBeGreaterThan(0.1);
+    expect(towns.stats().night).toBeLessThan(0.35);
+    // Sun below the horizon: (nearly) every light on; +9°: none.
+    towns.update(cam, 0, cam.position, new THREE.Vector3(Math.cos(-0.07), Math.sin(-0.07), 0));
+    expect(towns.stats().night).toBeGreaterThan(0.9);
+    towns.update(cam, 0, cam.position, new THREE.Vector3(Math.cos(0.157), Math.sin(0.157), 0));
+    expect(towns.stats().night).toBe(0);
   });
 
   it('update allocates nothing per frame once built (same objects, stable counts over many frames)', () => {

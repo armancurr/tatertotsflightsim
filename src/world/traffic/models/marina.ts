@@ -3,10 +3,15 @@
  * a geometry whose origin is the marina frame origin (rotation about Y applied
  * by the instance): rubble-mound breakwaters with a concrete crest path and
  * harbour-entrance beacons, the quay wall with bollards, floating pontoons with
- * fingers and piles, gangways. Also the bay ferry terminals (trestle pier,
- * transfer ramp, berthing dolphins, terminal building).
+ * fingers and piles, gangways, and the working harbour on the free east end
+ * of the quay: a mobile harbour crane working the container yard (its boom
+ * slewed along the quay, a box on the spreader), and a boatyard (a travel-lift
+ * hoist carrying a yacht, boats on stands).
+ * Also the bay ferry terminals (trestle pier, transfer ramp, berthing
+ * dolphins, terminal building).
  */
-import { MeshBuilder, mat } from './builder';
+import { MeshBuilder, mat, type Mat } from './builder';
+import { buildHull } from './vessels';
 import { h01 } from '../rng';
 import type { MarinaLayout } from '../sea';
 
@@ -46,6 +51,7 @@ export function buildMarina(m: MarinaLayout, lod = 0): MeshBuilder {
       b.box(u, q.top + 6.1, q.w0 + 4.3, 0.3, 0.2, 0.8, LAMP);
     }
   }
+  buildHarbourWorks(b, q, lod);
   // ── Breakwaters: rubble mound along the centreline ──
   for (const bw of m.breakwaters) buildBreakwater(b, bw, lod);
   // ── Beacons at the heads (red to port, green to starboard entering) ──
@@ -145,6 +151,125 @@ function buildBreakwater(b: MeshBuilder, bw: MarinaLayout['breakwaters'][number]
   b.cylinder([end.u, bw.baseY, end.w], [end.u, bw.crestY + 0.2, end.w], bw.baseHalf, bw.crestHalf + 1, lod ? 6 : 12, ROCKS[1], true);
   const start = cl[0];
   b.cylinder([start.u, bw.baseY, start.w], [start.u, bw.crestY, start.w], bw.baseHalf * 0.9, bw.crestHalf, 6, ROCKS[2], false);
+}
+
+/** The working harbour's footprint on the quay (u range) and where its crane stands. */
+export const HARBOUR_WORKS = { u0: 228, u1: 348, crane: { u: 302, w: -14, pivotY: 27, boom: 44, slewDeg: -90, luffDeg: 36 } } as const;
+
+const CRANE_WHITE = mat(0xe8e8e2, 0.45, 0.2);
+const CRANE_YELLOW = mat(0xe0b21c, 0.45, 0.3);
+const CRANE_GREY = mat(0x55595d, 0.6, 0.4);
+const HOIST_BLUE = mat(0x1d4f9a, 0.45, 0.3);
+const ASPHALT = mat(0x3a3c3e, 0.95);
+const CONTAINER_COLS = [0x3c9cc8, 0xcdb68a, 0x2f7a41, 0xd9641f, 0xa52a6b, 0x1d3f8f, 0x8c9196, 0xe3e1da, 0xa22b2a, 0x7a4c30, 0x2b4d99, 0x5f6b72].map((c) => mat(c, 0.62, 0.15));
+
+/** Mobile harbour crane, container yard and boatyard on the east end of the quay (marina frame: x = u, z = w). */
+function buildHarbourWorks(b: MeshBuilder, q: MarinaLayout['quay'], lod: number): void {
+  const H = HARBOUR_WORKS;
+  const top = q.top;
+  // hard standing (darker asphalt over the concrete), yellow edge line
+  b.box((H.u0 + H.u1) / 2, top + 0.02, (q.w0 + q.w1) / 2 - 0.5, H.u1 - H.u0, 0.04, q.w1 - q.w0 - 1.2, ASPHALT, { bottom: true });
+  if (!lod) b.box((H.u0 + H.u1) / 2, top + 0.045, q.w1 - 1.6, H.u1 - H.u0, 0.01, 0.2, mat(0xd9b21c, 0.6), { bottom: true });
+  // ── mobile harbour crane: undercarriage on outriggers, tower, slewing house, luffing boom ──
+  const c = H.crane;
+  b.box(c.u, top + 1.4, c.w, 12, 2.2, 8, CRANE_GREY, { bottom: true });
+  if (!lod) {
+    for (const [du, dw] of [[-7.5, -5.5], [7.5, -5.5], [-7.5, 5.5], [7.5, 5.5]]) {
+      b.box(c.u + du * 0.6, top + 1.2, c.w + dw * 0.6, Math.abs(du) * 0.8, 0.6, 0.6, CRANE_GREY);
+      b.box(c.u + du, top + 0.3, c.w + dw, 1.6, 0.6, 1.6, CRANE_GREY, { bottom: true });
+    }
+    for (const du of [-4.5, -1.5, 1.5, 4.5]) for (const dw of [-4.2, 4.2]) b.cylinder([c.u + du, top + 0.55, c.w + dw - 0.4], [c.u + du, top + 0.55, c.w + dw + 0.4], 0.55, 0.55, 8, mat(0x161616, 0.9));
+  }
+  b.box(c.u, top + 2.5 + (c.pivotY - 4 - 2.5) / 2, c.w, 3, c.pivotY - 4 - 2.5, 3, CRANE_WHITE, { bottom: true });
+  b.with([c.u, top + c.pivotY, c.w], [0, c.slewDeg, 0], () => {
+    // slewing house with the counterweight behind and the cab to one side
+    b.box(0, -1.5, -2, 6, 4.5, 10, CRANE_YELLOW);
+    b.box(0, -2.2, -7.5, 6.4, 3.2, 2, CRANE_GREY);
+    b.box(3.6, -0.6, 2.6, 1.8, 2.2, 2.2, CRANE_WHITE);
+    b.box(3.6, -0.3, 3.72, 1.6, 1.2, 0.02, mat(0x10161c, 0.08, 0.1, 0, -1));
+    // the boom, luffed up, out over the water; hoist ropes to the hook block
+    b.with([0, 0.8, 2.5], [-c.luffDeg, 0, 0], () => {
+      if (lod) b.box(0, 0, c.boom / 2, 1.8, 1.8, c.boom, CRANE_WHITE);
+      else {
+        // a lattice boom: four chords and diagonal bracing
+        for (const [x, y] of [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]]) b.box(x * (1 - 0), y, c.boom / 2, 0.22, 0.22, c.boom, CRANE_WHITE);
+        for (let k = 0; k < 14; k++) {
+          const z0 = (k / 14) * c.boom;
+          const z1 = ((k + 1) / 14) * c.boom;
+          for (const x of [-0.9, 0.9]) b.cylinder([x, -0.9, z0], [x, 0.9, z1], 0.07, 0.07, 3, CRANE_WHITE, false);
+          for (const y of [-0.9, 0.9]) b.cylinder([-0.9, y, z1], [0.9, y, z0], 0.07, 0.07, 3, CRANE_WHITE, false);
+        }
+        b.box(0, 0, c.boom + 0.4, 2.2, 2.2, 1.2, CRANE_YELLOW);
+      }
+    });
+    // boom tip in the house frame → rope straight down to a hook block above the water
+    const lr = (c.luffDeg * Math.PI) / 180;
+    const tipY = 0.8 + Math.sin(lr) * (c.boom + 0.4);
+    const tipZ = 2.5 + Math.cos(lr) * (c.boom + 0.4);
+    // a 40 ft box on the spreader, lifted clear of the stacks
+    const boxY = 11.5 - c.pivotY;
+    b.box(0, boxY, tipZ, 2.44, 2.59, 12.19, CONTAINER_COLS[3], { bottom: false });
+    if (!lod) {
+      b.cylinder([0, tipY - 1, tipZ], [0, boxY + 3.2, tipZ], 0.06, 0.06, 3, mat(0x202224, 0.5, 0.6), false);
+      b.box(0, boxY + 2.9, tipZ, 1.2, 1.2, 1.2, CRANE_YELLOW);
+      b.box(0, boxY + 1.45, tipZ, 2.3, 0.3, 12, CRANE_YELLOW);
+      for (const dz of [-5, 5]) b.cylinder([0, boxY + 2.4, tipZ], [0, boxY + 1.6, tipZ + dz], 0.03, 0.03, 3, mat(0x202224, 0.5, 0.6), false);
+      // A-frame / luffing cylinder from the house to the boom
+      b.cylinder([0, 1, 0.5], [0, 0.8 + Math.sin(lr) * 14, 2.5 + Math.cos(lr) * 14], 0.35, 0.3, 6, CRANE_GREY, false);
+    }
+  });
+  // ── container yard: 40 ft boxes, 2–3 high, in blocks with lanes between ──
+  const yard = { u0: 236, w0: -23.5 };
+  for (let blk = 0; blk < 2; blk++)
+    for (let row = 0; row < 5; row++)
+      for (let bay = 0; bay < 2; bay++) {
+        const u = yard.u0 + blk * 27 + bay * 12.6 + 6.1;
+        const w = yard.w0 + row * 2.6 + 1.25;
+        const tiers = 1 + Math.floor(h01(501, blk * 10 + row, bay) * 3);
+        if (lod) {
+          b.box(u, top + (tiers * 2.59) / 2, w, 12.19, tiers * 2.59, 2.44, CONTAINER_COLS[Math.floor(h01(502, blk * 10 + row, bay) * CONTAINER_COLS.length)], { bottom: true });
+          continue;
+        }
+        for (let t = 0; t < tiers; t++) {
+          const m = CONTAINER_COLS[Math.floor(h01(503, (blk * 10 + row) * 4 + bay, t) * CONTAINER_COLS.length)];
+          b.box(u, top + (t + 0.5) * 2.59, w, 12.19, 2.53, 2.44, m, { bottom: true, top: t < tiers - 1 });
+          // door end: darker frame lines (corrugation reads as shade at this size)
+          b.box(u + 6.1, top + (t + 0.5) * 2.59, w, 0.02, 2.4, 2.3, shade(m), { bottom: true, top: true });
+        }
+      }
+  // ── boatyard: travel-lift hoist straddling a yacht at the quay edge, boats on stands ──
+  const tl = { u: 334, w: -5 };
+  const hullSpec = (L: number, t: Mat) => ({
+    L, B: L * 0.3, F: L * 0.1, D: L * 0.07, sheer: 0.25, transom: 0.85, transomDepth: 0.3, entry: 1.6, n: 2.2, rake: L * 0.06,
+    topside: t, boot: mat(0x1e2c48, 0.4), bottom: mat(0x6e211c, 0.8), deck: mat(0xd9d5ca, 0.75), rub: mat(0xb9bec4, 0.25, 0.9), bootTop: 0.1, stations: lod ? 6 : 12,
+  });
+  const yacht = (u: number, y: number, w: number, L: number, yaw: number, col: number) =>
+    b.with([u, y, w], [0, yaw, 0], () => {
+      buildHull(b, hullSpec(L, mat(col, 0.35)));
+      b.prism(0, -L * 0.05, L * 0.1, L * 0.1 + 0.9, L * 0.16, L * 0.32, L * 0.14, L * 0.26, mat(0xeeeeea, 0.35), 0.1);
+    });
+  // the hoist: two portal frames on wheels, top beams, slings
+  for (const du of [-4, 4]) {
+    for (const dw of [-3.4, 3.4]) b.box(tl.u + du, top + 5, tl.w + dw, 0.6, 10, 0.6, HOIST_BLUE, { bottom: true });
+    b.box(tl.u + du, top + 10.2, tl.w, 0.8, 0.8, 7.6, HOIST_BLUE);
+  }
+  for (const dw of [-3.4, 3.4]) b.box(tl.u, top + 10.6, tl.w + dw, 8.8, 0.7, 0.7, HOIST_BLUE);
+  yacht(tl.u, top + 3.2, tl.w, 11, 90, 0xf4f4f0);
+  if (!lod) {
+    for (const du of [-4, 4]) for (const dw of [-3.4, 3.4]) b.cylinder([tl.u + du - 0.5, top + 0.5, tl.w + dw], [tl.u + du + 0.5, top + 0.5, tl.w + dw], 0.5, 0.5, 8, mat(0x161616, 0.9));
+    for (const du of [-2.2, 2.2]) b.box(tl.u + du, top + 6.6, tl.w, 0.12, 7, 3.4, mat(0x2a2c30, 0.8));
+  }
+  // yachts on stands (cradles) on the hard
+  for (const [u, w, L, col] of [[312, -19.5, 10, 0xffffff], [322, -20.5, 12.5, 0x1b2a4a], [344, -19.5, 9, 0xe8e6de]] as [number, number, number, number][]) {
+    const keelY = top + L * 0.07 + 0.9;
+    yacht(u, keelY, w, L, 90, col);
+    if (!lod) for (const du of [-L * 0.25, L * 0.2]) for (const dw of [-L * 0.1, L * 0.1]) b.cylinder([u + du, top, w + dw], [u + du, keelY + 0.2, w + dw * 0.8], 0.08, 0.08, 4, mat(0x6b6e72, 0.5, 0.6), false);
+  }
+}
+
+/** A darker shade of a material (container door ends). */
+function shade(m: Mat): Mat {
+  return { ...m, c: [m.c[0] * 0.55, m.c[1] * 0.55, m.c[2] * 0.55] };
 }
 
 /**

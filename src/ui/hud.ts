@@ -22,6 +22,7 @@ import { installHudStyle, removeHudStyle } from './hudStyle';
 import { topBarHeight } from './topBar';
 import { drawJetHud, createJetHudState, trackJetHud, jetHudGeometryOnGlass, type JetReadings } from './jetHud';
 import { clipToGlass, createHudGlass, hudGlassKey, projectHudGlassObjects, HUD_GLASS_KEY_LENGTH } from './hudGlass';
+import { computeGlassHudLayout, createGlassHudView, type GlassHudLayout, type GlassHudView, type GlassReadings } from './glassHud';
 import type { HudStyle } from '../fleet/types';
 import type * as THREE from 'three';
 
@@ -55,6 +56,8 @@ export interface HudLayout {
   compassVisible: boolean;
   /** The jet head-up display's box (centre of the view), or null for steam gauges. */
   jet: Rect | null;
+  /** Airliner glass style (747): the mini PFD / EICAS blocks (src/ui/glassHud.ts); `strip` is then its systems block. */
+  glass: GlassHudLayout | null;
   /** Height of the branding top bar the HUD sits below. */
   topInset: number;
   chip: { x: number; y: number; h: number; maxW: number };
@@ -70,7 +73,8 @@ const clamp = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > 
 
 /**
  * Pure HUD layout for a viewport (CSS px). `style` 'jet' drops the six-pack and the compass tape and
- * adds the head-up display box in the centre; everything sits below the branding top bar.
+ * adds the head-up display box in the centre; 'glass' (747) swaps the six-pack, compass and strip for
+ * the mini PFD + EICAS blocks of src/ui/glassHud.ts; everything sits below the branding top bar.
  */
 export function computeHudLayout(width: number, height: number, cfg: Config = CONFIG, mode: HudMode = 'normal', style: HudStyle = 'steam'): HudLayout {
   const w = Number.isFinite(width) && width > 0 ? width : 1024;
@@ -82,7 +86,8 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   g0 = Math.max(24, Math.round(g0));
   const g = mode === 'cockpitCompact' ? Math.round(g0 * 0.72) : g0;
   const jetStyle = style === 'jet';
-  const clustersVisible = mode !== 'cockpitHidden' && !jetStyle;
+  const glassStyle = style === 'glass';
+  const clustersVisible = mode !== 'cockpitHidden' && !jetStyle && !glassStyle;
   const margin = Math.round(clamp(w * 0.012, 10, 20));
   const pad = Math.max(4, Math.round(g * 0.07));
   const gap = Math.max(4, Math.round(g * 0.08));
@@ -128,6 +133,13 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     }
   }
 
+  // Glass (747): the PFD and EICAS blocks replace the clusters; the EICAS (or the cockpit strip) is the strip.
+  const glass = glassStyle ? computeGlassHudLayout(w, h, cfg, mode) : null;
+  if (glass) {
+    strip = glass.systems;
+    stripRows = 1;
+  }
+
   const topInset = cfg.hud.topBar ? topBarHeight(w, cfg) : 0;
   const top = topInset + Math.round(margin * 0.6);
   const compassW = Math.round(clamp(w * 0.3, 240, 460));
@@ -135,10 +147,10 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   const compass: Rect = { x: Math.round((w - compassW) / 2), y: top, w: compassW, h: compassH };
   const chip = { x: margin, y: top, h: 24, maxW: Math.max(0, Math.min(300, compass.x - 2 * margin)) };
   const fontSize = Math.round(clamp(g0 * 0.105, 11, 15));
-  const annunciatorY = jetStyle ? top + 2 : compass.y + compass.h + 10;
+  const annunciatorY = jetStyle || glassStyle ? top + 2 : compass.y + compass.h + 10;
   const pausedY = annunciatorY + Math.round(fontSize * 3.2);
   const bannerY = Math.round(Math.min(Math.max(h * 0.2, pausedY + fontSize * 4.4), h / 3 - fontSize * 7));
-  const bottomTop = clustersVisible ? Math.min(left.y, strip.y) : strip.y;
+  const bottomTop = clustersVisible ? Math.min(left.y, strip.y) : glass?.pfd ? Math.min(glass.pfd.y, strip.y) : strip.y;
   let jet: Rect | null = null;
   if (jetStyle) {
     const j = cfg.hud.jet;
@@ -169,8 +181,9 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     strip,
     stripRows,
     compass,
-    compassVisible: !jetStyle,
+    compassVisible: !jetStyle && !glassStyle,
     jet,
+    glass,
     topInset,
     chip,
     annunciatorY,
@@ -218,7 +231,7 @@ export interface HudOptions {
   aircraft?: { setPanelDrawer(fn: PanelDrawerFn): void };
   /** Config override (tests, or the aircraft's own config); defaults to CONFIG. */
   config?: Config;
-  /** 'steam' (six-pack, the Cessna) or 'jet' (F-16 head-up display). */
+  /** 'steam' (six-pack, the Cessna), 'jet' (F-16 head-up display) or 'glass' (747 PFD + EICAS). */
   style?: HudStyle;
 }
 
@@ -336,6 +349,8 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   let onGlass = false;
   let glassView: HudCombinerView | null = null;
   let menuOpen = false;
+  // Airliner glass style (747): the mini PFD and EICAS (src/ui/glassHud.ts).
+  const airliner: GlassHudView | null = style === 'glass' ? createGlassHudView(doc, instruments, cfg) : null;
 
   // Message layer.
   const messages = div('fsh-messages', el);
@@ -424,6 +439,8 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     leftEl.hidden = !L.clustersVisible;
     rightEl.hidden = !L.clustersVisible;
     compassEl.hidden = !L.compassVisible;
+    stripEl.hidden = !!airliner;
+    if (airliner && L.glass) airliner.place(L.glass, dpr);
     if (L.jet && onGlass) {
       place(jetEl, { x: 0, y: 0, w: vw, h: vh });
       sizeSlot(jetSlot, 0, 0, vw, vh, dpr);
@@ -471,6 +488,10 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   };
 
   const drawInstruments = (r: InstrumentReadings) => {
+    if (airliner) {
+      airliner.draw(r as GlassReadings);
+      return;
+    }
     if (layout.clustersVisible) {
       for (const gs of gauges) {
         const s = gs.slot;
@@ -610,6 +631,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     lastYoke = info.mouseYoke;
     lastTod = info.timeOfDay;
 
+    airliner?.track(r as GlassReadings, step);
     if (visible) {
       drawInstruments(r);
       chipTimer += step;
@@ -703,6 +725,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
         stripSlot.dirty = true;
         compassSlot.dirty = true;
         jetDirty = true;
+        airliner?.markDirty();
         chipTimer = Infinity;
       }
     },
@@ -720,6 +743,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       if (disposed) return;
       disposed = true;
       win.removeEventListener('resize', onResize);
+      airliner?.dispose();
       el.remove();
       removeHudStyle(doc);
     },
