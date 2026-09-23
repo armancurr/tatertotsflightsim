@@ -124,7 +124,8 @@ export function createStreakRenderer(pool: StreakPool, opts: { intensity?: numbe
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'combatfx-streaks';
   mesh.frustumCulled = false;
-  mesh.visible = false;
+  // Always "visible" with 0 instances when idle: the program compiles at start-up, not on the first spark.
+  mesh.visible = true;
   mesh.renderOrder = 2;
   const shutter = opts.shutterS ?? 1 / 45;
   const minTrail = opts.minTrailM ?? 0.08;
@@ -155,7 +156,6 @@ export function createStreakRenderer(pool: StreakPool, opts: { intensity?: numbe
       }
       drawn = n;
       geo.instanceCount = n;
-      mesh.visible = n > 0 && camera !== null;
       if (n > 0) {
         head.clearUpdateRanges();
         head.addUpdateRange(0, n * 4);

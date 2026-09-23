@@ -52,7 +52,7 @@ export function createCombatFx(scene: THREE.Scene, opts: CombatFxOptions & { str
     shake: (cockpit, spin, firing) => sim.shake(cockpit, spin, firing),
     reset() {
       sim.reset();
-      streaks.mesh.visible = false;
+      streaks.update(null as unknown as THREE.PerspectiveCamera, 900, 1440);
     },
     stats: () => ({ ...sim.stats(), streaksDrawn: streaks.drawn }),
     dispose() {

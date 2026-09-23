@@ -738,8 +738,9 @@ export class CombatFxSim {
     const k = (D.size as Record<string, number>)[kind] ?? 0.8;
     this.s.destroyed++;
     const base = Math.max(g, y);
-    fx.flash(x, base + 2, z, 1.2 * k);
-    fx.fireball(x, base + 1.5, z, g, 0, 0, 0, 0.45 + 0.5 * k);
+    fx.flash(x, base + 2, z, 1.5 * k);
+    // The catastrophic explosion: a fat, short fireball (fuel + ammunition) and its black smoke.
+    this.fireball(fx, x, base + 1.2, z, g, Math.round(34 * k), 1.1 + 0.5 * k);
     // Dark debris (hull plates, road wheels, track links), some of it burning.
     const n = Math.round(D.debris * k);
     const t = this.tpl;
