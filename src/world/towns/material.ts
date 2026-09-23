@@ -57,7 +57,7 @@ export function patchStandardShader(shader: { vertexShader: string; fragmentShad
   if (mid) fs = must(fs, '#include <clipping_planes_fragment>', BLD_FRAG_DITHER);
   fs = must(fs, '#include <color_fragment>', BLD_FRAG_COLOR);
   // glass panels are never perfectly flat: a per-panel tilt breaks up the sky reflection
-  fs = must(fs, '#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  normal = normalize(normal + vec3(bldJit * 0.05, bldJit * 0.03, 0.0));');
+  fs = must(fs, '#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  normal = normalize(normal + vec3(bldJit * 0.012, bldJit * 0.008, 0.0));');
   fs = must(fs, '#include <roughnessmap_fragment>', 'float roughnessFactor = bldRough;');
   fs = must(fs, '#include <metalnessmap_fragment>', 'float metalnessFactor = bldMetal;');
   fs = must(fs, '#include <emissivemap_fragment>', 'totalEmissiveRadiance = bldEmit;');

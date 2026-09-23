@@ -12,13 +12,14 @@
  * deterministically from the building's `rand`.
  */
 import { mulberry32 } from '../noise';
-import { STYLE, type Building } from './placement';
+import { STYLE, STYLE_X, ROOF_METAL_RES, type Building } from './placement';
 import { FLAG, I, INST_STRIDE, NEAR_KINDS, DORMER_MIN_RISE, type NearKind } from './archetypes';
 
 export { INST_STRIDE } from './archetypes';
-
 /** Extra facade styles for derived pieces (continuing placement's STYLE ids). */
-export const STYLE_X = { hvac: 9, tank: 10, mast: 11, plain: 12 } as const;
+export { STYLE_X } from './placement';
+
+const METAL_RES = new Set(ROOF_METAL_RES);
 
 const DEG = Math.PI / 180;
 
@@ -71,11 +72,19 @@ export function instanceFlags(b: Building, allowed = false): number {
   if (b.archetype === 'gable' && b.roofHeight > DORMER_MIN_RISE && W >= 6) mask |= FLAG.dormers;
   if (b.archetype === 'gambrel') mask |= FLAG.cupola;
   if (b.archetype === 'flat') mask |= FLAG.whiteRoof;
-  mask |= FLAG.balcony | FLAG.shopfront | FLAG.glass | FLAG.steeple | FLAG.garage | FLAG.shutters | FLAG.siding | FLAG.ribbon | FLAG.brick | FLAG.blank | FLAG.upper | FLAG.harbour;
+  // awnings hang on the local +z wall: flat roofs, and gables with the ridge along the front
+  if ((b.archetype === 'flat' || (b.archetype === 'gable' && !rot)) && W >= 3) mask |= FLAG.awning;
+  if (b.archetype === 'silo') mask |= FLAG.tree;
+  mask |= FLAG.balcony | FLAG.shopfront | FLAG.glass | FLAG.steeple | FLAG.garage | FLAG.shutters | FLAG.siding | FLAG.ribbon | FLAG.brick | FLAG.blank | FLAG.upper;
+  mask |= FLAG.metalRoof | FLAG.solar | FLAG.stone;
   if (allowed) return mask;
 
+  if (b.use === 'tree') return FLAG.tree;
+  if (b.use === 'pool') return FLAG.blank;
   const rnd = mulberry32(Math.floor(b.rand * 4294967296) ^ 0x5bd1e995);
   let f = 0;
+  if (b.use === 'garage') return (FLAG.garage | (reddish(b.wallColor) ? FLAG.brick : 0) | (METAL_RES.has(b.roofColor) ? FLAG.metalRoof : 0)) & mask;
+  if (b.use === 'watertower' || b.use === 'tank') return FLAG.blank;
   if (rnd() < 0.5) f |= FLAG.side;
   if (house || b.use === 'shop') {
     if (rnd() < (house ? 0.72 : 0.4)) f |= FLAG.chimney;
@@ -94,6 +103,16 @@ export function instanceFlags(b: Building, allowed = false): number {
     if (rnd() < 0.22) f |= FLAG.shutters;
   } else if ((b.use === 'apartment' || b.use === 'shop') && reddish(b.wallColor)) f |= FLAG.brick;
   if (b.archetype === 'flat' && rnd() < (b.use === 'warehouse' || b.use === 'industrial' ? 0.55 : 0.3)) f |= FLAG.whiteRoof;
+  // later decorations draw from a second stream so the ones above keep their values
+  const r2 = mulberry32(Math.floor(b.rand * 4294967296) ^ 0x1b56c4e9);
+  if (b.use === 'shop' && r2() < 0.6) f |= FLAG.awning;
+  if (METAL_RES.has(b.roofColor)) f |= FLAG.metalRoof;
+  if (house && b.farm < 0 && r2() < 0.1) f |= FLAG.solar;
+  if (b.archetype === 'flat' && (b.use === 'school' || b.use === 'warehouse' || b.use === 'industrial' || b.use === 'shop') && r2() < 0.18) f |= FLAG.solar;
+  if (b.use === 'townhall' || (b.use === 'school' && !reddish(b.wallColor))) f |= FLAG.stone;
+  if (b.use === 'school' && reddish(b.wallColor)) f |= FLAG.brick;
+  if (b.use === 'school') f |= FLAG.ribbon;
+  if ((b.use === 'shop' || b.use === 'apartment') && !reddish(b.wallColor) && r2() < 0.2) f |= FLAG.stone;
   return f & mask;
 }
 
@@ -172,8 +191,21 @@ export function buildingPieces(b: Building): Piece[] {
     out.push({ kind: 'flat', b: { ...b, wallHeight: tier, tierHeight: undefined, tierInset: undefined }, flags: own, piece: 0 });
     top = { ...b, width: b.width - 2 * ins, depth: b.depth - 2 * ins, tierHeight: undefined, tierInset: undefined };
     out.push({ kind: 'flat', b: top, flags: own | FLAG.upper, piece: 1 });
+  } else if (b.use === 'watertower') {
+    // a fluted column carrying the tank
+    const tankH = Math.min(0.85 * b.width, b.wallHeight * 0.4);
+    const legH = b.wallHeight - tankH;
+    const cw = Math.max(2.4, 0.26 * b.width);
+    out.push({ kind: 'flat', b: { ...b, archetype: 'flat', width: cw, depth: cw, wallHeight: legH + 0.4, roofHeight: 0.05, style: STYLE_X.plain, floorHeight: 0, wallColor: 0xc9ccca }, flags: FLAG.blank | FLAG.flatRoof, piece: 1 });
+    out.push({ kind: 'silo', b: { ...b, y: b.y + legH, wallHeight: tankH, plinth: 0 }, flags: FLAG.upper | FLAG.blank, piece: 1 });
+    return out;
   } else out.push({ kind: b.archetype, b, flags: own, piece: 0 });
-  if (b.archetype !== 'flat') return out;
+  if (b.use === 'townhall') {
+    // a clock turret on the ridge
+    const tw = Math.min(5, b.depth * 0.3);
+    out.push({ kind: 'hip', b: { ...b, y: b.y + b.wallHeight, plinth: 0, width: tw, depth: tw, wallHeight: b.roofHeight + 4.5, roofHeight: tw * 1.6, ridge: 0, ridgeAxis: 0, archetype: 'hip', use: 'steeple', style: STYLE.church, floorHeight: 0 }, flags: FLAG.steeple | FLAG.upper, piece: 1 });
+  }
+  if (b.archetype !== 'flat' || b.use === 'pool') return out;
 
   // ── rooftop clutter on the (top) deck ──
   const rnd = mulberry32(Math.floor(b.rand * 4294967296) ^ 0x2c1b3c6d);
@@ -232,7 +264,13 @@ function midPieces(pieces: Piece[]): { b: Building; flags: number }[] {
   for (const p of pieces) {
     const b = p.b;
     if (p.piece === 2 && b.style !== STYLE_X.plain && b.style !== STYLE_X.mast) continue; // small rooftop units: near only
-    const flags = p.flags & ~(FLAG.chimney | FLAG.dormers | FLAG.cupola);
+    if (b.use === 'pool') continue; // flat on the ground: the terrain's colour does at a distance
+    const flags = p.flags & ~(FLAG.chimney | FLAG.dormers | FLAG.cupola | FLAG.awning | FLAG.tree);
+    if (b.use === 'tree') {
+      // a green blob: a short box under a pyramid
+      out.push({ b: { ...b, archetype: 'hip', width: b.width * 0.8, depth: b.depth * 0.8, wallHeight: b.wallHeight + 0.42 * b.roofHeight, roofHeight: 0.58 * b.roofHeight, ridge: 0 }, flags: 0 });
+      continue;
+    }
     if (b.archetype === 'flat') out.push({ b: { ...b, wallHeight: b.wallHeight + b.roofHeight, roofHeight: 0, ridge: 1 }, flags });
     else if (b.archetype === 'silo') out.push({ b: { ...b, archetype: 'flat', wallHeight: b.wallHeight + 0.5 * b.roofHeight, roofHeight: 0, ridge: 1 }, flags: flags & ~FLAG.cone });
     else if (b.archetype === 'gambrel') out.push({ b: { ...b, archetype: 'gable', ridge: 1 }, flags });
@@ -278,7 +316,7 @@ export function buildInstances(buildings: readonly Building[], chunkSize: number
         nearLists[p.kind][ci].push({ b: p.b, chunk: ci, parent: idx, piece: p.piece });
         nearFlags[p.kind][ci].push(p.flags);
         // bounds: circumscribed circle + overhang allowance, base to top + chimney/cupola allowance
-        const r = Math.hypot(p.b.width, p.b.depth) / 2 + 1;
+        const r = Math.hypot(p.b.width, p.b.depth) / 2 + 2;
         x0 = Math.min(x0, p.b.x - r);
         x1 = Math.max(x1, p.b.x + r);
         z0 = Math.min(z0, p.b.z - r);

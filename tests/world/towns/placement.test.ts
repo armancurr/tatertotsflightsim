@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
-import { placeBuildings, buildingRect, roofTopAt, type Building } from '../../../src/world/towns/placement';
+import { placeBuildings, buildingRect, roofTopAt, isProp, TRUNK_RECT, TREE_EQ_P, type Building } from '../../../src/world/towns/placement';
+import { TREE_EQ } from '../../../src/world/towns/archetypes';
+import { makeRect } from '../../../src/world/towns/geom';
 import { buildRoadNetwork, type RoadNetwork } from '../../../src/world/roads/network';
 import { createConstraints } from '../../../src/world/towns/constraints';
 import { SegmentGrid, rectCorners, rectsOverlap, frontVector, type Rect } from '../../../src/world/towns/geom';
@@ -49,8 +51,8 @@ function checkInvariants(layout: WorldLayout, net: RoadNetwork, bs: Building[], 
   });
   for (const b of bs) {
     const r = buildingRect(b);
-    // clear of every road ribbon (incl. streets and farm tracks)
-    expect(roads.clearance(r, 40)).toBeGreaterThan(0.5);
+    // clear of every road ribbon (incl. streets and farm tracks); a tree's crown may overhang, its trunk may not
+    expect(roads.clearance(b.use === 'tree' ? makeRect(b.x, b.z, b.headingDeg, TRUNK_RECT, TRUNK_RECT) : r, 40)).toBeGreaterThan(0.5);
     // clear of the sea, lakes and the river
     expect(C.rectWaterClearance(r)).toBeGreaterThan(1);
     // off the airport and its approach corridors
@@ -60,7 +62,7 @@ function checkInvariants(layout: WorldLayout, net: RoadNetwork, bs: Building[], 
     for (const c of rectCorners(r)) lo = Math.min(lo, heightAt(c.x, c.z));
     expect(b.y).toBeLessThanOrEqual(lo + 1e-9);
     expect(b.y).toBeGreaterThan(lo - 1.5);
-    expect(b.wallHeight).toBeGreaterThan(2);
+    expect(b.wallHeight).toBeGreaterThan(isProp(b) ? 0.2 : 2);
     expect(Number.isFinite(b.roofHeight)).toBe(true);
     // town & roadside buildings face the nearest road segment
     if (b.farm < 0 && b.use !== 'steeple') {
@@ -153,6 +155,67 @@ describe('building placement', () => {
     expect(new Set(houses.map((h) => h.archetype))).toEqual(new Set(['gable', 'hip']));
   });
 
+  it('plants thousands of trees: in the gardens behind the houses and along the streets, trunks off the road', () => {
+    const trees = B.filter((b) => b.use === 'tree');
+    expect(trees.length).toBeGreaterThan(4000);
+    const inTowns = trees.filter((t) => t.town >= 0).length;
+    expect(inTowns).toBeGreaterThan(trees.length * 0.6);
+    for (const t of trees) {
+      expect(t.archetype).toBe('silo');
+      expect(t.width).toBe(t.depth);
+      expect(t.width).toBeGreaterThan(3);
+      expect(t.width).toBeLessThan(13);
+      expect(t.roofHeight).toBeGreaterThan(t.width * 0.7); // crowns at least as tall as ~wide
+      expect(t.farm).toBe(-1);
+    }
+    // every settlement with houses has trees
+    LAYOUT.towns.forEach((t, ti) => {
+      if (B.some((b) => b.town === ti && b.use === 'house')) expect(trees.some((x) => x.town === ti)).toBe(true);
+    });
+  });
+
+  it('gives the yards detached garages and (mostly in the coastal city) swimming pools', () => {
+    const pools = B.filter((b) => b.use === 'pool');
+    const garages = B.filter((b) => b.use === 'garage');
+    expect(pools.length).toBeGreaterThan(50);
+    expect(garages.length).toBeGreaterThan(100);
+    const cityIdx = LAYOUT.towns.findIndex((t) => t.kind === 'city');
+    expect(pools.filter((p) => p.town === cityIdx).length).toBeGreaterThan(pools.length * 0.4);
+    for (const p of pools) {
+      expect(p.archetype).toBe('flat');
+      expect(p.wallHeight).toBeLessThan(2.5);
+    }
+    for (const g of garages) {
+      expect(g.width * g.depth).toBeLessThan(60);
+      expect(g.wallHeight - g.plinth!).toBeCloseTo(2.8, 6);
+    }
+  });
+
+  it('builds civic landmarks: a town hall and a school in every town and the city, water towers, storage tanks and round towers', () => {
+    LAYOUT.towns.forEach((t, ti) => {
+      const mine = B.filter((b) => b.town === ti);
+      if (t.kind === 'town' || t.kind === 'city') {
+        expect(mine.filter((b) => b.use === 'townhall').length).toBe(1);
+        expect(mine.filter((b) => b.use === 'school').length).toBeGreaterThanOrEqual(1);
+        expect(mine.filter((b) => b.use === 'watertower').length).toBe(1);
+        const hall = mine.find((b) => b.use === 'townhall')!;
+        expect(Math.hypot(hall.x - t.x, hall.z - t.z)).toBeLessThan(t.radius * 0.35);
+      }
+      if (t.kind === 'city') expect(mine.filter((b) => b.use === 'school').length).toBeGreaterThanOrEqual(2);
+    });
+    const wt = B.filter((b) => b.use === 'watertower');
+    for (const w of wt) {
+      expect(w.archetype).toBe('silo');
+      expect(w.wallHeight).toBeGreaterThan(20);
+    }
+    const tanks = B.filter((b) => b.use === 'tank');
+    expect(tanks.length).toBeGreaterThan(5);
+    for (const k of tanks) expect(k.archetype === 'silo' && k.ridge === 0 && k.width >= 12).toBe(true);
+    const round = B.filter((b) => b.use === 'tower' && b.archetype === 'silo');
+    expect(round.length).toBeGreaterThan(0);
+    for (const r of round) expect(r.style).toBe(2);
+  });
+
   it('records the plinth (extra wall height on sloping ground) of every building', () => {
     for (const b of B) {
       expect(b.plinth).toBeGreaterThanOrEqual(0.3 - 1e-9);
@@ -199,7 +262,7 @@ describe('building placement', () => {
       }),
       { numRuns: 16 },
     );
-  }, 60_000);
+  }, 240_000);
 });
 
 describe('roofTopAt', () => {
@@ -246,6 +309,14 @@ describe('roofTopAt', () => {
     expect(roofTopAt(silo, silo.x + 2.9, silo.z + 2.9)).toBe(-Infinity); // outside the circle, inside the square
     const spire = mk({ archetype: 'hip', ridge: 0, width: 6, depth: 6, wallHeight: 18, roofHeight: 14 });
     expect(roofTopAt(spire, spire.x, spire.z)).toBeCloseTo(spire.y + 32);
+  });
+  it('trees: the physics sees the crown cap (drawn crown ≤ it, see archetypes tests); the crown ratio matches the mesh', () => {
+    expect(TREE_EQ_P).toBe(TREE_EQ);
+    const t = mk({ archetype: 'silo', use: 'tree', width: 8, depth: 8, wallHeight: 2.5, roofHeight: 7 });
+    expect(roofTopAt(t, t.x, t.z)).toBeCloseTo(t.y + 9.5);
+    const f = frontVector(t.headingDeg);
+    expect(roofTopAt(t, t.x + f.x * 3.99, t.z + f.z * 3.99)).toBeGreaterThan(t.y + 2.5 + 0.42 * 7);
+    expect(roofTopAt(t, t.x + f.x * 4.1, t.z + f.z * 4.1)).toBe(-Infinity);
   });
   it('grain bins (silo, ridge 0) have a cone roof', () => {
     const bin = mk({ archetype: 'silo', width: 10, depth: 10, roofHeight: 2.5, ridge: 0 });
