@@ -44,8 +44,8 @@ async function press(key: string) {
 }
 
 describe('flight simulator in Chrome (window.sim + keyboard)', () => {
-  it('has the title "Flight Simulator"', async () => {
-    expect(await page.title()).toBe('Flight Simulator');
+  it('has the title "Tater\'s Flight Sim · Tater Tots Flight Simulator"', async () => {
+    expect(await page.title()).toBe("Tater's Flight Sim · Tater Tots Flight Simulator");
   });
 
   it('window.sim exposes the required fields with the right types and plausible initial values', () => {

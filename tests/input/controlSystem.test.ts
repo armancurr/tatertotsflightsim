@@ -388,3 +388,14 @@ describe('resetControls', () => {
     expect(run(r, 0.5, {}).controls.throttle).toBe(0.42);
   });
 });
+
+describe('speed brake (jets)', () => {
+  it('X toggles the speed brake and it starts retracted', () => {
+    let s = createControlState();
+    expect(s.controls.speedBrake ?? false).toBe(false);
+    s = press(s, 'KeyX').state;
+    expect(s.controls.speedBrake).toBe(true);
+    s = press(s, 'KeyX').state;
+    expect(s.controls.speedBrake).toBe(false);
+  });
+});

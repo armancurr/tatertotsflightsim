@@ -11,6 +11,7 @@
  *   t            seconds to run the systems before window.__ready (cars settle)
  * window.__ready, window.__stats().
  */
+import { FLEET, getAircraftDef } from '../fleet';
 import * as THREE from 'three';
 import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
@@ -56,7 +57,13 @@ async function main() {
   if (q.has('tod')) atmosphere.setTimeOfDay(num('tod', 0));
   const hudRoot = document.createElement('div');
   const no = new Set((q.get('no') ?? 'hud,audio,fx').split(',').filter(Boolean));
-  const systems = await createSystems({ renderer, scene, camera, env, hudRoot, aircraft: { root: new THREE.Group() }, atmosphere }, discoverSystemModules(), no);
+  const stubAircraft = { root: new THREE.Group(), setVisualState: () => {}, dispose: () => {} };
+  const def = getAircraftDef(null);
+  const noop = () => {};
+  const systems = await createSystems({
+    renderer, scene, camera, env, hudRoot, aircraft: stubAircraft, atmosphere,
+    actions: { reset: noop, selectAircraft: noop, setPaused: noop, isPaused: () => false, setCamera: noop, setTimeOfDay: (i) => atmosphere.setTimeOfDay(i), getTimeOfDay: () => 0, fleet: () => FLEET, currentAircraft: () => def },
+  }, discoverSystemModules(), no);
   await systems.ready(camera, 15000);
   const state = createInitialState(env);
   const controlState = createControlState();
@@ -83,7 +90,7 @@ async function main() {
     renderer.info.reset();
     focus.copy(camera.position);
     atmosphere.update(camera, dt, focus);
-    systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, paused: false, cameraMode: 'orbit', fps, readings: null });
+    systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, paused: false, cameraMode: 'orbit', fps, readings: null, def, aircraft: stubAircraft });
     rend.render(scene, camera);
     if (!window.__ready && time > settle) window.__ready = true;
     if (frames % 30 === 0) label.textContent = `calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1e6).toFixed(2)}M  cam ${camera.position.x.toFixed(0)},${camera.position.y.toFixed(0)},${camera.position.z.toFixed(0)}  ${JSON.stringify(systems.timings())}`;

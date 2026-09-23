@@ -43,6 +43,10 @@ export interface AircraftVisualState {
   crashed?: boolean;
   /** Seconds since the crash (the soot spreads over the first few seconds). */
   crashAge?: number;
+  /** 0..1 afterburner intensity (jets: drives the nozzle flame). */
+  afterburner?: number;
+  /** 0..1 speed-brake deployment (jets). */
+  speedBrake?: number;
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */

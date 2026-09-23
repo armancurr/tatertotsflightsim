@@ -104,6 +104,7 @@ function defaultControls(): Controls {
     brake: 0,
     parkingBrake: false,
     engineOn: true,
+    speedBrake: false,
   };
 }
 
@@ -217,6 +218,7 @@ export function updateControls(
   let flapsNotch = prev.flapsNotch;
   let gearDown = prev.gearDown;
   let parkingBrake = prev.parkingBrake;
+  let speedBrake = prev.speedBrake ?? false;
   let engineOn = prev.engineOn;
   let landingLight = state.landingLight;
   let mouseYoke = state.mouseYoke;
@@ -230,6 +232,7 @@ export function updateControls(
     if (matches(keys.flapsUp, code)) flapsNotch = Math.max(0, flapsNotch - 1);
     if (matches(keys.gear, code)) gearDown = !gearDown;
     if (matches(keys.parkingBrake, code)) parkingBrake = !parkingBrake;
+    if (matches(keys.speedBrake, code)) speedBrake = !speedBrake;
     if (matches(keys.engine, code)) engineOn = !engineOn;
     if (matches(keys.landingLight, code)) landingLight = !landingLight;
     if (matches(keys.mouseYoke, code)) mouseYoke = !mouseYoke;
@@ -303,6 +306,7 @@ export function updateControls(
     gearDown,
     brake,
     parkingBrake,
+    speedBrake,
     engineOn,
   };
   return {

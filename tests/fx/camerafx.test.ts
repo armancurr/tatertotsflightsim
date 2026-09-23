@@ -44,7 +44,7 @@ describe('camerafx system (speed FOV on the live camera)', () => {
       sys.update!({
         state: makeState({ iasKt: kt }), controls: makeControls(), controlState: {} as never, camera, dt, time: 0, paused, cameraMode: mode,
         fps: { fps: 60, avg: 60, min: 60, onePercentLow: 60, longFrames: 0, frames: 1 }, readings: null,
-      } as SystemFrame);
+      } as unknown as SystemFrame);
     };
     return { camera, sys, frame };
   };

@@ -12,7 +12,24 @@ import type { AircraftState, CameraMode, Controls, InstrumentReadings } from '..
 import type { ControlState, SimAction } from '../../input/controlSystem';
 import type { WorldEnvironment } from '../../world/environment';
 import type { Atmosphere } from '../../render/atmosphere';
-import type { PanelDrawerFn } from '../../ui/hud';
+import type { AircraftDef, AircraftModelHandle } from '../../fleet/types';
+
+/** Things a system (e.g. the menu) may ask the app to do. */
+export interface SimActions {
+  /** Restart on the runway, or on final approach. */
+  reset(which?: 'runway' | 'approach'): void;
+  /** Switch aircraft (by fleet id); restarts on the runway. */
+  selectAircraft(id: string): void;
+  setPaused(paused: boolean): void;
+  isPaused(): boolean;
+  setCamera(mode: CameraMode): void;
+  setTimeOfDay(index: number): void;
+  getTimeOfDay(): number;
+  /** Every flyable aircraft, in menu order. */
+  fleet(): readonly AircraftDef[];
+  /** The aircraft being flown. */
+  currentAircraft(): AircraftDef;
+}
 
 export interface SystemContext {
   renderer: THREE.WebGLRenderer;
@@ -20,8 +37,10 @@ export interface SystemContext {
   camera: THREE.PerspectiveCamera;
   env: WorldEnvironment;
   hudRoot: HTMLElement;
-  aircraft: { root: THREE.Group; setPanelDrawer?(fn: PanelDrawerFn): void };
+  /** The aircraft model at start-up (after a switch, see `onAircraftChange` / `SystemFrame.aircraft`). */
+  aircraft: AircraftModelHandle;
   atmosphere: Atmosphere;
+  actions: SimActions;
 }
 
 export interface SystemFrame {
@@ -38,6 +57,9 @@ export interface SystemFrame {
   fps: { fps: number; avg: number; min: number; onePercentLow: number; longFrames: number; frames: number };
   /** This frame's instrument readings (from the system that provides them), if any. */
   readings: InstrumentReadings | null;
+  /** The aircraft being flown and its 3D model. */
+  def: AircraftDef;
+  aircraft: AircraftModelHandle;
 }
 
 export interface SimSystem {
@@ -50,6 +72,8 @@ export interface SimSystem {
   update?(f: SystemFrame): void;
   onAction?(a: SimAction): void;
   onReset?(which: 'runway' | 'approach' | 'teleport'): void;
+  /** The player picked another aircraft (the new model is already in the scene; a reset follows). */
+  onAircraftChange?(def: AircraftDef, model: AircraftModelHandle): void;
   onResize?(): void;
   /** Extra numbers for window.sim.debug[name]. */
   stats?(): Record<string, unknown>;

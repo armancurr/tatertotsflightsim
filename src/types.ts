@@ -95,6 +95,8 @@ export interface Controls {
   parkingBrake: boolean;
   /** Master/magneto switch. Engine starts (after a short crank) when switched on, stops when off. */
   engineOn: boolean;
+  /** Speed brake extended (jets; ignored by aircraft without one). */
+  speedBrake?: boolean;
 }
 
 /**
@@ -129,6 +131,8 @@ export interface EngineState {
   rpm: number;
   /** Current propeller thrust, newtons. */
   thrust: number;
+  /** 0..1 afterburner intensity (jet engines only; absent/0 for pistons). */
+  afterburner?: number;
 }
 
 export interface TouchdownRecord {
@@ -247,6 +251,12 @@ export interface InstrumentReadings {
   gLoad: number;
   groundSpeedKt: number;
   state: SimStateLabel;
+  /** Mach number (jets' HUD). */
+  mach?: number;
+  /** 0..1 afterburner intensity (jets). */
+  afterburner?: number;
+  /** Which aircraft these readings belong to (fleet id). */
+  aircraftId?: string;
 }
 
 /** Shape of `window.sim` (read-only snapshot fields; see src/game/simApi.ts). */

@@ -7,8 +7,9 @@ import type * as THREE from 'three';
 import type { AircraftState, Controls, InstrumentReadings } from '../../types';
 import type { SimAction } from '../../input/controlSystem';
 import type { SimSystem, SystemContext, SystemFrame, SystemModule } from './types';
+import type { AircraftDef, AircraftModelHandle } from '../../fleet/types';
 
-export type { SystemContext, SystemFrame, SimSystem, SystemModule } from './types';
+export type { SystemContext, SystemFrame, SimSystem, SystemModule, SimActions } from './types';
 
 export interface Systems {
   ready(camera: THREE.PerspectiveCamera, timeoutMs: number): Promise<void>;
@@ -17,6 +18,7 @@ export interface Systems {
   update(f: SystemFrame): void;
   onAction(a: SimAction): void;
   onReset(which: 'runway' | 'approach' | 'teleport'): void;
+  onAircraftChange(def: AircraftDef, model: AircraftModelHandle): void;
   onResize(): void;
   /** Smoothed CPU ms per system update. */
   timings(): Record<string, number>;
@@ -88,6 +90,7 @@ export async function createSystems(ctx: SystemContext, modules: SystemModule[] 
     },
     onAction: (a) => list.forEach((s) => s.sys.onAction && safe(s.name, () => s.sys.onAction!(a))),
     onReset: (w) => list.forEach((s) => s.sys.onReset && safe(s.name, () => s.sys.onReset!(w))),
+    onAircraftChange: (d, m) => list.forEach((s) => s.sys.onAircraftChange && safe(s.name, () => s.sys.onAircraftChange!(d, m))),
     onResize: () => list.forEach((s) => s.sys.onResize && safe(s.name, () => s.sys.onResize!())),
     timings: () => Object.fromEntries(list.map((s) => [s.name, Math.round(s.ms * 1000) / 1000])),
     stats: () => Object.fromEntries(list.filter((s) => s.sys.stats).map((s) => [s.name, s.sys.stats!()])),

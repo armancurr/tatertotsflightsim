@@ -3,9 +3,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { CONFIG, cloneConfig } from '../src/config';
 
 describe('smoke', () => {
-  it('serves a page titled "Flight Simulator"', () => {
+  it('serves a page titled "Tater\'s Flight Sim · Tater Tots Flight Simulator"', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    expect(html).toMatch(/<title>Flight Simulator<\/title>/);
+    expect(html).toMatch(/<title>Tater's Flight Sim · Tater Tots Flight Simulator<\/title>/);
     expect(html).toMatch(/src\/main\.ts/);
   });
   it('npm start serves on port 8092 and npm test runs vitest', () => {

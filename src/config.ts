@@ -430,6 +430,8 @@ export const CONFIG = {
       gear: ['KeyG'],
       brake: ['Space'],
       parkingBrake: ['KeyB'],
+      /** Speed brake (jets). */
+      speedBrake: ['KeyX'],
       trimNoseDown: ['BracketLeft'],
       trimNoseUp: ['BracketRight'],
       engine: ['KeyE'],
@@ -1097,3 +1099,79 @@ export const MS_TO_FPM = M_TO_FT * 60;
 export function cloneConfig(): Config {
   return structuredClone(CONFIG);
 }
+
+// ─── Fleet: other flyable aircraft (owned by src/physics + src/fleet) ───────────
+// Each aircraft has a section with EXACTLY the shape of CONFIG.aircraft, so the physics,
+// cameras and instruments work unchanged: pass `{ ...CONFIG, aircraft: F16_AIRCRAFT }`.
+
+/**
+ * General Dynamics F-16C Fighting Falcon (Block 50, F110-GE-129).
+ *
+ * GEOMETRY IS FIXED (orchestrator contract, real dimensions: 15.06 m long, 9.96 m span with
+ * wingtip rails, 4.88 m tall, 4.00 m wheelbase, 2.36 m track): the 3D model and the physics
+ * contact points both read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch
+ * the ground at y = −1.75 with the struts extended.
+ *
+ * The flight values below start as a rough placeholder derived from the C172 section; the
+ * physics owner replaces them with the real F-16 model (jet engine + afterburner, high-AoA
+ * aero, Mach drag rise, fly-by-wire limits).
+ */
+function makeF16(): AircraftConfig {
+  const a = structuredClone(CONFIG.aircraft);
+  a.name = 'F-16C Fighting Falcon';
+  a.registration = '90-0772';
+  a.mass = 12000;
+  a.inertia = { pitch: 75674, yaw: 85552, roll: 12875 };
+  a.wingArea = 27.87;
+  a.wingSpan = 9.96;
+  a.meanChord = 3.45;
+  a.engine.maxPowerW = 12e6;
+  a.engine.staticThrustN = 76000;
+  a.gear.retractable = true;
+  a.gear.transitTime = 4;
+  // Struts sized for ~11× the Cessna's weight.
+  a.ground = { ...a.ground, springMain: 650000, damperMain: 65000, springNose: 420000, damperNose: 38000 };
+  a.limits.vneKt = 800;
+  a.limits.structuralFailureG = 13.5;
+  a.geometry = {
+    ...a.geometry,
+    length: 15.06,
+    height: 4.88,
+    noseWheel: { x: 0, y: -1.75, z: -3.5 },
+    leftMainWheel: { x: -1.18, y: -1.75, z: 0.5 },
+    rightMainWheel: { x: 1.18, y: -1.75, z: 0.5 },
+    mainWheelRadius: 0.35,
+    noseWheelRadius: 0.23,
+    strutTravel: 0.22,
+    // No propeller: the "hub" is the intake mouth (keeps prop-wash maths finite until the jet model lands).
+    propHub: { x: 0, y: -1.0, z: -2.95 },
+    propRadius: 0.45,
+    spinnerTip: { x: 0, y: -0.05, z: -9.2 },
+    pilotEye: { x: 0, y: 1.0, z: -4.4 },
+    wingRootLeadingEdge: { x: 0, y: -0.3, z: -1.9 },
+    wingRootChord: 5.0,
+    wingTipChord: 1.05,
+    wingTaperStart: 0.8,
+    dihedralDeg: 0,
+    horizontalTail: { x: 0, y: -0.45, z: 4.9, span: 5.58, chord: 2.0 },
+    verticalTailTop: { x: 0, y: 3.13, z: 5.6 },
+    structuralPoints: [
+      { name: 'noseTip', x: 0, y: -0.05, z: -8.6 },
+      { name: 'radomeBelly', x: 0, y: -0.7, z: -6.4 },
+      { name: 'intakeLip', x: 0, y: -0.85, z: -2.95 },
+      { name: 'leftWingtip', x: -4.98, y: -0.35, z: 1.8 },
+      { name: 'rightWingtip', x: 4.98, y: -0.35, z: 1.8 },
+      { name: 'leftStab', x: -2.79, y: -0.55, z: 5.2 },
+      { name: 'rightStab', x: 2.79, y: -0.55, z: 5.2 },
+      { name: 'finTop', x: 0, y: 3.13, z: 5.6 },
+      { name: 'tailcone', x: 0, y: -0.55, z: 5.4 },
+      { name: 'leftVentral', x: -0.62, y: -0.85, z: 3.6 },
+      { name: 'rightVentral', x: 0.62, y: -0.85, z: 3.6 },
+      { name: 'bellyMid', x: 0, y: -0.8, z: 0.0 },
+      { name: 'cabinRoof', x: 0, y: 1.25, z: -3.8 },
+    ],
+  };
+  return a;
+}
+
+export const F16_AIRCRAFT: AircraftConfig = makeF16();

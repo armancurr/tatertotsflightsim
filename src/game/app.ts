@@ -17,6 +17,7 @@
  *   ?tod=0..3                                time-of-day preset
  *   ?pause=1                                 start paused (the world still streams and renders)
  *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
+ *   ?aircraft=c172rg|f16                     which aircraft to fly (src/fleet)
  */
 import * as THREE from 'three';
 import { CONFIG, FT_TO_M } from '../config';
@@ -25,8 +26,8 @@ import { createInitialState, createApproachState, approachControls, createTrimme
 import { createEnvironment } from '../world/environment';
 import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
-import { createAircraft } from '../aircraft';
 import type { AircraftVisualState } from '../aircraft/types';
+import { FLEET, getAircraftDef, type AircraftDef, type AircraftModelHandle } from '../fleet';
 import { createInputManager } from '../input/inputManager';
 import { createControlState, updateControls, resetControls, type SimAction } from '../input/controlSystem';
 import { createCameraRig, setCameraMode, nextCameraMode, snapCamera, updateCameraRig, shakeTarget, type CameraRigState } from '../camera/cameraRig';
@@ -69,7 +70,10 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   // ── World, sky, aircraft ──────────────────────────────────────────────────
   const env = createEnvironment();
   const atmosphere = createAtmosphere(renderer, scene, { groundHeight: (x: number, z: number) => env.groundHeight(x, z) });
-  const aircraft = createAircraft({ quality: 'high' });
+  // The aircraft being flown: its def carries the physics/camera config (`ac`) and the model factory.
+  let def: AircraftDef = getAircraftDef(params.get('aircraft'));
+  let ac = def.config;
+  let aircraft: AircraftModelHandle = def.createModel();
   scene.add(aircraft.root);
 
   const surfaceHeight = (x: number, z: number) => {
@@ -79,11 +83,11 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   };
 
   // ── Simulation state ──────────────────────────────────────────────────────
-  let state: AircraftState = createInitialState(env);
+  let state: AircraftState = createInitialState(env, ac);
   let prev: AircraftState = state;
   let controlState = createControlState();
   const camParam = params.get('cam') as CameraMode | null;
-  let camRig: CameraRigState = createCameraRig(camParam && CAMERA_MODES.includes(camParam) ? camParam : 'chase');
+  let camRig: CameraRigState = createCameraRig(camParam && CAMERA_MODES.includes(camParam) ? camParam : 'chase', ac);
   let paused = params.get('pause') === '1';
   let timeOfDay = 0;
   const loop = new FixedStepLoop(cfg.sim.fixedDt, cfg.sim.maxSubSteps, cfg.sim.maxFrameDt);
@@ -97,16 +101,59 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   };
   if (params.has('tod')) setTimeOfDay(Number(params.get('tod')));
 
-  // Systems: terrain, water, airport, roads, towns, vegetation, traffic, fx, audio, HUD (auto-discovered).
-  const systems = await createSystems({ renderer, scene, camera, env, hudRoot, aircraft, atmosphere });
+  // Declared before the systems are created: the menu (a system) calls these via ctx.actions.
+  let resetTo: (which: 'runway' | 'approach') => void = () => {};
+  let selectAircraft: (id: string) => void = () => {};
+  const setCamera = (mode: CameraMode) => {
+    camRig = setCameraMode(camRig, mode);
+  };
 
-  const resetTo = (which: 'runway' | 'approach') => {
-    state = which === 'runway' ? createInitialState(env) : createApproachState(env);
+  // Systems: terrain, water, airport, roads, towns, vegetation, traffic, fx, audio, HUD (auto-discovered).
+  const systems = await createSystems({
+    renderer, scene, camera, env, hudRoot, aircraft, atmosphere,
+    actions: {
+      reset: (which = 'runway') => resetTo(which),
+      selectAircraft: (id) => selectAircraft(id),
+      setPaused: (p) => {
+        paused = p;
+      },
+      isPaused: () => paused,
+      setCamera: (m) => setCamera(m),
+      setTimeOfDay: (i) => setTimeOfDay(i),
+      getTimeOfDay: () => timeOfDay,
+      fleet: () => FLEET,
+      currentAircraft: () => def,
+    },
+  });
+
+  resetTo = (which: 'runway' | 'approach') => {
+    state = which === 'runway' ? createInitialState(env, ac) : createApproachState(env, ac);
     prev = state;
-    controlState = resetControls(controlState, which === 'approach' ? approachControls() : undefined);
+    controlState = resetControls(controlState, which === 'approach' ? approachControls(ac) : undefined);
     camRig = snapCamera(camRig);
     loop.reset();
+    aircraft.restoreBreakupParts?.();
     systems.onReset(which);
+  };
+  selectAircraft = (id: string) => {
+    const next = getAircraftDef(id);
+    if (next.id === def.id) return;
+    scene.remove(aircraft.root);
+    aircraft.dispose();
+    def = next;
+    ac = def.config;
+    aircraft = def.createModel();
+    scene.add(aircraft.root);
+    camRig = createCameraRig(camRig.mode, ac);
+    systems.onAircraftChange(def, aircraft);
+    resetTo('runway');
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set('aircraft', def.id);
+      history.replaceState(null, '', u);
+    } catch {
+      /* non-browser (tests) */
+    }
   };
   const teleport = (t: TeleportRequest) => {
     const ground = surfaceHeight(t.x, t.z);
@@ -114,16 +161,15 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     const trimmed = createTrimmedState(
       { altitudeM: ground + agl, iasKt: t.speedKt ?? 95, headingDeg: t.headingDeg ?? 0, x: t.x, z: t.z, gearDown: t.gearDown ?? false, flapsNotch: t.flapsNotch ?? 0 },
       env,
+      ac,
     );
     state = trimmed.state;
     prev = state;
     controlState = resetControls(controlState, trimmed.controls);
     camRig = snapCamera(camRig);
     loop.reset();
+    aircraft.restoreBreakupParts?.();
     systems.onReset('teleport');
-  };
-  const setCamera = (mode: CameraMode) => {
-    camRig = setCameraMode(camRig, mode);
   };
 
   const simApi = installSimApi(window, {
@@ -137,6 +183,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   Object.assign(simApi.object, {
     teleport,
     setTimeOfDay,
+    selectAircraft: (id: string) => selectAircraft(id),
+    fleet: () => FLEET.map((d) => ({ id: d.id, name: d.name, shortName: d.shortName })),
     systems: () => systems.names(),
     debug: () => ({ systems: systems.stats(), timings: systems.timings() }),
   });
@@ -209,7 +257,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     if (!paused) {
       const r = loop.advance(frameDt, (h) => {
         prev = state;
-        state = step(state, controls, h, env);
+        state = step(state, controls, h, env, ac);
       });
       alpha = r.alpha;
     }
@@ -236,6 +284,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.time = clock.time;
     visual.cameraMode = camRig.mode;
     visual.instruments = readings;
+    visual.afterburner = state.engine.afterburner ?? 0;
+    visual.speedBrake = controls.speedBrake ? 1 : 0;
     visual.crashed = state.phase === 'crashed';
     visual.crashAge = state.crash ? Math.max(0, state.time - state.crash.time) : 0;
     aircraft.setVisualState(visual, frameDt);
@@ -255,6 +305,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       { dx: inFrame.mouse.dx, dy: inFrame.mouse.dy, wheel: inFrame.mouse.wheel, dragging: inFrame.mouse.dragging, shake },
       frameDt,
       surfaceHeight,
+      ac,
     );
     camRig = cam.state;
     applyCameraPose(camera, cam.pose);
@@ -264,7 +315,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     focus.copy(aircraft.root.position);
     atmosphere.update(camera, frameDt, focus);
     const fps = fpsStats(fpsMeter);
-    systems.update({ state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings });
+    systems.update({ state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings, def, aircraft });
 
     renderer.render(scene, camera);
 
@@ -279,6 +330,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     simApi.update(buildSimSnapshot({ state, controls, fps: fpsStats(fpsMeter), cameraMode: camRig.mode, paused }));
     simApi.object.render = renderStats;
     simApi.object.timeOfDay = atmosphere.timeOfDayName;
+    simApi.object.aircraft = def.id;
     (simApi.object.perf as Record<string, unknown>).systems = systems.timings();
   };
   renderer.setAnimationLoop(frame);

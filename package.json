@@ -1,9 +1,9 @@
 {
-  "name": "flight-simulator",
+  "name": "taters-flight-sim",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Browser-based 3D flight simulator: a Cessna 172RG over a large procedural world, built with Three.js",
+  "description": "Tater's Flight Sim (Tater Tots Flight Simulator): a browser 3D flight simulator \u2014 fly a Cessna 172 or an F-16 over a procedural world. Three.js + TypeScript.",
   "scripts": {
     "start": "vite --host 127.0.0.1 --port 8092 --strictPort",
     "dev": "vite --host 127.0.0.1 --port 8092 --strictPort",

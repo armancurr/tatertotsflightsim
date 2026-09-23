@@ -10,7 +10,9 @@ const mod: SystemModule = {
   create(ctx) {
     const model = createInstrumentModel();
     const ac = ctx.aircraft;
-    const hud = createHud(ctx.hudRoot, { aircraft: ac.setPanelDrawer ? (ac as { setPanelDrawer(fn: PanelDrawerFn): void }) : undefined });
+    const panelTarget = (m: { setPanelDrawer?(fn: PanelDrawerFn): void }) =>
+      m.setPanelDrawer ? (m as { setPanelDrawer(fn: PanelDrawerFn): void }) : undefined;
+    let hud = createHud(ctx.hudRoot, { aircraft: panelTarget(ac) });
     let readings: HudReadings | null = null;
     let muted = false;
     return {
@@ -33,6 +35,11 @@ const mod: SystemModule = {
           muted = !muted;
           hud.flash(muted ? 'Sound off (M)' : 'Sound on (M)', 'info', 1.5);
         }
+      },
+      onAircraftChange(_def, model) {
+        // Re-create the HUD so the new aircraft's cockpit panel gets the gauge drawer.
+        hud.dispose();
+        hud = createHud(ctx.hudRoot, { aircraft: panelTarget(model) });
       },
       onResize: () => hud.resize(),
       dispose: () => hud.dispose(),
