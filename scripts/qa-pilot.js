@@ -141,6 +141,11 @@
         p.afterburner = false;
         p.maxThrottle = 100;
       }
+      // A conventional (non fly-by-wire) jet — the calibrated A-10 — wants firmer hands in pitch.
+      if (p.jet && 'fbw' in ac) {
+        p.fbw = !!ac.fbw;
+        if (!p.fbw) { p.pitchKp = 0.2; p.pitchKd = 0.06; }
+      }
       const stall = fin(lim.vsoKt);
       if (key === 'a10' && stall > 0) p.approachKt = Math.max(p.approachKt, Math.round(stall * 1.3));
     }
@@ -500,7 +505,10 @@
         r = await fly(
           (x) => {
             if (!flapsUp && x.airspeed > flapsUpKt && fin(x.flapsNotch) > 0) { flapsUp = true; flapsTo(0); }
-            const pitch = clamp(x.pitch + (x.airspeed - P.climbKt) * 0.15, 4, P.climbPitchMaxDeg);
+            // Initial climb at V2-ish (Vr + 25) until 500 ft, then the aircraft's climb speed; never below the rotation attitude − 2° down low.
+            const low = x.altitudeAGL < P.gearOffsetFt + 500;
+            const vT = low ? Math.min(P.climbKt, P.vrKt + 25) : P.climbKt;
+            const pitch = clamp(x.pitch + (x.airspeed - vT) * 0.15, low ? P.rotatePitchDeg - 2 : 4, P.climbPitchMaxDeg);
             return { pitch, roll: rollFor(x, courseDeg, 10), thr: climbThr };
           },
           (x) => x.altitudeAGL > (o.untilAglFt ?? 500),
