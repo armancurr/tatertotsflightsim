@@ -100,6 +100,13 @@ export interface FbwConfig {
   pitchZeta: number;
   /** Roll-rate response time constant, s. */
   rollTau: number;
+  /**
+   * Roll-command shaping (optional): the commanded roll acceleration is limited to rollAccelDeg (deg/s²)
+   * while the rate builds and rollStopAccelDeg while it is taken off — a tap gives a modest bank change,
+   * a held stick builds to the full rate over ~maxRollRateDeg / rollAccelDeg seconds, releases stop crisply.
+   */
+  rollAccelDeg?: number;
+  rollStopAccelDeg?: number;
   /** Yaw loop (sideslip → 0, turn coordination): natural frequency (rad/s) and damping. */
   yawOmega: number;
   yawZeta: number;
@@ -1093,21 +1100,34 @@ export const CONFIG = {
        * Raymarched clouds (render.cloudMode 'volumetric'): extinction at full density (1/m), erosion of the
        * base shape by the shape (150–600 m lobes) and detail (25–200 m billows) noise, light calibration of
        * the multiple-scattering approximation, max march distance (m), weather-map resolution (texels per
-       * tile side) and the temporal accumulation weight of each new frame.
+       * tile side), distance-field resolution (empty-space skipping), the distance by which the detail
+       * noise has faded out (m), and the weight of each freshly marched sample (every pixel is re-marched
+       * every 4th frame, checkerboard) against its reprojected history.
+       * Lighting: dual-lobe phase (forward g = silver lining when backlit, back lobe), "powder" darkening
+       * of thin sun-facing edges seen down-sun, and how much sky light the column above takes away.
        */
       volumetric: {
-        sigma: 0.05,
+        sigma: 0.08,
         shapeErosion: 0.85,
-        detailErosion: 0.35,
-        sunScale: 8,
+        detailErosion: 1.0,
+        /** Eroded density × this, saturated: crisp cauliflower surfaces instead of cotton-wool gradients. */
+        edgeSharpness: 5,
+        /** Detail-noise period (m): its Worley billows are ½, ¼, ⅛ of it. */
+        detailPeriod: 180,
+        /** The shape noise displaces the weather lookup by up to this (m): cloud sides wander instead of rising as vertical walls. */
+        sideWarp: 150,
+        sunScale: 2.5,
         ambientScale: 1,
         maxDistance: 50000,
         weatherSize: 2048,
-        temporalAlpha: 0.12,
+        distanceSize: 1024,
+        detailDistance: 10000,
+        temporalAlpha: 0.3,
+        lighting: { forwardG: 0.8, backG: -0.3, backWeight: 0.3, powder: 0.6, ambientOcclusion: 2.5, diffusion: 0.12, diffusionBase: 0.12 },
       },
     },
     /** Cloud shadows on every material (fog-chunk override): strength = 1 − brightness in full shadow; map texels per tile side. */
-    cloudShadows: { enabled: true, strength: 0.42, size: 1024 },
+    cloudShadows: { enabled: true, strength: 0.6, size: 2048 },
     /** High thin cirrus wisps drawn in the sky shader. */
     cirrus: { altitude: 9000, coverage: 0.45, opacity: 0.55, scale: 1 / 45000 },
     /** Apparent sun radius (the real sun is 0.2666°). */
@@ -1153,10 +1173,13 @@ export const CONFIG = {
      * Clouds: 'volumetric' (raymarched, falls back to billboards automatically when over budget),
      * 'billboard' (instanced puff sprites) or 'off'. URL override: ?clouds=volumetric|billboard|off.
      */
-    // Volumetric is opt-in until its pass fits the budget (measured 3–5 ms at 0.5 res on the M2 Max; see RESUME/report).
-    cloudMode: 'billboard' as 'volumetric' | 'billboard' | 'off',
-    /** Volumetric cloud buffer size per axis relative to the CSS resolution (0.5 = quarter the pixels). */
-    cloudResolution: 0.5,
+    cloudMode: 'volumetric' as 'volumetric' | 'billboard' | 'off',
+    /**
+     * Volumetric cloud buffer size per axis relative to the CSS resolution (0.75 → 1080×675 at 1440×900; one pixel
+     * of every 2×2 block is re-marched per frame). GPU-synchronised cost on the M2 Max: ~0.3 ms at 0.5, ~0.5 ms at 0.75,
+     * ~0.7 ms at 1.0 (window.__render.benchClouds()).
+     */
+    cloudResolution: 0.75,
     /** GPU ms the volumetric cloud pass may take before the budget controller degrades it. */
     cloudBudgetMs: 2.5,
   },
@@ -1289,10 +1312,97 @@ export const CONFIG = {
       /** Exterior views: full level within this distance (a 15 m airframe, a much louder source than the Cessna). */
       refDistanceM: 25,
     },
+    /**
+     * A-10C / 2 × GE TF34-GE-100A high-bypass turbofans (aircraft sound 'turbofan'): the famous
+     * "Hog whistle" is the fan's blade-pass tone (28 blades × N1), over a soft low roar; no afterburner.
+     * `state.engine.rpm` is the core speed N2 in % (as for the F-16).
+     */
+    turbofan: {
+      /** Fan (N1) and core (N2) at 100 %, rpm; fan blades; core compressor stage whose blade-pass is the faint high whine. */
+      fanMaxRpm: 7365,
+      fanBlades: 28,
+      coreMaxRpm: 17800,
+      coreBlades: 27,
+      /** N1 % = 100 × ((N2 % − fanStartCorePct) / (100 − fanStartCorePct))^fanExponent (≈ 35 % N1 at 70 % N2 ground idle). */
+      fanStartCorePct: 50,
+      fanExponent: 1.15,
+      idleCorePct: 70,
+      /** Overall level (a high-bypass fan is much quieter than the F-16's jet) and in the cockpit (canopy + helmet). */
+      volume: 1.5,
+      cockpitGain: 0.5,
+      /** Channel levels before engineVolume × volume. */
+      whistle: 0.2,
+      whistle2: 0.04,
+      core: 0.035,
+      roar: 0.3,
+      rumble: 0.28,
+      intake: 0.08,
+      ecs: 0.035,
+      starter: 0.08,
+      refDistanceM: 25,
+    },
+    /**
+     * Combat sound (src/audio/combat.ts): the gun (GAU-8/A "BRRRT", M61A1 "brrrp"), 30 mm impact
+     * crackle, missile launch + motor, explosions and cook-offs. Everything heard from a distance
+     * arrives with the speed-of-sound delay (distance / speedOfSoundMs), air absorption (a low-pass
+     * falling with distance) and distance attenuation.
+     */
+    combat: {
+      /** Level of the combat bus (into the master: mute, pause, compressor, limiter). */
+      volume: 1,
+      speedOfSoundMs: 343,
+      /** Longest propagation delay modelled (farther sources play at this delay, attenuated), s. */
+      maxDelayS: 10,
+      /** Full level within refDistanceM, then (ref/d)^distanceExponent. */
+      refDistanceM: 30,
+      distanceExponent: 1,
+      /** Air absorption: the low-pass cutoff halves every absorptionHalfM, between minCutoffHz and maxCutoffHz. */
+      absorptionHalfM: 450,
+      maxCutoffHz: 16000,
+      minCutoffHz: 220,
+      /** The canopy: exterior combat sounds heard in the cockpit go through this low-pass at this level. */
+      canopyCutoffHz: 1400,
+      canopyGain: 0.5,
+      gun: {
+        /** Level of the burst outside (at refDistanceM) and in the cockpit. */
+        exterior: 1.25,
+        cockpit: 1.1,
+        /** Blast pulse train (the "buzz-saw"), its low-passed chest thump, the torn noise of each shot. */
+        pulse: 0.28,
+        thump: 0.85,
+        thumpHz: 150,
+        tear: 0.55,
+        tearHz: 1300,
+        /** Cockpit only: low growl (pulse → low-pass), feed/link clatter. */
+        growl: 0.7,
+        growlHz: 420,
+        clatter: 0.1,
+        /** Barrel drive whine (hydraulic motors + gears) from 0 to full spin, Hz, and its level (cockpit; ×0.3 outside). */
+        whineHz: [220, 1150] as [number, number],
+        whine: 0.08,
+        /** Lowest firing rate as a fraction of the full rate while the barrels spin up (rounds fire from the first turn). */
+        minRateFraction: 0.2,
+        /** Timbre per calibre: the 20 mm M61A1 is lighter and higher than the 30 mm GAU-8/A. */
+        smallCaliberMm: 25,
+        smallThump: 0.5,
+        smallTearHz: 2100,
+      },
+      /** 30 mm impacts: pops per second at most (the rest thicken the crackle), and their level. */
+      impacts: { maxPerS: 45, level: 0.55 },
+      missile: { launch: 0.9, motor: 0.55, motorHz: 900 },
+      /** Explosions: Maverick detonation size 1; a tank cook-off ~1.2. Rumble tail length grows with distance. */
+      boom: { level: 1.1, rumbleS: 1.6, farRumbleS: 3.2, maxPerS: 8 },
+    },
   },
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────
   hud: {
+    /**
+     * On-screen G meter (every aircraft): a round accelerometer with max/min tell-tales and red marks
+     * at the aircraft's own limits. Size and top-left position in CSS px; needle smoothing, s;
+     * caution from this fraction of the limit; redraws per second.
+     */
+    gMeter: { size: 112, left: 16, top: 84, tau: 0.06, cautionFraction: 0.8, redrawHz: 30 },
     /** Vertical speed indicator lag time constant, seconds (real VSIs lag). */
     vsiLagTau: 0.8,
     /** Instrument needle smoothing time constant, seconds. */
@@ -1365,6 +1475,60 @@ export const CONFIG = {
       /** Boresight (gun cross) height as a fraction of the HUD box. */
       boresightY: 0.34,
     },
+    /**
+     * Weapons HUD (src/ui/weaponsHud.ts + src/game/systems/weaponsHud.ts), for aircraft that carry
+     * weapons (A-10C, F-16C; the Cessna shows nothing): gun cross, gun CCIP pipper with its range
+     * arc, the Maverick seeker circle and lock box, stores/ammo/kills, the range cue, and the
+     * Maverick seeker picture bottom right. Symbols over the world are projected with the camera, so
+     * they sit on the ground/target in every view; drawn in the jet HUD's green (hud.jet.color).
+     */
+    weapons: {
+      /** Gun cross: a point this far out along the gun line is projected (m) — no parallax from the chase camera at firing range. */
+      gunCrossRangeM: 1220,
+      /** Gun line this far below the fuselage datum (deg) gets its own gun cross in the cockpit (the A-10's 2°); the jet HUD then drops its fixed cross. */
+      separateGunCrossAboveDeg: 0.5,
+      /** CCIP pipper: the range arc is full at this slant range (4,000 ft, the GAU-8's max effective range) and "IN RNG" shows inside it, m. */
+      gunInRangeM: 1219,
+      /** Pipper radius at a 900 px tall viewport, px (scales with the height, min 12). */
+      pipperRadiusPx: 17,
+      /** Range cue ("RANGE 7.2 km" + caret on the heading tape + steerpoint) while the target range is farther than this, m. */
+      rangeCueBeyondM: 3000,
+      /** Hollow diamonds over live vehicles within targetMarkerRangeM (a targeting-pod style cue — fun, on by default). */
+      targetMarkers: true,
+      targetMarkerRangeM: 6000,
+      maxTargetMarkers: 24,
+      /** HUD messages ("NO LOCK", "RIFLE", "LOCK LOST") stay up, s; LOCK and "GUN 0" flash at, Hz. */
+      messageS: 1.6,
+      flashHz: 2.5,
+      /** Kill toasts ("T-72B destroyed — GAU-8"), s. */
+      killToastS: 3.5,
+      /** Ammunition label after the round count, by gun-name prefix ("GUN 1150 CM" = combat mix). */
+      ammoLabels: { 'GAU-8': 'CM', M61: 'PGU' } as Record<string, string>,
+      /**
+       * Maverick seeker picture (black-and-white "white-hot" IR) in a bottom-right viewport, while
+       * the seeker tracks/locks, for showAfterLockKeyS after T and showAfterLaunchS after a launch.
+       * Wide FOV while searching, narrow while tracking, narrow ÷ expandFactor ("EXP") once locked.
+       * Rendered at most maxHz (re-blitted every frame); size = widthFrac of the viewport (clamped), 4:3.
+       */
+      seeker: {
+        enabled: true,
+        showAfterLockKeyS: 5,
+        showAfterLaunchS: 6,
+        wideFovDeg: 6,
+        narrowFovDeg: 3,
+        expandFactor: 2,
+        maxHz: 20,
+        widthFrac: 0.22,
+        minW: 240,
+        maxW: 340,
+        maxPixelRatio: 2,
+        /** Also in the cockpit view. */
+        inCockpit: true,
+        /** Near/far planes of the seeker camera, m. */
+        near: 4,
+        far: 40000,
+      },
+    },
     /** Slim branding top bar (logo, name, aircraft picker, menu button): its height in CSS px at 1024 and 1440 px wide. */
     topBar: { height1024: 36, height1440: 40 },
   },
@@ -1399,9 +1563,22 @@ export const CONFIG = {
      */
     fireIntensity: 2.4,
     fireOcclusion: 0.55,
+    /** Sparks/embers: emission × fireIntensity; drawn as streaks over this exposure time (s). */
+    sparkIntensity: 1.5,
+    shutter: 0.02,
+    /** Sprites smaller than this many pixels grow to it with opacity × (size/min)² (far fires stay visible as points). */
+    minPixels: 1.5,
+    /** Smoke self-shadowing strength 0..1 (2-tap density toward the sun). */
+    selfShadow: 0.85,
+    /** Fire light on smoke uses at least this albedo (black smoke still glows orange from below at night). */
+    glowFloor: 0.1,
+    /** Fire light on the smoke above it (linear RGB per unit glow): daylight swamps it, dusk shows the orange underside. */
+    smokeGlow: [0.4, 0.15, 0.035] as [number, number, number],
+    /** Side of the tiling animated-noise texture, px. */
+    noiseSize: 128,
     /** A single point light flickers at the fire (lights the ground and the wreck). Always present (intensity 0 when idle) so no shader recompiles. */
     fireLight: true,
-    fireLightIntensity: 500,
+    fireLightIntensity: 150,
     fireLightDistance: 140,
     /** The white-hot flash of an explosion lights the scene through the same point light (candela at flash level 1). */
     flashLightIntensity: 1600,
@@ -1416,13 +1593,16 @@ export const CONFIG = {
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
       smokeRate: 12,
-      smokeLife: [10, 16] as [number, number],
-      smokeSize: [4, 22] as [number, number],
-      smokeRise: 9.5,
-      smokeBuoyancy: 3.2,
-      smokeBuoyancyTau: 8,
-      /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
-      smokeDrag: 0.35,
+      smokeLife: [20, 32] as [number, number],
+      /** Puff diameter at birth and fully grown (time constant smokeGrowTau s): the plume widens as it rises. */
+      smokeSize: [5, 36] as [number, number],
+      smokeGrowTau: 9,
+      /** Initial rise (m/s) and sustained buoyancy (m/s², decaying with smokeBuoyancyTau s): a column climbs ~200 m. */
+      smokeRise: 8,
+      smokeBuoyancy: 3,
+      smokeBuoyancyTau: 25,
+      /** Horizontal/vertical velocity relaxation toward the wind, 1/s (bends the column downwind). */
+      smokeDrag: 0.28,
       /** Thick oily smoke albedo near the fire (warm-black via smokeTint), lightening with age (×(1 + smokeLighten·t)). */
       smokeAlbedo: 0.04,
       smokeLighten: 2.5,
@@ -1431,10 +1611,22 @@ export const CONFIG = {
       groundFireDuration: 16,
       groundFireRate: 55,
       /** Fires on burning parts: flame licks per second (× intensity, grows with the part's size) and smoke puffs per second. */
-      partFireRate: 26,
-      partSmokeRate: 4,
+      partFireRate: 45,
+      partSmokeRate: 7,
       debrisCount: 30,
       emberCount: 80,
+    },
+    /**
+     * Fires (addFire, crash ground fires): the flame height scale L = radius × (heightPerRadius[0] +
+     * heightPerRadius[1] × intensity) (≤ maxHeight m); flames are a mix of broad bodies, tall
+     * tongues and rolling billows (the rest), each ≤ maxFlameSize m across.
+     */
+    fire: {
+      heightPerRadius: [1.0, 1.0] as [number, number],
+      maxHeight: 7,
+      maxFlameSize: 4.2,
+      bodyShare: 0.4,
+      tongueShare: 0.4,
     },
     touchdown: {
       /** Puffs per main wheel at a feather-light and at a hard touchdown. */
@@ -1473,6 +1665,78 @@ export const CONFIG = {
     },
     /** Subtle FOV widening with airspeed (degrees added to the camera FOV). */
     fov: { startKt: 55, fullKt: 170, maxDeg: 3.5 },
+    /**
+     * Combat effects (src/combat/fx + the combatfx system), driven by the combat events: 30 mm impacts
+     * (dust carpet, HEI sparkle, sparks, splashes, armour sparks + ricochets), Maverick detonations,
+     * vehicle catastrophic explosions + secondaries, and camera shake. Particles go into the fx pools
+     * (FxSim); sparks and ricochets are drawn as glowing streaks (own pool, one draw call).
+     */
+    combat: {
+      seed: 3571,
+      /** Soil (dirt/field/grass/sand/forest): dark ejecta thrown up, then lingering dust that merges into the carpet. */
+      soil: {
+        ejecta: 4,
+        ejectaSpeed: [9, 22] as [number, number],
+        ejectaSize: [1.4, 3] as [number, number],
+        ejectaLife: [0.9, 1.7] as [number, number],
+        puffs: 2,
+        puffSize: [8, 14] as [number, number],
+        puffLife: [8, 14] as [number, number],
+        puffRise: [3, 7] as [number, number],
+        puffAlpha: 0.45,
+      },
+      /** Pavement / rock: sparks + a grey puff + a couple of chips. */
+      hard: { sparks: 5, chips: 2, puffs: 1, puffSize: [2.5, 5] as [number, number], puffLife: [3, 6] as [number, number], puffAlpha: 0.32 },
+      /** Water: tall white splash columns + mist. */
+      water: {
+        column: 5,
+        columnSpeed: [11, 19] as [number, number],
+        columnSize: [1.2, 3] as [number, number],
+        mist: 2,
+        mistSize: [4, 7.5] as [number, number],
+        mistLife: [2.5, 4.5] as [number, number],
+      },
+      /** Armour (surface 'target'): an incendiary flash, white-orange sparks, a wisp of smoke. */
+      armour: { sparks: 9, sparkSpeed: [18, 70] as [number, number], flashSize: [1.8, 3.2] as [number, number], smokeAlpha: 0.35 },
+      /** HEI/API flash chance per impact on soil / hard ground (armour always flashes); flash size (m) and life (s). */
+      flashChanceSoil: 0.3,
+      flashChanceHard: 0.55,
+      flashSize: [1.2, 2.4] as [number, number],
+      flashLife: [0.06, 0.13] as [number, number],
+      /** A round glancing off armour: speed (m/s) and glowing life (s). */
+      ricochet: { speed: [230, 380] as [number, number], life: [0.35, 0.8] as [number, number] },
+      /** Dust albedos (linear). */
+      soilAlbedo: [0.37, 0.31, 0.24] as [number, number, number],
+      sandAlbedo: [0.55, 0.48, 0.37] as [number, number, number],
+      grassAlbedo: [0.34, 0.3, 0.23] as [number, number, number],
+      hardAlbedo: [0.52, 0.51, 0.5] as [number, number, number],
+      snowAlbedo: [0.88, 0.9, 0.93] as [number, number, number],
+      /** AGM-65 detonation: flash, fireball, ground shock ring, dirt column, lingering smoke. Air burst above airBurstM AGL. */
+      missile: {
+        flash: 1.0,
+        fireball: 0.75,
+        ring: 0.85,
+        dirt: 26,
+        dirtSpeed: [14, 34] as [number, number],
+        smokePuffs: 10,
+        smokeSize: [8, 18] as [number, number],
+        smokeLife: [12, 20] as [number, number],
+        airBurstM: 4,
+      },
+      /** Vehicle destroyed: catastrophic explosion size by kind (fireball + flash + debris), secondary pop delay range, s. */
+      destroyed: {
+        size: { tank: 1, ifv: 0.85, apc: 0.8, truck: 0.6, aaa: 0.8 },
+        debris: 14,
+        secondary: [0.3, 1.5] as [number, number],
+        /** Chance of a secondary pop by kind (tanks: the ammunition always cooks off). */
+        secondaryChance: { tank: 1, ifv: 0.8, apc: 0.6, truck: 0.5, aaa: 0.9 },
+      },
+      /** Camera shake: the gun vibrating the airframe (cockpit / outside, × barrel spin), blasts (arrive at d / c, decay). */
+      shake: { gunCockpit: 0.3, gunOutside: 0.13, blastMax: 0.75, blastRefM: 70, blastTau: 0.35, speedOfSoundMs: 343 },
+      /** Glowing streak pool (sparks, ricochets), and delayed events (secondaries, blast shakes) in flight. */
+      streakCapacity: 384,
+      maxPending: 16,
+    },
   },
   /**
    * The crash director (src/crash + src/game/systems/crash.ts): the airframe breaks into rigid
@@ -1558,7 +1822,57 @@ export const CONFIG = {
      * between minDistance and maxDistance from the runway centre, preferring the bearing
      * `bearingDeg` (north of the airport: straight ahead after a runway-36 take-off).
      */
-    range: { bearingDeg: 350, minDistance: 5500, maxDistance: 9000, radius: 900 },
+    range: {
+      bearingDeg: 350,
+      minDistance: 5500,
+      maxDistance: 9000,
+      radius: 900,
+      /** Site search (main thread, cheap): coarse grid step (m), radius of the open patch scored (m), how far off `bearingDeg` it looks (deg) and what that costs (score per deg / per m beyond minDistance). */
+      search: { step: 125, patchRadius: 360, bearingSpanDeg: 45, bearingStepDeg: 3, distanceStep: 250, bearingWeight: 0.006, distanceWeight: 0.00004 },
+      /** Ground a vehicle may stand on: these surfaces, slope ≤ maxSlopeDeg, trees/buildings ≥ clearance m from the hull, ≥ farmClearance m from farm yards, ≥ roadClearance m from road edges (parked vehicles). */
+      ground: { surfaces: ['grass', 'field', 'dirt'] as string[], maxSlopeDeg: 8, clearance: 2.5, farmClearance: 75, roadClearance: 6, cell: 4 },
+      /** The dirt track loop the column drives around: target radius from the site centre (m, tried in order), width (m), A* grid (m). */
+      track: { radii: [300, 380, 240, 450, 200], width: 6, clearance: 2.6, cell: 6, waypoints: 8, minLength: 900 },
+      /** A march column on the track (front first): speed, spacing, braking; halts when one is killed, scatters off the track, then regroups. */
+      convoy: {
+        kinds: ['apc', 'tank', 'tank', 'ifv', 'tank', 'ifv', 'ifv', 'truck', 'truck', 'apc'] as ('tank' | 'ifv' | 'apc' | 'truck' | 'aaa')[],
+        speed: 6.5,
+        spacing: 42,
+        accel: 1.0,
+        brake: 2.5,
+        /** After a kill: react after reactS, scatter up to scatter[1] m off the track (≥ scatter[0]), regroup regroupS after the last kill. */
+        reactS: [1.5, 4] as [number, number],
+        scatter: [14, 32] as [number, number],
+        regroupS: 55,
+        /** Wrecks on the track are bypassed this far to the side, m. */
+        bypass: 7,
+      },
+      /** Tank platoon dug in behind berms, facing the airport; AAA site (ZSU-23-4s in revetments); logistics park. */
+      platoon: { count: 4, spacing: 42 },
+      aaa: { count: 2, spacing: 85 },
+      logistics: { kinds: ['truck', 'truck', 'truck', 'truck', 'truck', 'apc', 'apc'] as ('tank' | 'ifv' | 'apc' | 'truck' | 'aaa')[], spacing: 11 },
+      /** Levels of detail by camera distance (m): full < lod[0] ≤ medium < lod[1] ≤ far box; ±hysteresis fraction. */
+      lod: [420, 1500] as [number, number],
+      lodHysteresis: 0.08,
+      /** Keep vehicles visible over the coarse far terrain mesh (like the roads): world lift k·distance and view-depth pull. */
+      lodLift: 0.0015,
+      depthPull: 0.0012,
+      wreck: {
+        /** T-72 carousel cook-off: chance of the turret toss, how high it flies (m). */
+        tossChance: 0.7,
+        tossHeight: [5, 25] as [number, number],
+        /** Fire on the wreck (s), the smoke column after it (s), sporadic ammunition cook-off (s). */
+        fireS: [30, 90] as [number, number],
+        smokeS: [120, 240] as [number, number],
+        cookOffS: [10, 20] as [number, number],
+        /** How many continuous fx emitters the wrecks may hold (fires + columns); the rest smoulder with cheap puffs. */
+        maxFires: 7,
+        maxColumns: 7,
+        /** The hull settles this much (m) on its burnt suspension; trucks collapse more. */
+        settle: 0.14,
+        truckSettle: 0.38,
+      },
+    },
     /** Vehicle classes (real sizes). Armour multipliers are for the 30 mm API round. */
     targets: {
       tank: { name: 'T-72B', length: 6.95, width: 3.59, height: 2.23, health: 100, armor: { front: 0.05, side: 0.35, rear: 0.6, top: 0.8 }, speed: 8 } as TargetClassConfig,
@@ -1693,7 +2007,11 @@ function makeF16(): AircraftConfig {
       pFactor: 0,
       /** Two 60° petals beside the nozzle. */
       cdSpeedBrake: 0.06,
-      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.0, inducedGain: 0.7 },
+      /**
+       * Wave drag: CD0 × 2.4 at M 1.1 easing to × 2.2 at M 2 (≈ 0.041, NASA TP-1538 order). Was × 2.0 at M 2,
+       * which let the jet reach M 2.38 at 40,000 ft in steady flight (real: M ≈ 2.0; audit in f16-accuracy.test.ts).
+       */
+      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.2, inducedGain: 0.7 },
     },
 
     engine: {
@@ -1848,6 +2166,9 @@ function makeF16(): AircraftConfig {
       pitchOmega: 5,
       pitchZeta: 0.8,
       rollTau: 0.12,
+      /** Held full stick: 300 °/s after ~0.7 s; a 0.3 s keyboard tap ≈ 35° of bank. */
+      rollAccelDeg: 420,
+      rollStopAccelDeg: 1200,
       yawOmega: 3,
       yawZeta: 0.8,
       pedalBetaDeg: 6,
@@ -1923,30 +2244,206 @@ export const F16_AIRCRAFT: AircraftConfig = makeF16();
  * gun's firing barrel sits on the centreline). Twin fins at x = ±2.87 on the tailplane tips.
  * Engine pods on the upper rear fuselage, centred at x = ±1.55, y = +1.1, z = +3.1 … +6.4.
  *
- * FLIGHT MODEL: placeholder (F-16 aero with the A-10 geometry) until src/physics calibrates it.
+ * FLIGHT MODEL (src/physics; calibration table in src/physics/aircraft.ts, tests/physics/a10*.test.ts).
+ * Combat weight 16,000 kg: 11,321 kg empty + ~2,600 kg fuel (of 4,853) + 1,150 rounds of 30 mm
+ * (~800 kg) + 4 × AGM-65D on two LAU-88s (~1,300 kg) + ALQ-131 ECM and Sniper pods (~500 kg). MTOW 23 t.
+ *   Engines   2 × GE TF34-GE-100A, 40.3 kN (9,065 lbf) each, NO afterburner (abDetent = 1: the whole
+ *             lever is idle → military). High-bypass (6.2:1) → strong thrust lapse with speed
+ *             (Bartel & Young: T/T₀ ≈ 1 − 1.05·M + 0.7·M² at BPR 6, plus ~5 % installation loss at low
+ *             speed) and the famously slow spool: idle → 95 % in ~7 s.
+ *   Wing      47.01 m², 17.53 m span, AR 6.54, straight, thick NACA 6716 (root) / 6713 (tip): CLα 4.9/rad,
+ *             CLmax 1.45 at ~17–18° α with the inboard leading-edge slats out (they extend automatically
+ *             near the stall and keep the root flying — their effect is folded into the wide, rounded top
+ *             of the lift curve), a gentle trailing-edge stall (8° break), ~1.5° washout: benign,
+ *             departure-resistant, spins only with pro-spin controls held and recovers when released.
+ *   Flaps     three positions UP / MVR 7° / DN 20° (single-slotted, ΔCL 0.55 at 20°).
+ *   Controls  hydraulic, direct (no fly-by-wire); the pitch and yaw SAS are modelled as strong natural
+ *             damping (cmQ, cnR). Big outboard ailerons: ~100°/s at 250–300 KIAS. Elevator: enough to
+ *             rotate at Vr and flare, and to reach CLmax up to ~320 KIAS (corner speed) — above that a
+ *             hard pull breaks the airframe (7.33 g limit, 11 g ultimate).
+ *   Speed brake  the split-aileron "decelerons" (upper and lower halves open): CD +0.09 at ~60 % open,
+ *             no pitch change.
+ *   Inertia   estimated from the mass distribution (kg·m², ± 20 %):
+ *               roll  ≈ wing 2.3 t over 17.5 m (m·b²/18 ≈ 39,000) + Mavericks and LAU-88s at x ≈ ±4.3 m
+ *                       (~24,000) + pods at x ≈ ±6–7 m (~16,000) + gear pods, engines, wing fuel, fuselage
+ *                       (~8,000)                                                            → 85,000
+ *               pitch ≈ engines 1.3 t at z ≈ +4.8 (29,000) + empennage 0.5 t at z ≈ +8.5 (36,000) +
+ *                       armoured cockpit + avionics 1.1 t at z ≈ −4.5 (23,000) + gun/drum/ammo (10,000) +
+ *                       fuselage structure (~30,000) + wing, fuel, stores (~5,000)          → 130,000
+ *               yaw   ≈ pitch + roll (flat mass distribution) − a little                   → 205,000
+ * Checked against: USAF A-10 fact sheet, T.O. 1A-10C-1 summary numbers, Jane's; see the calibration table.
  */
 function makeA10(): AircraftConfig {
-  const f16 = structuredClone(F16_AIRCRAFT);
+  const c172 = CONFIG.aircraft;
+  const f16 = F16_AIRCRAFT;
   return {
-    ...f16,
     name: 'A-10C Thunderbolt II',
     registration: '80-0281',
+    /** Combat weight (see above), kg. */
+    mass: 16000,
+    inertia: { pitch: 130000, yaw: 205000, roll: 85000 },
     wingArea: 47.01,
     wingSpan: 17.53,
+    /** Mean aerodynamic chord of the tapered outer panels + constant-chord centre section, m. */
     meanChord: 2.73,
+    /** Straight AR 6.5 wing with the fuselage, nacelle and gear-pod interference. */
+    oswald: 0.78,
+
+    aero: {
+      /** Cambered 16 %-thick section: zero-lift α ≈ −1.5° body (level fuselage in cruise). */
+      cl0: 0.125,
+      clAlpha: 4.9,
+      /** Slats out: CLmax 1.45 at ~17–18°. */
+      stallAlphaDeg: 18,
+      stallAlphaNegDeg: -14,
+      /** Wide rounded top: the lift curve flattens from ~13° (buffet builds long before the break). */
+      stallRoundingDeg: 5,
+      /** Trailing-edge stall of a thick section: lift falls away slowly (~25 % lost 5° past the peak). */
+      stallBreakWidthDeg: 12,
+      flatPlateLift: 1.2,
+      flatPlateDrag: 1.3,
+      /** Loaded: 11 pylons, 4 AGM-65D on LAU-88s, two pods, gun, gear pods, big nacelles. */
+      cd0: 0.047,
+      cdGear: 0.012,
+      /** Single-slotted flaps, 20° (DN). */
+      cdFlapsFull: 0.035,
+      clFlapsFull: 0.55,
+      stallAlphaFlapsShiftDeg: -1,
+      cmFlapsFull: -0.02,
+      cdBeta: 0.5,
+      cyBeta: -0.7,
+      cyRudder: -0.12,
+      /** Conventional, very stable (static margin ≈ 18 %), trimmed near zero at ~250–300 KIAS. */
+      cm0: 0.06,
+      cm0Tail: 0,
+      cmAlpha: -0.9,
+      /** Tail volume 0.69 (10.6 m² × 8.3 m) + the pitch SAS. */
+      cmQ: -18,
+      cmAlphaDot: -6,
+      cmElevator: 0.3,
+      cmTrim: 0.2,
+      /** Outer-panel dihedral. */
+      clBeta: -0.09,
+      clP: -0.45,
+      clR: 0.1,
+      /** Big outboard ailerons (±25°). */
+      clAileron: 0.05,
+      clRudder: 0.012,
+      /** Twin fins on the tailplane tips, big tail arm; cnR includes the yaw SAS. */
+      cnBeta: 0.15,
+      cnP: -0.02,
+      cnR: -0.35,
+      cnAileron: -0.003,
+      cnRudder: 0.06,
+      stripStallBlendDeg: 2,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      wingStrips: 4,
+      washoutDeg: 1.5,
+      /** Thick sections stall from the trailing edge: the strips lose lift gently → weak autorotation. */
+      stripStallBreakWidthDeg: 20,
+      /** Departure-resistant: weak autorotation once stalled. */
+      stripRollGainStalled: 0.5,
+      stripYawGain: 1,
+      /** Ailerons on the outer panels. */
+      aileronSpanStart: 0.55,
+      /** The twin fins sit outboard on the tailplane tips, clear of the fuselage/wing wake. */
+      stallYawDampingLoss: 0.05,
+      stallRudderLoss: 0.05,
+      bodyCrossflowCn: 0.3,
+      postStallFlapLiftFraction: 0.5,
+      stallPitchBreak: -0.06,
+      stallTailBlanking: 0.2,
+      /** Turbofans: nothing blows over the tail, no P-factor. */
+      propwashTail: 0,
+      propwashTailMaxRatio: 1,
+      cmGroundEffect: 0.05,
+      groundEffectLift: 0.15,
+      groundEffectScale: 0.25,
+      pFactor: 0,
+      /** Decelerons ~60 % open. */
+      cdSpeedBrake: 0.09,
+      /** Thick straight wing: drag divergence from M ≈ 0.62 (the 450 KIAS / M 0.75 limits are a wall). */
+      transonic: { machCrit: 0.62, machPeak: 0.85, peakFactor: 3, factorAtMach2: 3, inducedGain: 0 },
+    },
+
     engine: {
-      ...f16.engine,
+      type: 'jet',
       jet: {
-        ...f16.engine.jet!,
-        /** 2 × TF34-GE-100A, 9,065 lbf each; no afterburner (maxThrustN = milThrustN). */
+        /** 2 × TF34-GE-100A, 9,065 lbf each (SL static, uninstalled). */
         milThrustN: 80600,
+        /** No afterburner. */
         maxThrustN: 80600,
         idleThrustN: 4000,
-        /** Both nozzles combined; the nacelles are canted so the thrust line passes just above the CG. */
+        /** The detent is at the stop: the whole lever is idle → military, afterburner never lights. */
+        abDetent: 1,
+        abMin: 0,
+        abLightCore: 1,
+        abRampUpPerSec: 0,
+        abRampDownPerSec: 10,
+        /** Slow: idle → 95 % ≈ 7 s. */
+        spoolUpTauIdle: 5.5,
+        spoolUpTauMil: 1.0,
+        spoolDownTau: 1.8,
+        densityExponent: 0.8,
+        /** High-bypass lapse with speed (see above). */
+        lowSpeedLapse: 1.1,
+        ramDry: 0.75,
+        ramAb: 0,
+        /**
+         * Both nacelles combined. They sit 1.1 m above the CG, canted ~9° nose-down so the thrust line
+         * passes ~0.35 m above the CG: power pitches the nose down only a little.
+         */
         thrustPoint: { x: 0, y: 0.35, z: 6.4 },
       },
+      maxPowerW: 0,
       staticThrustN: 80600,
+      propEfficiency: 1,
+      spoolUpTau: 1,
+      spoolDownTau: 1,
+      idlePower: 0,
+      /** Core speed (N2), %. */
+      idleRpm: 60,
+      maxRpm: 100,
+      /** APU-assisted start, shortened for play, s. */
+      startTime: 8,
+      windmillRpmPerKt: 0.05,
+      crankRpm: 22,
+      rpmTau: 0.6,
+      spinDownTau: 4,
+      windmillDragCoeff: 0,
     },
+
+    flaps: {
+      /** UP / MVR (manoeuvre, take-off) / DN. */
+      notchesDeg: [0, 7, 20],
+      rateDegPerSec: 4,
+      vfeKt: 210,
+      autoWithGearDeg: 0,
+      autoRetractKt: 0,
+    },
+
+    gear: {
+      retractable: true,
+      /** Mains fold forward into the wing pods, nose gear forward into the fuselage. */
+      transitTime: 6,
+      vleKt: 200,
+      vloKt: 200,
+      retractDelay: 1.5,
+      squatSwitch: true,
+    },
+
+    surfaces: {
+      elevatorMaxDeg: 25,
+      aileronMaxDeg: 25,
+      rudderMaxDeg: 25,
+      flapMaxDeg: 20,
+      trimTabMaxDeg: 10,
+      nosewheelSteerMaxDeg: 45,
+    },
+
     geometry: {
       ...f16.geometry,
       length: 16.26,
@@ -1984,7 +2481,87 @@ function makeA10(): AircraftConfig {
         { name: 'cabinRoof', x: 0, y: 1.6, z: -4.0 },
       ],
     },
-    limits: { ...f16.limits, vsoKt: 100, vs1Kt: 115, vrKt: 120, vxKt: 180, vyKt: 210, vaKt: 300, vnoKt: 400, vneKt: 450, gLimitPos: 7.33, gLimitNeg: -3, structuralFailureG: 11, structuralFailureNegG: -5 },
+
+    /** Visual-only (src/aircraft; the A-10 model owner may override). */
+    model: structuredClone(c172.model),
+
+    ground: {
+      /**
+       * Heavy-duty rough-field struts sized for 16 t: static loads ≈ 16 kN nose (the nose leg is 4.85 m
+       * ahead of the CG, the mains only 0.55 m behind it) and 70 kN per main → ~0.08 m / 0.07 m of
+       * compression out of 0.25 m travel; damping ≈ 0.55 × critical in compression (× 3 in rebound).
+       */
+      springMain: 880000,
+      damperMain: 90000,
+      springNose: 230000,
+      damperNose: 22000,
+      rollingFriction: { ...c172.ground.rollingFriction },
+      /** Anti-skid brakes. */
+      brakeFriction: 0.4,
+      lateralFriction: 0.7,
+      frictionSmoothing: 0.25,
+      /** Nosewheel steering (±45°) is for taxiing: it fades out by ~40 kt. */
+      steeringFadeSpeed: 20,
+      steeringMinFraction: 0.1,
+      longitudinalSmoothing: 0.05,
+      bottomOutStiffness: 10,
+      reboundDampingFactor: 3,
+      tailSkidFriction: 0.4,
+    },
+
+    /** Direct hydraulic controls (the SAS is modelled as damping in the aero derivatives). */
+    fbw: null,
+
+    limits: {
+      vsoKt: 100,
+      vs1Kt: 120,
+      vrKt: 120,
+      vxKt: 160,
+      vyKt: 200,
+      /** Corner speed: CLmax gives 7.33 g at ~320 KIAS. */
+      vaKt: 320,
+      vnoKt: 400,
+      vneKt: 450,
+      gLimitPos: 7.33,
+      gLimitNeg: -3,
+      /** Ultimate = 1.5 × limit. */
+      structuralFailureG: 11,
+      structuralFailureNegG: -4.5,
+      /** 450 × 1.12 ≈ 505 KIAS (design dive speed) fails the airframe. */
+      overspeedFailureFactor: 1.12,
+      maxAngularRate: 8,
+    },
+
+    stall: {
+      /** The AoA tone starts well before the break. */
+      warningMarginDeg: 4,
+      recoveryHysteresisDeg: 2,
+    },
+
+    landing: {
+      butterFpm: 150,
+      smoothFpm: 360,
+      firmFpm: 660,
+      /** Rough-field gear: 10 ft/s design sink rate with margin. */
+      hardFpm: 1000,
+      /** 17.5 m span, tips 2 m up. */
+      maxBankDeg: 12,
+      /** Nose gear first. */
+      minPitchDeg: -3,
+      minAirborneTime: 1.5,
+      ditchSpeedKt: 0,
+      scrapeSpeedMs: 3,
+      terrainImpactMs: 8,
+      terrainPenetrationM: 0.3,
+      nearGroundAglM: 40,
+      obstacleCheckAglM: 400,
+    },
+
+    spawn: {
+      runwayStartOffset: 60,
+      /** 3° final from 6 km at 140 kt, gear down, flaps DN (notch 2 = 20°). */
+      approach: { distance: 6000, height: 330, speedKt: 140, flapsNotch: 2, throttle: 0.6, aimPointM: 300 },
+    },
   };
 }
 

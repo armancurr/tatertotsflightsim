@@ -48,6 +48,7 @@ void main() {
 
 const FRAGMENT = /* glsl */ `
 uniform sampler2D tHDR;
+uniform vec2 uTexel;
 uniform vec4 uImmersion;
 uniform vec3 uGrade; // saturation, vignette, dither
 uniform sampler2D tCloudA;
@@ -71,15 +72,8 @@ float linDepth( float d ) {
 	return 2.0 * uDepth.x * uDepth.y / ( uDepth.y + uDepth.x - ndc * ( uDepth.y - uDepth.x ) );
 }
 // Depth-aware upsampling of the cloud buffer: bilinear weights × similarity of the
-// scene distance each cloud texel was marched against to this pixel's distance.
-vec4 cloudComposite( vec2 uv ) {
-	vec3 vd = normalize( vViewDir );
-	float dist = min( linDepth( texture2D( tDepth, uv ).r ) / max( 1e-4, - vd.z ), 1e6 );
-	vec3 rd = mat3( uCamWorld ) * vd;
-	float camY = uCloudOn.w;
-	float entry = 0.0;
-	if ( camY < uCloudOn.y ) entry = rd.y > 1e-5 ? ( uCloudOn.y - camY ) / rd.y : 1e9;
-	else if ( camY > uCloudOn.z ) entry = rd.y < -1e-5 ? ( camY - uCloudOn.z ) / - rd.y : 1e9;
+// scene distance each cloud texel was marched against to the given scene distance.
+vec4 cloudComposite( vec2 uv, float dist, float entry ) {
 	if ( dist <= entry ) return vec4( 0.0, 0.0, 0.0, 1.0 ); // entirely in front of the cloud layer
 	float distKm = dist * 0.001;
 	vec2 p = uv * uCloudSize - 0.5;
@@ -90,28 +84,59 @@ vec4 cloudComposite( vec2 uv ) {
 	float wsum = 0.0;
 	float best = 1e9;
 	vec4 bestA = vec4( 0.0, 0.0, 0.0, 1.0 );
+	float bestCloudKm = 0.0;
 	for ( int k = 0; k < 4; k ++ ) {
 		ivec2 o = ivec2( k & 1, k >> 1 );
 		ivec2 ij = clamp( i0 + o, ivec2( 0 ), mx );
 		vec4 A = texelFetch( tCloudA, ij, 0 );
-		float clipKm = texelFetch( tCloudB, ij, 0 ).g;
+		vec2 B = texelFetch( tCloudB, ij, 0 ).rg;
 		float wb = ( o.x == 1 ? f.x : 1.0 - f.x ) * ( o.y == 1 ? f.y : 1.0 - f.y );
-		float rel = abs( clipKm - distKm ) / max( 1e-4, min( clipKm, distKm ) );
+		float rel = abs( B.g - distKm ) / max( 1e-4, min( B.g, distKm ) );
 		float w = wb * exp( - rel * 25.0 );
 		acc += A * w;
 		wsum += w;
 		if ( rel < best ) {
 			best = rel;
 			bestA = A;
+			bestCloudKm = B.r;
 		}
 	}
-	return wsum > 1e-4 ? acc / wsum : bestA;
+	if ( wsum > 1e-4 ) return acc / wsum;
+	// no texel saw this surface (thin geometry at cloud resolution): borrow the closest one only
+	// if its cloud lies in front of the surface
+	return bestCloudKm < distKm ? bestA : vec4( 0.0, 0.0, 0.0, 1.0 );
+}
+float sceneDist( vec2 uv, float invCos ) {
+	return min( linDepth( texture2D( tDepth, uv ).r ) * invCos, 1e6 );
 }
 void main() {
 	vec3 c = texture2D( tHDR, vUv ).rgb;
 	if ( uCloudOn.x > 0.5 ) {
-		vec4 cl = cloudComposite( vUv );
-		c = c * cl.a + cl.rgb;
+		vec3 vd = normalize( vViewDir );
+		float invCos = 1.0 / max( 1e-4, - vd.z );
+		vec3 rd = mat3( uCamWorld ) * vd;
+		float camY = uCloudOn.w;
+		float entry = 0.0;
+		if ( camY < uCloudOn.y ) entry = rd.y > 1e-5 ? ( uCloudOn.y - camY ) / rd.y : 1e9;
+		else if ( camY > uCloudOn.z ) entry = rd.y < -1e-5 ? ( camY - uCloudOn.z ) / - rd.y : 1e9;
+		float d0 = sceneDist( vUv, invCos );
+		// MSAA edge pixels (the aircraft against clouds) blend a near and a far surface but carry ONE
+		// resolved depth: composite for both the nearest and the farthest depth around and average,
+		// instead of painting the whole pixel with the far clouds (jagged cloud-coloured fringes).
+		float dA = sceneDist( vUv + vec2( uTexel.x, 0.0 ), invCos );
+		float dB = sceneDist( vUv - vec2( uTexel.x, 0.0 ), invCos );
+		float dC = sceneDist( vUv + vec2( 0.0, uTexel.y ), invCos );
+		float dD = sceneDist( vUv - vec2( 0.0, uTexel.y ), invCos );
+		float dN = min( d0, min( min( dA, dB ), min( dC, dD ) ) );
+		float dF = max( d0, max( max( dA, dB ), max( dC, dD ) ) );
+		if ( dF > dN * 1.3 + 1.0 && dF > entry ) {
+			vec4 cn = cloudComposite( vUv, dN, entry );
+			vec4 cf = cloudComposite( vUv, dF, entry );
+			c = 0.5 * ( c * cn.a + cn.rgb ) + 0.5 * ( c * cf.a + cf.rgb );
+		} else {
+			vec4 cl = cloudComposite( vUv, d0, entry );
+			c = c * cl.a + cl.rgb;
+		}
 	}
 	c += lensFlare( vUv );
 	c = mix( c, uImmersion.rgb, uImmersion.a );

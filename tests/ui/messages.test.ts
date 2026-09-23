@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { CONFIG } from '../../src/config';
-import { describeTouchdown, crashText, annunciations, keyLabel, formatFpm, startHint } from '../../src/ui/messages';
+import { describeTouchdown, crashText, annunciations, keyLabel, formatFpm, startHint, killToastText } from '../../src/ui/messages';
+import { A10_WEAPONS, F16_WEAPONS } from '../../src/config';
 import { helpSections } from '../../src/ui/help';
 import { makeReadings, makeTouchdown, arbReadings } from './fixtures';
 
@@ -105,5 +106,23 @@ describe('help', () => {
     const text = JSON.stringify(helpSections());
     expect(text).toMatch(/drag/i);
     expect(text).toMatch(/wheel/i);
+  });
+});
+
+describe('kill toasts', () => {
+  it('"T-72B destroyed — GAU-8" / "BMP-2 destroyed — AGM-65D" / F-16 "M61A1"', () => {
+    expect(killToastText('tank', 'gun', A10_WEAPONS)).toBe('T-72B destroyed — GAU-8');
+    expect(killToastText('ifv', 'missile', A10_WEAPONS)).toBe('BMP-2 destroyed — AGM-65D');
+    expect(killToastText('truck', 'gun', F16_WEAPONS)).toBe('Ural-4320 destroyed — M61A1');
+    expect(killToastText('aaa', 'missile', null)).toBe('ZSU-23-4 Shilka destroyed — Maverick');
+    expect(killToastText('apc', 'gun', null)).toBe('BTR-80 destroyed — gun');
+  });
+
+  it('property: any kind / weapon gives a non-empty line naming the vehicle', () => {
+    fc.assert(fc.property(fc.constantFrom('tank', 'ifv', 'apc', 'truck', 'aaa', 'ufo'), fc.constantFrom('gun', 'missile', 'laser'), (k, w) => {
+      const t = killToastText(k as never, w as never, A10_WEAPONS);
+      expect(t).toMatch(/destroyed — \S/);
+      expect(t.length).toBeLessThan(60);
+    }));
   });
 });

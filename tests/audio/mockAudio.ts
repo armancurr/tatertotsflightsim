@@ -148,6 +148,14 @@ export class MockCompressor extends MockNode {
   }
 }
 
+export class MockDelay extends MockNode {
+  delayTime = new MockParam(0, 'delay.delayTime');
+  constructor(ctx: MockAudioContext, readonly maxDelayTime = 1) {
+    super(ctx, 'delay');
+    if (!(maxDelayTime > 0 && maxDelayTime < 180)) violations.push(`createDelay(${maxDelayTime})`);
+  }
+}
+
 export class MockWaveShaper extends MockNode {
   curve: Float32Array | null = null;
   oversample = 'none';
@@ -221,6 +229,9 @@ export class MockAudioContext {
   }
   createWaveShaper() {
     return new MockWaveShaper(this);
+  }
+  createDelay(max = 1) {
+    return new MockDelay(this, max);
   }
   createAnalyser() {
     return new MockAnalyser(this);

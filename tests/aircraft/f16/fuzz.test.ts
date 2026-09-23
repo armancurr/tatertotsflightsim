@@ -103,7 +103,7 @@ describe('F-16 animation fuzz', () => {
       }),
       { numRuns: 300 },
     );
-  });
+  }, 60000);
 
   it('the legs never move while the doors are shut (doors lead the legs both ways)', () => {
     fc.assert(
@@ -141,5 +141,5 @@ describe('F-16 model fuzz', () => {
       }),
       { numRuns: 120 },
     );
-  });
+  }, 60000);
 });

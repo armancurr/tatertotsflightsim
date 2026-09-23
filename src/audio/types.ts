@@ -1,5 +1,6 @@
 import type { CameraMode, SurfaceType } from '../types';
 import type { EngineSound } from '../fleet/types';
+import type { CombatAudioApi } from './combat';
 
 /** Everything the sound engine needs each frame (see createAudioInputTracker for the adapter from AircraftState). */
 export interface AudioInputs {
@@ -57,15 +58,17 @@ export interface AudioSystem {
   update(a: AudioInputs, dt: number): void;
   setMuted(m: boolean): void;
   readonly muted: boolean;
-  /** Which engine voice plays: the Cessna's O-360 + prop ('piston') or the F-16's F110 turbofan ('jet'). */
+  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'). */
   setEngine(kind: EngineSound): void;
   readonly engine: EngineSound;
   /** An explosion near the wreck (the crash effects' `sim:explosion`); size 0..1, distance from the camera, m. */
   explosion(e: { size?: number; distanceM?: number }): void;
   /** Debris or airframe hitting the ground (`sim:impact`); speed m/s, distance from the camera, m. */
   impact(e: { speed?: number; speedMs?: number; distanceM?: number }): void;
-  /** Silence every crash sound (fire, debris, pending explosions) — the sim was reset. */
+  /** Silence every crash and combat sound (fire, debris, pending explosions, the gun, delayed booms) — the sim was reset. */
   reset(): void;
+  /** Combat sound: the gun, impacts, missiles, explosions (src/audio/combat.ts); no-op before the context exists. */
+  readonly combat: CombatAudioApi;
   /** Output meter (creates the analyser on first use); null before the context exists. */
   meter(): AudioMeter | null;
   /** The AudioContext once created (null before resume() or when WebAudio is unavailable). */
@@ -133,4 +136,18 @@ export interface AudioLevels {
   pendingExplosions: number;
   /** Crash one-shot sources still playing. */
   crashLive: number;
+  // ── A-10 TF34 turbofans (1 while that voice plays; it reuses whineHz = whistle, fanHz = N1 shaft rate…) ──
+  turbofan: number;
+  // ── Combat ──
+  /** Gun gate (1 while rounds leave the barrel), its fundamental (firing rate, Hz), the exterior delay d / c (s). */
+  gun: number;
+  gunHz: number;
+  gunDelayS: number;
+  /** Missile motor level heard (0..1). */
+  motor: number;
+  /** Combat one-shots still playing or scheduled. */
+  combatLive: number;
+  impactsPlayed: number;
+  booms: number;
+  launches: number;
 }

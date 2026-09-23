@@ -39,7 +39,8 @@ export interface AircraftModelHandle {
 }
 
 export type HudStyle = 'steam' | 'jet';
-export type EngineSound = 'piston' | 'jet';
+/** Engine voice: Cessna O-360 + prop, F-16 F110 afterburning jet, A-10 TF34 high-bypass turbofans. */
+export type EngineSound = 'piston' | 'jet' | 'turbofan';
 
 export interface AircraftDef {
   /** Stable id used in URLs (`?aircraft=f16`) and saved settings. */

@@ -238,6 +238,7 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
       K.hyd.set(hydLevel, t, 0.1);
 
       L.jet = 1;
+      L.turbofan = 0;
       L.corePct = m.corePct;
       L.whineHz = whineHz;
       L.fanHz = jetFanHz(m.corePct) * dop;
