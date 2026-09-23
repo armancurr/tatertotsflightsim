@@ -108,13 +108,14 @@ const SILENT: JetMix = {
   corePct: 0, whine: 0, fan: 0, roar: 0, rumble: 0, abRumble: 0, abTear: 0, crackle: 0, intake: 0, ecs: 0, starter: 0, brightness: 0,
 };
 
-/** Relative loudness of every jet channel, each 0..1. Monotone in power and afterburner. */
-export function jetMix(a: JetMixInput): JetMix {
-  if (a.crashed) return { ...SILENT };
+/** Relative loudness of every jet channel, each 0..1. Monotone in power and afterburner. Writes into `out` when given (no allocation). */
+export function jetMix(a: JetMixInput, out?: JetMix): JetMix {
+  const o = out ?? { ...SILENT };
+  if (a.crashed) return Object.assign(o, SILENT);
   const running = !!a.engineRunning;
   let core = clamp(num(a.corePct), 0, MAX_CORE_PCT);
   if (running && !a.starting) core = Math.max(core, J.idleCorePct);
-  if (core <= 0 && !a.starting) return { ...SILENT };
+  if (core <= 0 && !a.starting) return Object.assign(o, SILENT);
   const p = running ? clamp01(a.power) : 0;
   const ab = running ? clamp01(a.afterburner) : 0;
   const fan = jetFanPct(core);
@@ -124,20 +125,19 @@ export function jetMix(a: JetMixInput): JetMix {
   const buzz = running ? clamp01(0.2 + 0.8 * smoothstep(55, 98, fan)) : 0.25 * spool;
   const roar = running ? clamp01(0.2 + 0.8 * Math.pow(p, 1.3) + 0.15 * ab) : 0;
   const rumble = running ? clamp01(0.25 + 0.75 * Math.pow(p, 1.1)) : 0;
-  return {
-    corePct: core,
-    whine,
-    fan: clamp01(buzz * spool),
-    roar,
-    rumble,
-    abRumble: Math.pow(ab, 0.7),
-    abTear: Math.pow(ab, 0.9),
-    crackle: ab > 0 ? clamp01(Math.pow(ab, 0.8)) : 0,
-    intake: clamp01(spool * (0.35 + 0.65 * fan / 100)),
-    ecs: running ? 1 : 0,
-    starter: a.starting ? 1 : 0,
-    brightness: clamp01(0.2 * aboveIdle + 0.6 * p + 0.2 * ab),
-  };
+  o.corePct = core;
+  o.whine = whine;
+  o.fan = clamp01(buzz * spool);
+  o.roar = roar;
+  o.rumble = rumble;
+  o.abRumble = Math.pow(ab, 0.7);
+  o.abTear = Math.pow(ab, 0.9);
+  o.crackle = ab > 0 ? clamp01(Math.pow(ab, 0.8)) : 0;
+  o.intake = clamp01(spool * (0.35 + (0.65 * fan) / 100));
+  o.ecs = running ? 1 : 0;
+  o.starter = a.starting ? 1 : 0;
+  o.brightness = clamp01(0.2 * aboveIdle + 0.6 * p + 0.2 * ab);
+  return o;
 }
 
 /** Low-pass cutoff of the roar, Hz: opens with power, more with the afterburner. */
@@ -156,12 +156,12 @@ export interface JetDirectivity {
  * Directivity from `aft` = cos(angle between the tail direction and the camera), +1 behind the tail,
  * −1 ahead of the nose. Jet noise peaks behind; compressor/fan tones ahead and abeam.
  */
-export function jetDirectivity(aft: number): JetDirectivity {
+export function jetDirectivity(aft: number, out?: JetDirectivity): JetDirectivity {
   const c = clamp(num(aft), -1, 1);
-  return {
-    aft: 0.45 + 0.55 * smoothstep(-0.5, 0.85, c),
-    fore: 0.4 + 0.6 * smoothstep(0.7, -0.85, c),
-  };
+  const o = out ?? { aft: 1, fore: 1 };
+  o.aft = 0.45 + 0.55 * smoothstep(-0.5, 0.85, c);
+  o.fore = 0.4 + 0.6 * smoothstep(0.7, -0.85, c);
+  return o;
 }
 
 /** The afterburner lights: its level crosses the light-off threshold upwards. */

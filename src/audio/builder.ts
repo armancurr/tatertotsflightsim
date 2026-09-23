@@ -4,7 +4,7 @@
  * AudioParam that is only re-targeted when its target actually changes (no automation flood, no
  * zipper noise: every move is a setTargetAtTime).
  */
-import { fourierSeries, noiseSamples, type NoiseKind } from './waves';
+import { fourierSeries, noiseSamples, type FourierSeries, type NoiseKind } from './waves';
 import type { EngineSound } from '../fleet/types';
 import type { AudioInputs, AudioLevels } from './types';
 import type { OneShotKit } from './oneshots';
@@ -30,12 +30,18 @@ export interface Builder {
   osc(type: OscillatorType | PeriodicWave, f: number): OscillatorNode;
   /** A looping noise source started at a random offset. */
   loop(buf: AudioBuffer, rate?: number): AudioBufferSourceNode;
-  /** PeriodicWave from one period of samples. */
-  wave(samples: Float32Array, harmonics: number): PeriodicWave;
+  /**
+   * PeriodicWave from one period of samples. With a `key`, the Fourier coefficients are computed once
+   * per page (switching aircraft rebuilds voices; the waveforms never change).
+   */
+  wave(samples: Float32Array | (() => Float32Array), harmonics: number, key?: string): PeriodicWave;
   /** Connect in series; returns the last node. */
   chain(...ns: AudioNode[]): AudioNode;
   knob(p: AudioParam, eps?: number): Knob;
 }
+
+/** Fourier coefficients of the fixed waveforms, by key (see Builder.wave). */
+const WAVES = new Map<string, FourierSeries>();
 
 export function createBuilder(ctx: BaseAudioContext, rnd: () => number): Builder {
   const nodes: AudioNode[] = [];
@@ -79,8 +85,16 @@ export function createBuilder(ctx: BaseAudioContext, rnd: () => number): Builder
       sources.push(s);
       return s;
     },
-    wave(samples, harmonics) {
-      const w = fourierSeries(samples, harmonics);
+    wave(samples, harmonics, key) {
+      const make = () => fourierSeries(typeof samples === 'function' ? samples() : samples, harmonics);
+      let w: FourierSeries;
+      if (key) {
+        const k = `${key}/${harmonics}`;
+        w = WAVES.get(k) ?? make();
+        WAVES.set(k, w);
+      } else {
+        w = make();
+      }
       return ctx.createPeriodicWave(w.real, w.imag, { disableNormalization: false });
     },
     chain(...ns) {

@@ -34,9 +34,9 @@ export function createPistonVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd:
   engineBus.connect(outE);
 
   // ── Engine ──
-  const engineWave = b.wave(engineCycleWaveform(2048), 72);
-  const propWave = b.wave(propWaveform(1024), 40);
-  const pulseWave = b.wave(pulseWaveform(1024, 0.3), 24);
+  const engineWave = b.wave(() => engineCycleWaveform(2048), 72, 'engineCycle');
+  const propWave = b.wave(() => propWaveform(1024), 40, 'prop');
+  const pulseWave = b.wave(() => pulseWaveform(1024, 0.3), 24, 'pulse0.3');
   const cycleOsc = osc(engineWave, 0);
   const tone = gain(0);
   const toneLP = filter('lowpass', 400, 0.9);
@@ -127,7 +127,7 @@ export function createPistonVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd:
     flap: knob(flap.gain),
   };
 
-  let prev = { gear: false, starting: false };
+  const prev = { gear: false, starting: false };
 
   return {
     kind: 'piston',
@@ -194,7 +194,8 @@ export function createPistonVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd:
           shots++;
         }
       }
-      prev = { gear: !!a.gearMoving && !crashed, starting: !!a.starting };
+      prev.gear = !!a.gearMoving && !crashed;
+      prev.starting = !!a.starting;
       return shots;
     },
     retire(t, onGone) {

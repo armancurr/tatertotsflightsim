@@ -26,6 +26,18 @@ const A = CONFIG.audio;
 const J = A.jet;
 const fin = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 
+/** The afterburner crackle loop's samples, computed once per length/sample rate. */
+const CRACKLE = new Map<string, Float32Array>();
+function crackleData(n: number, sampleRate: number): Float32Array {
+  const k = `${n}/${sampleRate}`;
+  let d = CRACKLE.get(k);
+  if (!d) {
+    d = crackleSamples(n, 97, 180 / sampleRate);
+    CRACKLE.set(k, d);
+  }
+  return d;
+}
+
 export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: () => number): EngineVoice {
   const b = createBuilder(ctx, rnd);
   const { gain, filter, osc, loop, chain, knob } = b;
@@ -43,7 +55,7 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
   aft.connect(bus);
 
   // ── Turbine whine ──
-  const whineWave = b.wave(whineWaveform(512), 4);
+  const whineWave = b.wave(() => whineWaveform(512), 4, 'whine');
   const w1 = osc(whineWave, 0);
   const w2 = osc('sine', 0);
   const w3 = osc('sine', 0);
@@ -56,12 +68,12 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
   chain(whineAM, whine, fore);
 
   // ── Shaft + fan buzz-saw ──
-  const buzz = b.wave(buzzsawWaveform(2048, 11), 36);
+  const buzz = b.wave(() => buzzsawWaveform(2048, 11), 36, 'buzz11');
   const shaftOsc = osc(buzz, 0);
   const shaftLP = filter('lowpass', 2200, 0.7);
   const shaft = gain(0);
   chain(shaftOsc, shaftLP, shaft, fore);
-  const fanOsc = osc(b.wave(buzzsawWaveform(2048, 23), 36), 0);
+  const fanOsc = osc(b.wave(() => buzzsawWaveform(2048, 23), 36, 'buzz23'), 0);
   const fanLP = filter('lowpass', 1200, 0.8);
   const fan = gain(0);
   chain(fanOsc, fanLP, fan, fore);
@@ -90,7 +102,7 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
   const abTear = gain(0);
   chain(tearSrc, tearBP, abTear, aft);
   const crackleBuf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 2.3), ctx.sampleRate);
-  crackleBuf.getChannelData(0).set(crackleSamples(crackleBuf.length, 97, 180 / ctx.sampleRate));
+  crackleBuf.getChannelData(0).set(crackleData(crackleBuf.length, ctx.sampleRate));
   const crackleSrc = loop(crackleBuf);
   const crackleHP = filter('highpass', 380, 0.7);
   const crackle = gain(0);
@@ -163,6 +175,11 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
   };
 
   let prevAb = Number.NaN;
+  // Reused per-frame scratch (no allocation in update).
+  const mixIn = { corePct: 0, power: 0, afterburner: 0, engineRunning: false, starting: false, crashed: false };
+  const m = jetMix(mixIn);
+  const extDir = jetDirectivity(0);
+  const COCKPIT_DIR = { aft: 0.75, fore: 1 };
 
   return {
     kind: 'jet',
@@ -171,8 +188,14 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
       const { t, crashed } = f;
       const tau = f.tau;
       const ab = a.engineRunning ? fin(a.afterburner, 0) : 0;
-      const m = jetMix({ corePct: jetCorePct(fin(a.rpm, 0)), power: a.power, afterburner: ab, engineRunning: !!a.engineRunning, starting: !!a.starting, crashed });
-      const dir = f.exterior ? jetDirectivity(fin(a.aft, 0)) : { aft: 0.75, fore: 1 };
+      mixIn.corePct = jetCorePct(fin(a.rpm, 0));
+      mixIn.power = a.power;
+      mixIn.afterburner = ab;
+      mixIn.engineRunning = !!a.engineRunning;
+      mixIn.starting = !!a.starting;
+      mixIn.crashed = crashed;
+      jetMix(mixIn, m);
+      const dir = f.exterior ? jetDirectivity(fin(a.aft, 0), extDir) : COCKPIT_DIR;
       const dop = f.doppler;
       // A crash kills the engine: let the turbine wind down (slower pitch and level fall) instead of cutting.
       const spoolTau = crashed ? 0.6 : tau;

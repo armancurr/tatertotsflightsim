@@ -156,7 +156,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   chain(scrubSrc, scrubBP, scrub, acBus);
 
   // ── Stall horn: reed tone with a little vibrato → band-pass → nasal formant ──
-  const hornOsc = osc(b.wave(hornWaveform(1024), 16), A.stallHornHz);
+  const hornOsc = osc(b.wave(() => hornWaveform(1024), 16, 'horn'), A.stallHornHz);
   chain(osc('sine', 5.5), gain(10)).connect(hornOsc.frequency);
   const hornBP = filter('bandpass', A.stallHornHz, A.stallHornQ);
   const hornNasal = filter('peaking', A.stallHornHz * 2, 3, 7);
@@ -164,11 +164,11 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   chain(hornOsc, hornBP, hornNasal, horn, cabin);
 
   // ── Gear warning horn: electronic tone through a small cabin speaker, beeped by a soft-edged gate ──
-  const ghOsc = osc(b.wave(beepWaveform(1024), 14), A.gearHornHz);
+  const ghOsc = osc(b.wave(() => beepWaveform(1024), 14, 'beep'), A.gearHornHz);
   const ghSpeaker = filter('bandpass', A.gearHornHz * 1.6, 0.6);
   const ghBody = filter('peaking', A.gearHornHz, 2, 4);
   const ghGate = gain(0.5);
-  chain(osc(b.wave(gateWaveform(1024, A.gearHornDuty), 32), A.gearHornRateHz), gain(0.5)).connect(ghGate.gain);
+  chain(osc(b.wave(() => gateWaveform(1024, A.gearHornDuty), 32, `gate${A.gearHornDuty}`), A.gearHornRateHz), gain(0.5)).connect(ghGate.gain);
   const gearHorn = gain(0);
   chain(ghOsc, ghSpeaker, ghBody, ghGate, gearHorn, cabin);
 
@@ -236,6 +236,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   let listenerDist: number = A.refDistanceM;
   let analyser: AnalyserNode | null = null;
   let meterBuf: Float32Array<ArrayBuffer> | null = null;
+  /** Reused per-frame voice context (no allocation in update). */
+  const vf = { t: 0, dt: 0, tau: A.rampTau, exterior: false, doppler: 1, crashed: false, primed: false };
   const explosionOk = createRateLimiter(A.crash.maxExplosionsPerS);
   const impactOk = createRateLimiter(A.crash.maxImpactsPerS);
   const L: AudioLevels = {
@@ -362,7 +364,14 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     const dop = exterior ? dopplerFactor(fin(a.closingSpeedMs, 0)) : 1;
     L.doppler = dop;
     L.aft = clamp(fin(a.aft, 0), -1, 1);
-    L.oneShots += v.update(a, { t, dt: dtRun, tau, exterior, doppler: dop, crashed, primed: primed && !voiceFresh }, L);
+    vf.t = t;
+    vf.dt = dtRun;
+    vf.tau = tau;
+    vf.exterior = exterior;
+    vf.doppler = dop;
+    vf.crashed = crashed;
+    vf.primed = primed && !voiceFresh;
+    L.oneShots += v.update(a, vf, L);
     voiceFresh = false;
 
     // Airflow

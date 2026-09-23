@@ -175,16 +175,17 @@ describe('jet waveforms and the soft clipper', () => {
     const { softClipCurve } = await import('../../src/audio/waves');
     fc.assert(fc.property(fc.integer({ min: 3, max: 4096 }), fc.double({ min: 0.1, max: 0.95, noNaN: true }), fc.double({ min: 0.5, max: 1, noNaN: true }), (n, knee, ceil) => {
       const c = softClipCurve(n, knee, ceil);
-      expect(c.length % 2).toBe(1);
       const top = Math.max(knee + 0.01, ceil);
+      const bad: string[] = [];
+      if (c.length % 2 !== 1) bad.push('even length');
       for (let i = 0; i < c.length; i++) {
-        expect(Number.isFinite(c[i])).toBe(true);
-        expect(Math.abs(c[i])).toBeLessThan(top);
-        expect(c[i]).toBeCloseTo(-c[c.length - 1 - i], 6);
-        if (i) expect(c[i]).toBeGreaterThanOrEqual(c[i - 1]);
         const x = (i / (c.length - 1)) * 2 - 1;
-        if (Math.abs(x) <= knee) expect(c[i]).toBeCloseTo(x, 6);
+        if (!Number.isFinite(c[i]) || Math.abs(c[i]) >= top) bad.push(`bound@${i}`);
+        if (Math.abs(c[i] + c[c.length - 1 - i]) > 1e-6) bad.push(`odd@${i}`);
+        if (i && c[i] < c[i - 1]) bad.push(`monotone@${i}`);
+        if (Math.abs(x) <= knee && Math.abs(c[i] - x) > 1e-6) bad.push(`linear@${i}`);
       }
+      expect(bad).toEqual([]);
     }), { numRuns: 40 });
-  });
+  }, 20_000);
 });

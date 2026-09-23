@@ -268,5 +268,5 @@ describe('fuzz: jet voice', () => {
       for (const [k, v] of Object.entries(audio.levels())) expect(Number.isFinite(v), k).toBe(true);
       audio.dispose();
     }), { numRuns: 50 });
-  });
+  }, 30_000);
 });

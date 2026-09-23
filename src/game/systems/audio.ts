@@ -36,6 +36,8 @@ const mod: SystemModule = {
     const soundOf = (s: unknown): EngineSound => (s === 'jet' ? 'jet' : 'piston');
     const audio = createAudio({ engine: soundOf(ctx.actions?.currentAircraft?.().sound) });
     const track = createAudioInputTracker();
+    // Reused per-frame tracker source (no allocation in update).
+    const src = {} as Parameters<typeof track>[0];
     const cam = { x: 0, y: 0, z: 0, set: false };
     let override: Partial<AudioInputs> | null = null;
 
@@ -67,6 +69,8 @@ const mod: SystemModule = {
         override = p && typeof p === 'object' ? { ...p } : null;
       },
       resume: () => audio.resume(),
+      /** The real-time context: 'running' | 'suspended' | 'closed' | 'none', and its clock (s). */
+      context: () => ({ state: (audio.context as AudioContext | null)?.state ?? 'none', time: audio.context?.currentTime ?? 0 }),
       selfTest: runAudioSelfTest,
       get engine() {
         return audio.engine;
@@ -82,12 +86,16 @@ const mod: SystemModule = {
         cam.y = c.y;
         cam.z = c.z;
         cam.set = true;
-        const inputs = track({
-          state: f.state, controls: f.controls, cameraMode: f.cameraMode, paused: f.paused, dt: f.dt,
-          surface: ctx.env.surfaceAt(p.x, p.z), cameraPosition: c,
-          stallWarning: f.readings?.stallWarning,
-          gearWarning: (f.readings as HudReadings | null)?.gearHorn,
-        });
+        src.state = f.state;
+        src.controls = f.controls;
+        src.cameraMode = f.cameraMode;
+        src.paused = f.paused;
+        src.dt = f.dt;
+        src.surface = ctx.env.surfaceAt(p.x, p.z);
+        src.cameraPosition = c;
+        src.stallWarning = f.readings?.stallWarning;
+        src.gearWarning = (f.readings as HudReadings | null)?.gearHorn;
+        const inputs = track(src);
         audio.update(override ? { ...inputs, ...override } : inputs, f.dt);
       },
       onAction(a) {

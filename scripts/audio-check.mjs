@@ -54,14 +54,15 @@ for (const r of results) {
 }
 
 // ── 2. The real-time context, metered post-limiter ──
-await page.evaluate(() => window.simAudio.resume());
-const state = await page.evaluate(() => window.sim.debug && document.hidden === false ? 'visible' : 'hidden');
-const ctxState = await page.waitForFunction(() => {
-  const l = window.simAudio.levels();
-  return l.master > 0 ? 'running' : null;
-}, null, { timeout: 5000 }).then(() => 'running').catch(() => 'not running');
-console.log(`\n── live AudioContext: ${ctxState} (page ${state}) ──`);
-if (ctxState !== 'running') bad = true;
+const live = await page.evaluate(async () => {
+  await window.simAudio.resume();
+  const a = window.simAudio.context();
+  await new Promise((r) => setTimeout(r, 500));
+  const b = window.simAudio.context();
+  return { state: b.state, advanced: b.time - a.time };
+});
+console.log(`\n── live AudioContext: ${live.state}, clock advanced ${live.advanced.toFixed(3)} s in 0.5 s — metered post-limiter ──`);
+if (live.state !== 'running' || !(live.advanced > 0.3)) bad = true;
 
 /** Force inputs, let them settle, then meter the output for `ms`. */
 async function measure(name, setup, ms = 1200) {
