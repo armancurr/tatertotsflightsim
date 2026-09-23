@@ -2,7 +2,7 @@
 
 # Tater's Flight Sim
 
-*The Tater Tots Flight Simulator.* Fly a **Cessna 172RG** or an **F-16C** in your web browser, over
+*The Tater Tots Flight Simulator.* Fly a **Cessna 172RG**, an **F-16C** or an **A-10C Warthog** in your web browser, over
 a big procedural world of farmland, forests, rivers, a coastline, towns and snow-capped mountains.
 The flight physics are real, so the aircraft can stall and spin. The sky is physically based, and
 every texture, model and sound is generated in code. Nothing is downloaded at runtime, and the
@@ -17,10 +17,16 @@ only runtime dependency is [Three.js](https://threejs.org).
 
 ## Features
 
-- **Two aircraft.** Pick them from the dropdown at the top right. The **Cessna 172RG Cutlass** is a
+- **Three aircraft.** Pick them from the dropdown at the top right. The **Cessna 172RG Cutlass** is a
   forgiving four-seat trainer with retractable gear. The **F-16C Fighting Falcon** is a supersonic
-  fighter with an afterburner, a speed brake and a jet HUD. The fleet registry is built so that
-  more aircraft can be added.
+  fighter with an afterburner, a speed brake, a jet HUD and an M61A1 20 mm gun. The **A-10C
+  Thunderbolt II** ("Warthog") is a slow, tough tank killer built around the 30 mm GAU-8/A Avenger
+  gun, with four AGM-65D Maverick missiles. The fleet registry is built so that more aircraft can
+  be added.
+- **Tank busting.** A range of tanks and other armour sits north of the airport. The weapons HUD
+  gives you a gun cross, a CCIP pipper that shows where your rounds will land (with a range arc and
+  "IN RNG" inside 4,000 ft), a Maverick lock box, your ammunition and kills, and a cue that points
+  to the range. A picture-in-picture Maverick view shows the locked target in black-and-white IR.
 - **Real flight physics** at a fixed 120 steps per second, with lift, drag, thrust and moments.
   The aircraft stall and spin, and the Cessna has P-factor, ground effect, flaps, trim and wheel
   brakes. Landings are graded from *butter* to *hard*.
@@ -95,6 +101,24 @@ about 48 knots, and the STALL horn warns you first. If the gear is up and the po
 **F-16.** Push the throttle past about **90 %** to light the **afterburner**. Rotate at about
 150 knots. <kbd>X</kbd> toggles the **speed brake**. The jet is fast and unforgiving, so keep an
 eye on the angle of attack when you pull hard.
+
+### Tank busting (A-10)
+
+The target range is **north of the airport**: take off from runway 36 and keep going straight. The
+**RANGE** cue on the HUD (a caret on the heading tape and a ▽ on the ground) points to it and shows
+the distance. To start right there, add `?aircraft=a10&spawn=range` to the address.
+
+- **Gun.** Hold <kbd>Q</kbd> (or <kbd>Enter</kbd>) to fire the GAU-8. The gun needs a moment to spin
+  up. Put the **CCIP pipper** (the circle with a dot) on the target and fire when it shows **IN
+  RNG**. That means inside 4,000 ft, where the arc around the pipper starts to unwind. A tank's front
+  armour stops 30 mm rounds, so attack from **above, the side or behind**.
+- **Mavericks.** Point the nose at the vehicles and press <kbd>T</kbd>. The Maverick picks the one
+  nearest the nose; press <kbd>T</kbd> again for the next one. When the box turns solid and **LOCK**
+  flashes, press <kbd>Z</kbd> to launch. The missiles are fire-and-forget and simplified for fun: they
+  fly a scripted path to the target, with no guidance model. The Maverick view in the bottom-right
+  corner shows the target.
+- The HUD counts your rounds, missiles and **kills**, and every kill pops up a message such as
+  "T-72B destroyed — GAU-8".
 
 ## Controls
 

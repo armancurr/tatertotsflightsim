@@ -6,7 +6,7 @@
  *  - gun CCIP pipper: circle + centre dot on the projected impact point, with a range arc that is
  *    full at 4,000 ft and unwinds as the slant range closes, and "IN RNG" inside 4,000 ft;
  *    clamped to the HUD's edge (dashed, dimmed) when the impact point is outside it;
- *  - Maverick: the seeker circle (acquisition cone) around the boresight while the seeker is up, a
+ *  - Maverick: the target-selection circle (T picks the vehicle nearest the nose inside it), a
  *    box on the target whose outline fills with the lock progress, then a solid box + flashing
  *    LOCK, the target type, its slant range (NM, feet inside 1 NM) and "IN RNG";
  *  - hollow diamonds over live vehicles within ~6 km (a targeting-pod cue);
@@ -269,7 +269,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
     }
   }
 
-  // ── Maverick seeker circle (acquisition cone around the boresight) ──
+  // ── Maverick circle: the selection cone around the nose (where T picks targets) ──
   if (msl && f.seekerActive) {
     gunLineDir(dir, f.qx, f.qy, f.qz, f.qw, 0);
     projectPoint(sp, ax + dir.x * 2000, ay + dir.y * 2000, az + dir.z * 2000, f.view, f.proj, W, H);
@@ -277,7 +277,7 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       m.seekerCircle.show = true;
       m.seekerCircle.x = sp.x;
       m.seekerCircle.y = sp.y;
-      m.seekerCircle.r = clamp(Math.tan(clamp(num(msl.acquireConeDeg, 8), 0.5, 40) * DEG) * focal, 8, Math.max(8, H * 0.45));
+      m.seekerCircle.r = clamp(Math.tan(clamp(num(msl.selectConeDeg, 10), 0.5, 40) * DEG) * focal, 8, Math.max(8, H * 0.45));
     }
   }
 
@@ -718,7 +718,7 @@ export interface SeekerOverlay {
   half: number;
   progress: number;
   missiles: number;
-  /** 'WFOV' | 'NFOV' | 'EXP'. */
+  /** Optional top-left label ('' = none). */
   fovLabel: string;
   range: string;
   inRange: boolean;
@@ -726,7 +726,7 @@ export interface SeekerOverlay {
 }
 
 export function createSeekerOverlay(): SeekerOverlay {
-  return { state: 'off', tx: NaN, ty: NaN, half: 12, progress: 0, missiles: 0, fovLabel: 'WFOV', range: '', inRange: false, flashOn: true };
+  return { state: 'off', tx: NaN, ty: NaN, half: 12, progress: 0, missiles: 0, fovLabel: '', range: '', inRange: false, flashOn: true };
 }
 
 const SEEKER_INK = '#f4f7f4';
@@ -829,8 +829,8 @@ export function drawSeekerOverlay(ctx: CanvasRenderingContext2D, w: number, h: n
 
   // Texts: polarity + FOV top-left, stores top-right, state bottom-left, range bottom-right.
   const pad = F * 0.7;
-  text('WHOT', pad, pad + F * 0.2, 'left', 700);
-  text(s.fovLabel, pad, pad + F * 1.4, 'left', 700);
+  // (No sensor-mode labels: the missiles are arcade — this is a game camera with the Maverick look.)
+  text(s.fovLabel, pad, pad + F * 0.2, 'left', 700);
   const n = fin(s.missiles) ? clamp(Math.round(s.missiles), 0, 99) : 0;
   let mt = missilesText[n];
   if (mt === undefined) mt = missilesText[n] = `MAV ×${n}`;
