@@ -360,7 +360,8 @@ export function createTowns(scene: THREE.Scene, opts: TownsOptions): Towns {
       // lit windows from the sun elevation
       if (sunDir) {
         const el = (Math.asin(Math.max(-1, Math.min(1, sunDir.y))) * 180) / Math.PI;
-        const t = Math.max(0, Math.min(1, (el - 2) / 12));
+        // lights come on as the sun nears the horizon: ~80 % of full at +4° (dawn), ~20 % at +9° (golden hour)
+        const t = Math.max(0, Math.min(1, (el - 1) / 11));
         night = 1 - t * t * (3 - 2 * t);
         uniforms.uBldNight.value = night;
       }

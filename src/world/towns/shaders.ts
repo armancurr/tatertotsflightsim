@@ -268,16 +268,17 @@ struct BFac { vec3 alb; float rough; float metal; vec3 emit; float ao; };
 // Interior light colours (linear, unit intensity): warm 2700 K, neutral LED, cool office, a TV's blue.
 const vec3 B_WARM = vec3(1.0, 0.56, 0.24);
 const vec3 B_NEUTRAL = vec3(1.0, 0.78, 0.52);
-const vec3 B_OFFICE = vec3(0.86, 0.9, 1.0);
+const vec3 B_OFFICE = vec3(1.0, 0.9, 0.72);
 const vec3 B_TV = vec3(0.35, 0.5, 1.0);
 /** Emission of a lit window (calibrated for exposure ≈ 2.2: glowing at dusk, invisible in daylight). */
-const float B_LIT = 0.3;
+const float B_LIT = 0.2;
 
-/** Colour and level of one lit room from its hash. */
+/** Colour and level of one lit room from its hash: most rooms dim, a few bright. */
 vec3 bRoomLight(float h, bool office) {
   float k = fract(h * 5.77);
-  vec3 c = office ? (k < 0.7 ? B_OFFICE : B_NEUTRAL) : (k < 0.6 ? B_WARM : k < 0.9 ? B_NEUTRAL : B_TV);
-  return c * B_LIT * (0.35 + 0.9 * fract(h * 29.7));
+  vec3 c = office ? (k < 0.6 ? B_OFFICE : B_NEUTRAL) : (k < 0.6 ? B_WARM : k < 0.9 ? B_NEUTRAL : B_TV);
+  float f = fract(h * 29.7);
+  return c * B_LIT * (0.25 + 1.1 * f * f);
 }
 
 /** Glass of one window: dark interior with curtains, reflective; lit at dusk. */
@@ -490,13 +491,14 @@ BFac bldShade() {
           o.metal = mix(o.metal, 0.1, pier);
           mu *= 1.0 - pier;
         }
-        // interior lights at dusk: runs of lit panels per floor (offices keep some lights on)
-        float runW = mullP * (2.0 + floor(3.0 * bh3(vec3(fi, fi2, rnd * 7.0))));
+        // interior lights at dusk: long runs of a floor (open-plan offices), busier buildings brighter
+        float runW = mullP * (6.0 + floor(10.0 * bh3(vec3(fi, fi2, rnd * 7.0))));
         float rh = bh3(vec3(floor(u / runW), fi, rnd * 91.0 + fi2));
-        float lit = step(rh, night * 0.5) * (1.0 - spandrel) * (lobby ? 0.0 : 1.0);
-        o.emit += bRoomLight(rh * 13.7, true) * lit * (0.7 + 0.4 * ph);
+        float busy = 0.25 + 0.5 * r4;
+        float lit = step(rh, night * busy) * (1.0 - spandrel) * (lobby ? 0.0 : 1.0);
+        o.emit += bRoomLight(rh * 13.7, true) * lit * (0.75 + 0.5 * ph);
         // the lobby glows
-        o.emit += B_NEUTRAL * B_LIT * 0.8 * night * (lobby ? 1.0 : 0.0) * (1.0 - spandrel);
+        o.emit += B_NEUTRAL * B_LIT * 0.35 * night * (lobby ? 1.0 : 0.0) * (1.0 - spandrel);
         vec3 metal = mix(vec3(0.18, 0.19, 0.2), vec3(0.5), step(0.5, r3));
         float frame = max(mu, mt) * 0.85;
         bldJit = (ph - 0.5) * (1.0 - spandrel) * (lobby ? 0.0 : 1.0);
