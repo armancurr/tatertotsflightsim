@@ -1,15 +1,16 @@
-# Flight Simulator — build plan
+# Tater's Flight Sim — build plan
 
 > **Orchestrator prompt** (paste this to resume the build with Claude as AI orchestrator):
 >
-> You are the orchestrator for `/Users/jt/Code/Flight Simulator`, a browser 3D flight
-> simulator (Cessna 172RG, Three.js, TypeScript, Vite, Vitest). The spec is
-> `/Users/jt/Code/coeus/EX_PROMPT_7_FLIGHT_SIM.md`; this PLAN.md holds the architecture,
-> contracts and wave status, RECORD.md holds the build log. Read both, run `npm test`,
+> You are the orchestrator for this repository, Tater's Flight Sim: a browser 3D flight
+> simulator (Cessna 172RG and F-16C, Three.js, TypeScript, Vite, Vitest). The original spec was
+> kept outside the repository; this PLAN.md holds the architecture, contracts and wave status,
+> RECORD.md holds the build log. Read both, run `npm test`,
 > start `npm start` (port 8092) in the background, then continue with the first wave
 > that is not ✅ (start with RESUME.md — it has the current paste-in prompt). Work in waves of up to 10 Opus sub-agents (git worktrees) on file-disjoint tasks,
-> test-first; integrate, fly the sim in the on-screen Chrome window (Playwright MCP),
-> photograph every done line into `qa/screenshots/`, commit after each wave.
+> test-first; integrate, fly the sim headless (`scripts/shot.mjs`, `scripts/qa-pilot.js` —
+> never the owner's everyday Chrome), photograph every done line into `qa/screenshots/`,
+> commit after each wave.
 
 ## Stack
 
@@ -18,7 +19,8 @@
   (typecheck + test + build).
 - No runtime network assets: every texture, model and sound is generated procedurally in
   code (canvas / DataTexture / BufferGeometry / WebAudio). Nothing to 404.
-- `scripts/shot.mjs` — headless Chrome (real GPU via Metal) screenshot + console check:
+- `scripts/shot.mjs` — headless Chromium screenshot + console check (Chrome for Testing on the
+  Metal GPU on macOS, Playwright's Chromium elsewhere; browser choice in `scripts/test-browser.mjs`):
   `node scripts/shot.mjs http://127.0.0.1:8092/preview/x.html out.png --size 1440x900 --wait 4000`.
 
 ## Architecture
@@ -97,7 +99,8 @@ Vite port 81xx) and commit there; the orchestrator merges each branch into `main
 | — | **STOP POINT 2026-09-22 — see RESUME.md for the handoff prompt and prioritized remaining work** | |
 | 3 (worktrees, 10 agents) | aircraft (gear ✅, prop ✅, wreck ✅, cockpit ⏳) · airport renderer ✅ · buildings ✅ · roads ✅ (cars ❌) · traffic (simulated ✅, rendering ❌) · terrain realism ✅ (mountains ⏳) · water ✅ · sky (cloud shadows ✅, volumetric opt-in ⏳) · trees+grass ✅ · ux (gear warning ✅, loading ✅, audio ⏳) — all merged | ✅ merged |
 | — | **STOP POINT #2 (2026-09-22 evening) — `RESUME.md` §5 lists the remaining work in priority order** | |
-| 4 | Traffic renderers, cars, volumetric perf, GPU budget pass, realism polish, re-fly + photograph the full flight, visual QA at 1440 & 1024, final regression (RESUME.md §5) | next |
+| 4 (worktrees, 10 agents) | **Tater's Flight Sim**: physics (spins, stalls, F-16 flight model) · F-16 3D model · Cessna (cockpit view, potato livery, breakup parts) · crash (break-apart, fireball, crash cam, reset) · traffic rendering · cars · volumetric clouds default · UI (branding, top-right aircraft picker, menu with all controls + restart, jet HUD, attitude-indicator fix, every gauge tested) · audio (jet, crash) · open-source readiness (license, README, CI, cross-platform) | ⏳ |
+| 5 | Merge, fly both aircraft end to end, visual QA at 1440 & 1024, final docs, publish checklist | next |
 
 Testing layers (user requirement): unit · fuzz/property (fast-check) · functional (scripted
 flights in pure physics) · e2e (Vite + headless Chrome driving `window.sim` and the keyboard) —

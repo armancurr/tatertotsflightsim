@@ -57,6 +57,9 @@ export interface PlayerRef {
   z: number;
   /** Height above the ground, m. */
   agl: number;
+  /** Horizontal velocity, m/s (optional: crossing tracks are laid across the player's path ahead). */
+  vx?: number;
+  vz?: number;
 }
 
 // ─── Clearance ────────────────────────────────────────────────────────────────
@@ -685,4 +688,46 @@ export function createScheduler<T extends { start: number; duration: number; cyc
       }
     },
   };
+}
+
+// ─── Re-anchoring ────────────────────────────────────────────────────────────
+
+/** Where aircraft moved off the runway rejoin the circuit (leg, fraction of the leg), in order of preference. */
+const REANCHOR_SLOTS: [LegName, number][] = [['up', 0.55], ['down', 0.3], ['orbit', 0.5], ['up', 0.85], ['orbit', 0.05], ['down', 0.85], ['up', 0.3]];
+
+/**
+ * The player just appeared (reset / teleport / aircraft change). If they are in the runway zone
+ * or on the ground near the field, nobody may be rolling, holding short or taxiing there: those aircraft are moved to
+ * spaced slots on the downwind (they rejoin the circuit and go around while the runway is
+ * occupied). Airborne traffic elsewhere is untouched (`keepClear` handles proximity).
+ */
+export function reanchorCircuit(s: CircuitState, player: PlayerRef | null): void {
+  if (!player) return;
+  const any = s.aircraft[0];
+  if (!any) return;
+  const rw = s.legs[any.kind].rw;
+  // only when the player is in the runway zone or on the ground near the field (not flying over it)
+  if (!runwayOccupiedByPlayer(rw, player) && !(playerNearField(rw, player) && player.agl < 30)) return;
+  const moved = s.aircraft.filter((a) => a.leg === 'to' || a.leg === 'tng' || a.leg === 'full' || a.leg === 'hold');
+  if (!moved.length) return;
+  // candidate slots around the circuit, taken greedily: each ≥ 500 m from every other aircraft
+  const others = s.aircraft.filter((a) => !moved.includes(a)).map((a) => ({ ...circuitPose(s, a, newAirPose()) }));
+  const probe = newAirPose();
+  for (const a of moved) {
+    let best: { leg: LegName; t: number; d: number } | null = null;
+    for (const [leg, f] of REANCHOR_SLOTS) {
+      const p = s.legs[a.kind].legs[leg as Exclude<LegName, 'hold'>];
+      const cand = { ...a, leg, t: p.duration * f };
+      circuitPose(s, cand, probe);
+      let d = Infinity;
+      for (const o of others) d = Math.min(d, Math.hypot(o.x - probe.x, o.y - probe.y, o.z - probe.z));
+      if (!best || d > best.d) best = { leg, t: cand.t, d };
+      if (d >= 500) break;
+    }
+    a.leg = best!.leg;
+    a.t = best!.t;
+    a.n++;
+    others.push({ ...circuitPose(s, a, newAirPose()) });
+  }
+  s.log.push('reanchor');
 }

@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fc from 'fast-check';
 import { CONFIG } from '../../src/config';
 import {
-  createVeilModel, veilMark, veilFrame, veilGesture, veilTick, createLoadingVeil, veilActive, cessnaSilhouetteSvg, VEIL_STAGES,
+  createVeilModel, veilMark, veilFrame, veilGesture, veilTick, createLoadingVeil, veilActive, VEIL_STAGES,
   type VeilModel,
 } from '../../src/ui/veil';
 
@@ -135,11 +135,14 @@ describe('loading veil DOM', () => {
     veil = null;
   });
 
-  it('covers the page with the title, a Cessna silhouette, a progress bar and a status line', () => {
-    veil = createLoadingVeil(document);
+  it('covers the page with the branding (mascot, name, full name), the aircraft, a progress bar and a status line', () => {
+    veil = createLoadingVeil(document, CONFIG, { aircraftName: 'F-16C Fighting Falcon' });
     const el = document.querySelector('.fsv-veil') as HTMLElement;
     expect(el).not.toBeNull();
-    expect(el.textContent).toContain('Flight Simulator');
+    expect(el.querySelector('.fsv-title')!.textContent).toBe("Tater's Flight Sim");
+    expect(el.textContent).toContain('Tater Tots Flight Simulator');
+    expect(el.textContent).toContain('F-16C Fighting Falcon');
+    expect(el.querySelector('.fsv-mascot svg')).not.toBeNull();
     expect(el.querySelector('svg')).not.toBeNull();
     expect(el.querySelector('.fsv-bar')).not.toBeNull();
     expect(el.querySelector('.fsv-status')!.textContent!.length).toBeGreaterThan(3);
@@ -197,9 +200,8 @@ describe('loading veil DOM', () => {
     expect(veilActive()).toBe(false);
   });
 
-  it('the silhouette is a self-contained SVG (no external references)', () => {
-    const svg = cessnaSilhouetteSvg();
-    expect(svg).toMatch(/^<svg[\s\S]*<\/svg>$/);
-    expect(svg).not.toMatch(/href=|url\((?!#)/);
+  it('defaults to the config aircraft', () => {
+    veil = createLoadingVeil(document);
+    expect(document.querySelector('.fsv-sub')!.textContent).toContain(CONFIG.aircraft.name);
   });
 });

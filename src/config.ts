@@ -13,6 +13,205 @@
 
 const DEG = Math.PI / 180;
 
+// ─── Aircraft sub-configs that only some aircraft have (owned by src/physics) ──────────────────
+
+/** Piston + propeller (the Cessna) or turbofan with afterburner (the F-16). */
+export type EngineType = 'piston' | 'jet';
+
+/** Turbofan with afterburner. `engine.idleRpm` / `engine.maxRpm` are core speed in % (≈ 70 / 100). */
+export interface JetEngineConfig {
+  /** Sea-level static thrust at military (full dry) power, N. */
+  milThrustN: number;
+  /** Sea-level static thrust with full afterburner, N. */
+  maxThrustN: number;
+  /** Sea-level static thrust at idle, N. */
+  idleThrustN: number;
+  /** Throttle above this detent lights the afterburner (below it: idle → military). */
+  abDetent: number;
+  /** Afterburner intensity just past the detent (minimum AB), 0..1. */
+  abMin: number;
+  /** Afterburner light-off needs the core at ≥ this fraction of military. */
+  abLightCore: number;
+  /** Afterburner intensity ramp rates, 1/s (up ≈ 1 s to full; down = cut). */
+  abRampUpPerSec: number;
+  abRampDownPerSec: number;
+  /** Core spool time constants, s: accelerating from idle / near military, and decelerating. */
+  spoolUpTauIdle: number;
+  spoolUpTauMil: number;
+  spoolDownTau: number;
+  /** Thrust lapse with density: thrust ∝ σ^k. */
+  densityExponent: number;
+  /**
+   * Mach effect on thrust (momentum drag at low speed, ram recovery above): dry thrust ×
+   * (1 − lowSpeedLapse·M + ramDry·M²), afterburner increment × (1 − lowSpeedLapse·M + ramAb·M²).
+   */
+  lowSpeedLapse: number;
+  ramDry: number;
+  ramAb: number;
+  /** Where the thrust acts (body frame, m): on the body axis → no pitching moment. */
+  thrustPoint: { x: number; y: number; z: number };
+}
+
+/** Transonic/supersonic drag (jets). CD0 × factor(M), induced drag × (1 + inducedGain·max(0, M − 1)). */
+export interface TransonicConfig {
+  /** Drag divergence starts here… */
+  machCrit: number;
+  /** …and CD0 peaks here, at peakFactor × the subsonic value. */
+  machPeak: number;
+  peakFactor: number;
+  /** CD0 factor at Mach 2 (falls from the peak toward it). */
+  factorAtMach2: number;
+  inducedGain: number;
+}
+
+/** Fly-by-wire control laws (see src/physics/fbw.ts). Null = direct mechanical controls. */
+export interface FbwConfig {
+  /** Stick full aft / forward commands these load factors (gear up), g. */
+  maxG: number;
+  minG: number;
+  /** Angle-of-attack limiter, deg (gear up / gear handle down), and the negative limit. */
+  aoaLimitDeg: number;
+  aoaLimitGearDownDeg: number;
+  minAoaDeg: number;
+  /** Full lateral stick commands this roll rate, deg/s (gear up / down); reduced at high α. */
+  maxRollRateDeg: number;
+  maxRollRateGearDownDeg: number;
+  /** Roll rate is scaled down to this fraction as α rises from rollAoaStartDeg to the AoA limit. */
+  rollAoaStartDeg: number;
+  rollAtAoaLimitFraction: number;
+  /**
+   * Sideslip limiter (departure protection): the roll command fades out as |β| grows from
+   * betaLimitStartDeg to betaLimitFullDeg (a fast roll at high α turns α into β — roll coupling).
+   */
+  betaLimitStartDeg: number;
+  betaLimitFullDeg: number;
+  /**
+   * Curved stick gradients (like the F-16's force stick): command ∝ (1 − k)·s + k·s³ in roll and
+   * (1 − k)·s + k·s·|s| in pitch — fine control near centre, full authority at the stops.
+   */
+  rollShaping: number;
+  pitchShaping: number;
+  /** Gear handle down (take-off/landing gains): full stick commands this flight-path rate, deg/s. */
+  pathRateGearDownDeg: number;
+  /** Neutral stick holds the flight path up to this bank angle (bank compensation), deg. */
+  bankCompensationDeg: number;
+  /** Pitch loop: natural frequency (rad/s) and damping of the angle-of-attack response. */
+  pitchOmega: number;
+  pitchZeta: number;
+  /** Roll-rate response time constant, s. */
+  rollTau: number;
+  /** Yaw loop (sideslip → 0, turn coordination): natural frequency (rad/s) and damping. */
+  yawOmega: number;
+  yawZeta: number;
+  /** Full pedal commands this sideslip in the air, deg. */
+  pedalBetaDeg: number;
+  /**
+   * On the wheels (take-off/landing gains): pitch-rate command. Stabilator = stick × groundElevatorGain
+   * (feed-forward) + groundPitchRateGain × (q_cmd − q) [per rad/s]; full stick commands
+   * groundPitchRateDeg, and the command fades to 0 at groundPitchLimitDeg of pitch (tail-strike
+   * protection, rate groundPitchProtectGain per rad of margin).
+   */
+  groundElevatorGain: number;
+  groundPitchRateGain: number;
+  groundPitchRateDeg: number;
+  groundPitchLimitDeg: number;
+  groundPitchProtectGain: number;
+  /** Seconds after lift-off over which the ground (direct) laws blend into the flight laws. */
+  liftoffBlendS: number;
+}
+
+// ─── Weapons (owned by src/combat; the physics reads gun.recoilN / gun.muzzle) ─────────────────
+// Positions are in the BODY frame (origin = CG, +X right, +Y up, −Z nose), metres, and the 3D
+// model must put the matching parts exactly there (the gun muzzle, one missile per station).
+
+/** An internal rotary cannon (A-10: GAU-8/A Avenger; F-16: M61A1 Vulcan). */
+export interface GunConfig {
+  name: string;
+  caliberMm: number;
+  barrels: number;
+  /** Rounds per second at full barrel speed. */
+  rateRps: number;
+  /** Trigger → first round (the barrels spin up), and full rate → stopped, s. */
+  spinUpS: number;
+  spinDownS: number;
+  /** Rounds loaded at a reset. */
+  rounds: number;
+  /** Muzzle velocity, m/s (added to the aircraft's velocity). */
+  muzzleVelocity: number;
+  projectileMassKg: number;
+  /** Quadratic drag of the projectile: a = −dragK · |v| · v (1/m, at sea level; scaled by density ratio). */
+  dragK: number;
+  /** Dispersion: 80 % of rounds land within this cone radius, milliradians. */
+  dispersionMrad: number;
+  /** Average recoil force while firing, N (acts along body +Z at the muzzle). */
+  recoilN: number;
+  /** Muzzle position (the firing barrel), body frame. */
+  muzzle: { x: number; y: number; z: number };
+  /** Gun line depression below the body −Z axis, deg (+ = points below the fuselage datum). */
+  boresightDownDeg: number;
+  /** Every n-th round is drawn as a tracer. */
+  tracerEvery: number;
+  /** Rounds are dropped after this time of flight, s. */
+  maxFlightS: number;
+  /** Damage units per direct hit before armour (see CONFIG.combat.targets), and HEI splash radius, m. */
+  damage: number;
+  splashRadiusM: number;
+}
+
+/** Air-to-ground guided missiles (AGM-65 Maverick): rail-launched, lock before launch, fire-and-forget. */
+export interface MissileConfig {
+  name: string;
+  /** One missile per station, fired in this order. */
+  stations: { x: number; y: number; z: number }[];
+  massKg: number;
+  diameterM: number;
+  lengthM: number;
+  /** Rocket motor: boost thrust for boostS, then sustain thrust for sustainS, N / s. */
+  boostThrustN: number;
+  boostS: number;
+  sustainThrustN: number;
+  sustainS: number;
+  /** Axial drag coefficient (reference area = π·d²/4). */
+  cd: number;
+  /** Proportional-navigation constant and lateral acceleration limit, g. */
+  navConstant: number;
+  maxG: number;
+  /** Seeker: lock cone around the boresight to acquire, gimbal limit once locked, deg. */
+  acquireConeDeg: number;
+  gimbalLimitDeg: number;
+  /** Seconds the seeker needs on a target before LOCK, and the max / min lock ranges, m. */
+  lockTimeS: number;
+  maxRangeM: number;
+  minRangeM: number;
+  /** Proximity fuze radius, m; warhead damage and blast radius (m). */
+  fuzeRadiusM: number;
+  damage: number;
+  blastRadiusM: number;
+  /** Self-destruct after this time of flight, s. */
+  maxFlightS: number;
+}
+
+/** What an aircraft carries. `null` = none (the Cessna carries nothing). */
+export interface WeaponsConfig {
+  gun: GunConfig | null;
+  missiles: MissileConfig | null;
+}
+
+/** A ground vehicle class: size (m), toughness (damage units) and armour by aspect (damage multipliers). */
+export interface TargetClassConfig {
+  name: string;
+  /** Hull box: full length (z), width (x), height (y), m. */
+  length: number;
+  width: number;
+  height: number;
+  health: number;
+  /** Damage multipliers for hits on the front, sides, rear and top (1 = no armour). */
+  armor: { front: number; side: number; rear: number; top: number };
+  /** Road speed when moving, m/s. */
+  speed: number;
+}
+
+
 export const CONFIG = {
   // ─── Simulation core ───────────────────────────────────────────────────────
   sim: {
@@ -105,32 +304,67 @@ export const CONFIG = {
 
       // Yaw
       cnBeta: 0.065,
-      cnP: -0.03,
+      /**
+       * Yaw from roll rate (wing adverse yaw minus the fin's proverse part). Tuned down from −0.03 with
+       * cnAileron so an aileron-only (keyboard) roll-in no longer swings the nose the wrong way first:
+       * the heading follows the bank within ~0.3 s, < 1° wrong-way (tests/physics/turn-entry.test.ts).
+       */
+      cnP: -0.01,
       cnR: -0.099,
-      /** Yaw moment at full right aileron (+1) — adverse yaw, so negative. */
-      cnAileron: -0.006,
+      /**
+       * Yaw moment at full right aileron (+1). The 172's Frise-type, differential ailerons (20° up /
+       * 15° down) are designed to cancel aileron adverse yaw: net slightly proverse (was −0.006, which
+       * swung the nose ~5° the wrong way on a keyboard roll-in).
+       */
+      cnAileron: 0.001,
       /** Yaw moment at full right rudder (+1). */
       cnRudder: 0.032,
 
-      /** Past the stall, roll damping reverses by this fraction (wing drop / autorotation tendency). */
-      stallRollDampingLoss: 1.6,
+      // ── Stall / spin: strip-theory wing (see aero.ts wingStripMoments) ──
+      // Each half wing is split into spanwise strips that see their own local angle of attack
+      // (α + p·y/V, washout, the ailerons on the outer strips) and local airspeed (u − r·y). The wing's
+      // roll moment (damping, Clr, aileron) and its yaw moment (adverse yaw, the drag of a stalled wing,
+      // leading-edge suction of an unstalled one) come from summing the strips. In attached flow the
+      // strip roll moment is scaled to match clP and clAileron above (their calibration is kept); as the
+      // wing stalls the down-going wing loses lift (autorotation → spin), a down aileron deepens the
+      // stall of its wing, and the gain moves to stripRollGainStalled.
       /**
-       * In a coordinated stall only this fraction of the damping loss applies (the wing drops only when
-       * the aircraft is yawing/slipping, so a coordinated stall breaks straight).
+       * The strip moments take over from the linear ones as the wing stalls AND the flow over it turns
+       * asymmetric: weight = stall weight × smoothstep(onset, full, asymmetry), asymmetry =
+       * |p̂| + |r̂| + kβ·|β| + kA·|aileron| (p̂ = p·b/2V). A stalled wing meeting the air symmetrically keeps
+       * the linear damping, so a coordinated, wings-level stall breaks straight.
        */
-      stallCoordinatedDampingFraction: 0.35,
-      /** Sideslip (deg, plus yaw-rate equivalent) at which the full stall damping loss / autorotation applies. */
-      stallAsymmetryRefDeg: 4,
-      /** The autorotative roll moment saturates above this non-dimensional roll rate p̂ = p·b/2V (bounded spin rate). */
-      stallAutorotationRateLimit: 0.15,
+      /** …where the stall weight ramps from 0 to 1 over ±this many degrees around the stall angle. */
+      stripStallBlendDeg: 1.5,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      /** Strips per half wing. */
+      wingStrips: 4,
+      /** Geometric washout, degrees: the tip meets the air this much lower than the root (root stalls first). */
+      washoutDeg: 3,
+      /** Wing sections lose their lift more gradually past the stall than the whole-wing break above, degrees. */
+      stripStallBreakWidthDeg: 12,
+      /** Gain on the raw strip-theory roll moment once the wing is fully stalled (attached: set by clP). */
+      stripRollGainStalled: 0.7,
+      /** Gain on the strip yaw moment. */
+      stripYawGain: 1,
+      /** The ailerons span the strips outboard of this fraction of the half span. */
+      aileronSpanStart: 0.55,
+      /**
+       * At high α the fin and rudder sit in the wake of the stalled wing and stabiliser: the directional
+       * stability and yaw damping (cnBeta, cnR) lose this fraction once the wing is fully stalled.
+       */
+      stallYawDampingLoss: 0.3,
+      /** …and the rudder loses this fraction (it still stops a spin). */
+      stallRudderLoss: 0.2,
+      /** Fuselage crossflow normal force at high α: ΔCN = k·sin α·|sin α| (referenced to the wing area). */
+      bodyCrossflowCn: 0.3,
       /** Past the stall the flaps keep this fraction of their lift increment (flapped stalls are gentler). */
       postStallFlapLiftFraction: 0.5,
-      /** Past the stall, extra roll moment per radian of sideslip/yaw (uncoordinated stalls drop a wing). */
-      stallWingDrop: 0.12,
-      /** Weight of the yaw rate (non-dimensional r̂ = r·b/2V) relative to sideslip in the stall wing drop. */
-      stallWingDropYawGain: 2,
       /** Past the stall, extra nose-down pitch moment coefficient (the "break"). */
-      stallPitchBreak: -0.08,
+      stallPitchBreak: -0.12,
       /** Past the stall the tail sits in the stalled wing's wake: elevator/trim effectiveness drops by this fraction. */
       stallTailBlanking: 0.4,
       /** Extra dynamic pressure over the tail from the propeller slipstream, as a fraction of thrust/(½ρ·disc area). */
@@ -152,9 +386,17 @@ export const CONFIG = {
       groundEffectScale: 0.25,
       /** P-factor/torque: yaw moment coefficient (nose left) per unit (thrust/weight · alpha), for alpha > 0 (rigged neutral in cruise). */
       pFactor: 0.08,
+      /** Extra zero-lift drag with the speed brake out (aircraft without one: 0). */
+      cdSpeedBrake: 0,
+      /** Mach drag rise (jets); null = incompressible (the Cessna never gets near it). */
+      transonic: null as TransonicConfig | null,
     },
 
     engine: {
+      /** Piston + constant-speed prop. */
+      type: 'piston' as EngineType,
+      /** Jet parameters (jets only). */
+      jet: null as JetEngineConfig | null,
       /** Lycoming O-360: 180 hp. */
       maxPowerW: 134000,
       /** Static (zero airspeed) full-throttle thrust, N. */
@@ -192,6 +434,10 @@ export const CONFIG = {
       rateDegPerSec: 6,
       /** Max flap extension speed (white arc top), knots. */
       vfeKt: 100,
+      /** Trailing-edge flaps that come down automatically with the gear handle (F-16 flaperons), deg; 0 = none. */
+      autoWithGearDeg: 0,
+      /** …only below this IAS, kt. */
+      autoRetractKt: 0,
     },
 
     gear: {
@@ -200,6 +446,8 @@ export const CONFIG = {
       transitTime: 5,
       /** Max gear extended speed, knots. */
       vleKt: 140,
+      /** Max speed for operating the gear (in transit), knots. */
+      vloKt: 140,
       /** Seconds continuously airborne before the squat-switch interlock lets the gear retract. */
       retractDelay: 1.5,
       /** Squat switch: the gear will not retract while the aircraft sits on its wheels. */
@@ -237,7 +485,7 @@ export const CONFIG = {
       propRadius: 0.96,
       spinnerTip: { x: 0, y: 0.05, z: -2.28 },
       /** Pilot's eye point (left seat). */
-      pilotEye: { x: -0.28, y: 0.52, z: -0.15 },
+      pilotEye: { x: -0.28, y: 0.64, z: 0.02 },
       /** Wing: root chord line at the top of the cabin. */
       wingRootLeadingEdge: { x: 0, y: 0.95, z: -0.55 },
       wingRootChord: 1.63,
@@ -288,6 +536,8 @@ export const CONFIG = {
       /** Nose leg swings aft this far into its well; nose doors open this far. */
       noseGearRetractDeg: 90,
       gearDoorOpenDeg: 75,
+      /** Cabin fill: fraction of the sun's irradiance that reaches shaded cabin surfaces (bounce light). */
+      cabinFill: 0.16,
       /** Instrument panel texture redraw rate in the cockpit view (Hz), and outside it. */
       panelRedrawHz: 30,
       panelRedrawHzExterior: 4,
@@ -321,6 +571,9 @@ export const CONFIG = {
       /** Sliding friction of the tail skid/tailcone on a gentle scrape. */
       tailSkidFriction: 0.4,
     },
+
+    /** Fly-by-wire control laws; null = the pilot's controls drive the surfaces directly. */
+    fbw: null as FbwConfig | null,
 
     limits: {
       vsoKt: 40,
@@ -432,6 +685,10 @@ export const CONFIG = {
       parkingBrake: ['KeyB'],
       /** Speed brake (jets). */
       speedBrake: ['KeyX'],
+      /** Gun trigger (hold) · launch a missile · lock / next target (armed aircraft: A-10, F-16). */
+      fireGun: ['KeyQ', 'Enter'],
+      fireMissile: ['KeyZ'],
+      lockTarget: ['KeyT'],
       trimNoseDown: ['BracketLeft'],
       trimNoseUp: ['BracketRight'],
       engine: ['KeyE'],
@@ -744,6 +1001,49 @@ export const CONFIG = {
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
     },
+    /** Road traffic: moving cars, trucks, buses and tractors, parked cars (owned by src/world/cars; system cars.ts). */
+    cars: {
+      /** Every choice (spawns, vehicle types, colours, routes) is a hash of this seed + counters; the clock pauses with the sim. */
+      seed: 5309,
+      /** Fixed simulation step, s (poses are extrapolated between steps). */
+      step: 1 / 20,
+      /** Moving traffic lives within this distance of the camera (m); it is released beyond despawnRadius. */
+      radius: 2600,
+      despawnRadius: 2900,
+      /** New cars appear at least this far from the camera (m) once the first fill is done (or behind it). */
+      spawnHideDistance: 700,
+      /** Pool sizes: moving vehicles (a semi counts once) and parked cars. */
+      maxMoving: 420,
+      maxParked: 1400,
+      /** Moving vehicles per km per direction by road kind (farm tracks: tractors only). */
+      density: { highway: 9, road: 5, access: 3, lane: 1.6, street: 3.2, drive: 0 },
+      /** Village/hamlet streets (no sidewalks) carry this fraction of the street density. */
+      villageStreetFactor: 0.45,
+      /** Tractors driving on farm tracks near the camera (at most). */
+      tractors: 5,
+      /** Parked cars: fraction of kerb slots taken, slot pitch (m), kept clear of junction boxes (m); drawn within parkedRadius (m). */
+      parkedFill: 0.42,
+      parkedPitch: 6.4,
+      parkedJunctionClear: 7,
+      parkedRadius: 1100,
+      /** Detailed models within nearDistance (m); simple ones beyond, moving cars to farDistance, parked to parkedRadius. */
+      nearDistance: 300,
+      farDistance: 2600,
+      /** Contact shadows (AO + a soft sun shadow) within this distance, m. */
+      shadowDistance: 1400,
+      /** Intelligent-driver model: desired time gap (s), jam gap (m), comfortable accel / decel (m/s²), emergency decel. */
+      idm: { timeHeadway: 1.5, minGap: 2.2, accel: 1.8, decel: 2.4, maxDecel: 8 },
+      /** Comfortable lateral acceleration in curves and turns, m/s²; slowest turn speed, m/s. */
+      lateralAccel: 2.3,
+      minTurnSpeed: 2.8,
+      /** Drivers' desired speed as a fraction of the limit (uniform in this range). */
+      speedFactor: [0.93, 1.08] as [number, number],
+      /** Headlights/tail lights come on below this sun elevation (deg), fully by lightsFullDeg. */
+      lightsOnDeg: 14,
+      lightsFullDeg: 4,
+      /** A vehicle stopped this long (s) out of sight is released (gridlock safety valve). */
+      stuckTimeout: 60,
+    },
   },
 
   // ─── Sky, sun, fog, lighting (owned by src/render) ───────────────────────────
@@ -889,7 +1189,7 @@ export const CONFIG = {
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────
   audio: {
     masterVolume: 0.6,
-    engineVolume: 0.55,
+    engineVolume: 0.47,
     windVolume: 0.35,
     stallHornVolume: 0.4,
     /** Tyre rumble on the ground and brake scrub. */
@@ -902,7 +1202,7 @@ export const CONFIG = {
     cylinders: 4,
     propBlades: 2,
     /** Engine exhaust loudness at idle power, relative to full power. */
-    idleLoudness: 0.32,
+    idleLoudness: 0.42,
     /** Below this rpm the running engine fades out (it is not firing yet). */
     firingMinRpm: 250,
     /** Low-pass cutoff of the "cabin" (cockpit view) and of the open exterior sound, Hz. */
@@ -947,6 +1247,73 @@ export const CONFIG = {
     /** Gain/filter ramp time constants for setTargetAtTime, seconds (no clicks). */
     rampTau: 0.045,
     cameraRampTau: 0.12,
+    /** Gentle glue compressor on the master (above ~−10 dBFS only), then a fast limiter + a soft clipper → never > 0 dBFS. */
+    glueThresholdDb: -10,
+    glueRatio: 2.5,
+    limiterThresholdDb: -3,
+    /** The soft clipper is linear up to this level, then bends smoothly towards softClipCeiling. */
+    softClipKnee: 0.7,
+    softClipCeiling: 0.97,
+    /** Crash sound design (layered impact, metal tearing, debris, scraping, secondary explosions, fire). */
+    crash: {
+      /** Crash sounds keep full level within refDistanceM of the camera, then fall as (ref/d)^distanceExponent. */
+      refDistanceM: 40,
+      distanceExponent: 0.8,
+      /** Secondary explosions after the impact (unless the crash effects dispatch `sim:explosion` themselves). */
+      secondaryMin: 2,
+      secondaryMax: 6,
+      /** First one once the impact has died down; then random gaps (mean, minimum); none after secondaryLastS. */
+      secondaryFirstS: 1.1,
+      secondaryMeanGapS: 1.6,
+      secondaryMinGapS: 0.7,
+      secondaryLastS: 11,
+      /** Burning fire bed level and its fade time constant, s. */
+      fireLevel: 0.5,
+      fireFadeS: 35,
+      /** Rate limits for the window events `sim:explosion` / `sim:impact`, per second. */
+      maxExplosionsPerS: 6,
+      maxImpactsPerS: 12,
+      /** `sim:impact` speed (m/s) that plays at full intensity. */
+      impactFullMs: 45,
+    },
+    /**
+     * F-16C / GE F110-GE-129 turbofan (aircraft sound 'jet'). `state.engine.rpm` is the core speed N2 in %,
+     * `state.engine.power` the dry power 0..1 and `state.engine.afterburner` 0..1.
+     */
+    jet: {
+      /** HP (core) spool at 100 % N2 and LP (fan) spool at 100 % N1, rpm. */
+      coreMaxRpm: 14460,
+      fanMaxRpm: 7900,
+      /** Blades of the HP-compressor stage whose blade-pass tone is the turbine whine (100 % N2 ≈ 5 kHz). */
+      whineBlades: 21,
+      /** Ground idle N2, %. */
+      idleCorePct: 70,
+      /** Overall level of the jet relative to the Cessna's engine (a fighter is much louder), and in the cockpit (canopy + helmet). */
+      volume: 2.3,
+      cockpitGain: 0.42,
+      /** Channel levels before engineVolume × volume. */
+      whine: 0.09,
+      shaft: 0.04,
+      fan: 0.11,
+      roar: 0.75,
+      rumble: 0.5,
+      abRumble: 1.5,
+      abTear: 0.55,
+      crackle: 0.65,
+      /** Cockpit-only: intake howl (fan tone resonating in the inlet duct under the seat) and ECS air hiss. */
+      intake: 0.1,
+      ecs: 0.035,
+      /** Jet fuel starter whine while starting. */
+      starter: 0.08,
+      /** Afterburner light-off "whoomph" level. */
+      whoomph: 0.9,
+      /** Hydraulic whine (gear and speed brake), Hz, level, and how long the speed brake travels, s. */
+      hydraulicHz: 1180,
+      hydraulicVolume: 0.12,
+      speedBrakeTravelS: 2,
+      /** Exterior views: full level within this distance (a 15 m airframe, a much louder source than the Cessna). */
+      refDistanceM: 25,
+    },
   },
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────
@@ -1007,6 +1374,34 @@ export const CONFIG = {
      * `?veil=0` skips it. Whatever happens (the app failed to start…) it lifts after maxTotalS.
      */
     veil: { autoDismissS: 1.5, fadeS: 0.8, smoothFrameMs: 34, smoothFrames: 24, maxWarmupS: 6, maxTotalS: 40 },
+    /**
+     * F-16 head-up display (src/ui/jetHud.ts), shown instead of the six-pack when the aircraft's
+     * `hud` is 'jet'. Phosphor green with a faint dark halo so it reads against bright sky. Its box
+     * is a fraction of the viewport (clamped in px); `degPerHeight` = pitch degrees across its height.
+     */
+    jet: {
+      color: '#6bff95',
+      halo: 'rgba(0,26,8,0.42)',
+      widthFrac: 0.4,
+      heightFrac: 0.6,
+      minW: 330,
+      maxW: 600,
+      degPerHeight: 38,
+      /** Boresight (gun cross) height as a fraction of the HUD box. */
+      boresightY: 0.34,
+    },
+    /** Slim branding top bar (logo, name, aircraft picker, menu button): its height in CSS px at 1024 and 1440 px wide. */
+    topBar: { height1024: 36, height1440: 40 },
+  },
+
+  // ─── Menu, aircraft picker and branding (owned by src/ui: menu.ts, picker.ts, topBar.ts) ───────
+  menu: {
+    productName: "Tater's Flight Sim",
+    fullName: 'Tater Tots Flight Simulator',
+    /** localStorage key that remembers the chosen aircraft (restored when the URL has no ?aircraft=). */
+    storageKey: 'tfs.aircraft',
+    /** Throttle position (%) above which the F-16's afterburner lights (shown in the controls notes). */
+    afterburnerFromPct: 90,
   },
 
   // ─── Effects: particles, camera shake, speed FOV (owned by src/fx) ─────────
@@ -1014,9 +1409,11 @@ export const CONFIG = {
     /** Seed of the effects RNG (deterministic bursts for tests and screenshots). */
     seed: 1721,
     /** Preallocated pools: smoke/dust, fire/embers (one sorted draw call together) and solid debris chunks. */
-    smokeCapacity: 1400,
-    fireCapacity: 900,
-    debrisCapacity: 48,
+    smokeCapacity: 1800,
+    fireCapacity: 1100,
+    debrisCapacity: 64,
+    /** Continuous emitters (part fires, the smoke column, steam), preallocated. */
+    maxEmitters: 24,
     /** Particles fade out when the camera is closer than size × nearFade (no screen-filling sprites). */
     nearFade: 0.55,
     /** …and fade (with the square of the excess) once one sprite would cover more than this fraction of the screen height. */
@@ -1029,22 +1426,24 @@ export const CONFIG = {
     fireOcclusion: 0.55,
     /** A single point light flickers at the fire (lights the ground and the wreck). Always present (intensity 0 when idle) so no shader recompiles. */
     fireLight: true,
-    fireLightIntensity: 2400,
-    fireLightDistance: 220,
+    fireLightIntensity: 500,
+    fireLightDistance: 140,
+    /** The white-hot flash of an explosion lights the scene through the same point light (candela at flash level 1). */
+    flashLightIntensity: 1600,
     crash: {
       /** Below this impact speed there is no fireball (fuel tanks survive) — only dust, debris and a little smoke. */
       fireMinKt: 25,
       /** Fuel fireball: a short-lived rolling ball of flame (puffs grow to fireballSize m) that turns into a black mushroom. */
-      fireballCount: 60,
-      fireballLife: [0.9, 1.8] as [number, number],
-      fireballSize: [5, 11] as [number, number],
-      fireballSpeed: 12,
+      fireballCount: 80,
+      fireballLife: [1.2, 2.4] as [number, number],
+      fireballSize: [7, 16] as [number, number],
+      fireballSpeed: 14,
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
-      smokeRate: 18,
+      smokeRate: 12,
       smokeLife: [10, 16] as [number, number],
-      smokeSize: [4, 26] as [number, number],
-      smokeRise: 8,
+      smokeSize: [4, 22] as [number, number],
+      smokeRise: 9.5,
       smokeBuoyancy: 3.2,
       smokeBuoyancyTau: 8,
       /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
@@ -1056,6 +1455,9 @@ export const CONFIG = {
       /** Ground fire: many small, short flame licks and billows at the wreck (flames/s at full intensity). */
       groundFireDuration: 16,
       groundFireRate: 55,
+      /** Fires on burning parts: flame licks per second (× intensity, grows with the part's size) and smoke puffs per second. */
+      partFireRate: 26,
+      partSmokeRate: 4,
       debrisCount: 30,
       emberCount: 80,
     },
@@ -1097,6 +1499,105 @@ export const CONFIG = {
     /** Subtle FOV widening with airspeed (degrees added to the camera FOV). */
     fov: { startKt: 55, fullKt: 170, maxDeg: 3.5 },
   },
+  /**
+   * The crash director (src/crash + src/game/systems/crash.ts): the airframe breaks into rigid
+   * bodies that keep the aircraft's momentum, a multi-stage fireball, slow motion and a crash camera.
+   */
+  crash: {
+    /** Impact speed (kt) below which nothing breaks off, and at which the break-up/explosion is total. */
+    bumpKt: 22,
+    fullKt: 110,
+    /** Flight-path angle (deg below the horizon) from which an impact counts as nose-in rather than a skid. */
+    noseInDeg: 28,
+    debris: {
+      /** Rigid bodies (airframe parts), preallocated. */
+      capacity: 32,
+      gravity: 9.81,
+      /** Largest integration step, s (the sim sub-steps longer frames). */
+      subStep: 1 / 120,
+      /** Linear air drag (1/s), spin damping in the air and on the ground (1/s), ploughing drag while sliding (1/s). */
+      airDrag: 0.03,
+      spinDrag: 0.12,
+      groundSpinDrag: 1.4,
+      ploughDrag: 0.12,
+      /** Impacts slower than this (m/s) do not bounce (no jitter at rest). */
+      bounceMinSpeed: 2,
+      /** A body falls asleep after sleepTime s in contact below sleepSpeed m/s and sleepSpin rad/s; every body rests after maxAge s. */
+      sleepSpeed: 0.3,
+      sleepSpin: 0.4,
+      sleepTime: 0.5,
+      maxAge: 60,
+      maxSpeed: 250,
+      maxSpin: 30,
+      /** Trees/buildings: velocity damping (1/s) while a part is inside an obstacle's height. */
+      canopyDrag: 2.4,
+      /** Water: drag (1/s) when submerged, speed kept when slapping into the surface, depth (m) below which a part is gone. */
+      waterDrag: 2.2,
+      waterImpactKeep: 0.55,
+      sinkDepth: 2.5,
+    },
+    /** Explosion push: speed (m/s) for a refMass-kg part at full severity (∝ √(refMass/mass)), cap, random spin (rad/s). */
+    explosion: { speed: 9, refMass: 60, maxDv: 24, spin: 6 },
+    /** Slow motion: the debris and effects run at `scale` for `hold` s of real time, then ease back to real time over `ramp` s. */
+    slowMo: { scale: 0.3, hold: 0.9, ramp: 0.8 },
+    camera: {
+      /** Extra hand-held shake at impact (m, deg), decaying with shakeTau s. */
+      shakeM: 0.45,
+      shakeDeg: 1.6,
+      shakeTau: 0.45,
+      /** The crash camera takes over between blendStart and blendEnd s (real time) after the impact (cockpit: at once). */
+      blendStart: 0.5,
+      blendEnd: 3.2,
+      orbitDegPerSec: 3.5,
+      elevationDeg: 19,
+      /** Distance frames the debris field: clamp(spread × fitScale, minDistance, maxDistance) m. */
+      minDistance: 38,
+      maxDistance: 150,
+      fitScale: 2.6,
+      /** Smoothing of the framed point, s. */
+      focusTau: 0.7,
+    },
+    fire: {
+      /** Burning parts burn for this long (s); the smoke column rises for columnDuration s. */
+      partDuration: [20, 30] as [number, number],
+      columnDuration: 45,
+      /** Secondary fuel explosions (s after impact, sim time) along the debris trail. */
+      secondary: [0.28, 0.7] as [number, number],
+    },
+    scorch: {
+      /** Decal pool size, crater radius range (m) and furrow width (m). */
+      count: 6,
+      craterRadius: [4, 11] as [number, number],
+      furrowWidth: 2.6,
+    },
+  },
+
+  // ─── Weapons carried (owned by src/combat; per aircraft — see A10_WEAPONS / F16_WEAPONS) ─────
+  /** The Cessna carries nothing. */
+  weapons: { gun: null, missiles: null } as WeaponsConfig,
+
+  // ─── Combat world: targets, damage, effects budgets (owned by src/combat) ───────────────────
+  combat: {
+    /**
+     * The target range: vehicles are placed on open, flat ground (not water, towns or forest)
+     * between minDistance and maxDistance from the runway centre, preferring the bearing
+     * `bearingDeg` (north of the airport: straight ahead after a runway-36 take-off).
+     */
+    range: { bearingDeg: 350, minDistance: 5500, maxDistance: 9000, radius: 900 },
+    /** Vehicle classes (real sizes). Armour multipliers are for the 30 mm API round. */
+    targets: {
+      tank: { name: 'T-72B', length: 6.95, width: 3.59, height: 2.23, health: 100, armor: { front: 0.05, side: 0.35, rear: 0.6, top: 0.8 }, speed: 8 } as TargetClassConfig,
+      ifv: { name: 'BMP-2', length: 6.72, width: 3.15, height: 2.45, health: 60, armor: { front: 0.5, side: 0.9, rear: 1, top: 1 }, speed: 9 } as TargetClassConfig,
+      apc: { name: 'BTR-80', length: 7.65, width: 2.9, height: 2.41, health: 50, armor: { front: 0.7, side: 1, rear: 1, top: 1 }, speed: 11 } as TargetClassConfig,
+      truck: { name: 'Ural-4320', length: 7.37, width: 2.55, height: 2.87, health: 25, armor: { front: 1, side: 1, rear: 1, top: 1 }, speed: 12 } as TargetClassConfig,
+      aaa: { name: 'ZSU-23-4 Shilka', length: 6.54, width: 3.13, height: 2.25, health: 45, armor: { front: 0.8, side: 1, rear: 1, top: 1 }, speed: 7 } as TargetClassConfig,
+    },
+    /** Destroyed vehicles come back after a reset (R) or after this long, s (0 = only on reset). */
+    respawnS: 0,
+    /** Live projectile pool (rounds in flight) and impact effects per frame, max. */
+    maxRounds: 1500,
+    maxImpactFxPerFrame: 24,
+  },
 };
 
 export type Config = typeof CONFIG;
@@ -1128,29 +1629,171 @@ export function cloneConfig(): Config {
  * contact points both read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch
  * the ground at y = −1.75 with the struts extended.
  *
- * The flight values below start as a rough placeholder derived from the C172 section; the
- * physics owner replaces them with the real F-16 model (jet engine + afterburner, high-AoA
- * aero, Mach drag rise, fly-by-wire limits).
+ * Flight model (src/physics): F110 turbofan with afterburner (engine.type 'jet'), a CLα ≈ 3.5/rad
+ * wing whose leading-edge-extension vortex lift carries CLmax ≈ 1.6 to ~32° α, transonic drag rise,
+ * speed brake, flaperons that droop 20° with the gear handle, and fly-by-wire (g / roll-rate
+ * command, 25° AoA limiter, sideslip-zeroing yaw loop). Calibration: src/physics/aircraft.ts header.
+ * Stability derivatives after Stevens & Lewis / Nguyen et al. (NASA TP-1538), rounded.
  */
 function makeF16(): AircraftConfig {
-  const a = structuredClone(CONFIG.aircraft);
-  a.name = 'F-16C Fighting Falcon';
-  a.registration = '90-0772';
-  a.mass = 12000;
-  a.inertia = { pitch: 75674, yaw: 85552, roll: 12875 };
-  a.wingArea = 27.87;
-  a.wingSpan = 9.96;
-  a.meanChord = 3.45;
-  a.engine.maxPowerW = 12e6;
-  a.engine.staticThrustN = 76000;
-  a.gear.retractable = true;
-  a.gear.transitTime = 4;
-  // Struts sized for ~11× the Cessna's weight.
-  a.ground = { ...a.ground, springMain: 650000, damperMain: 65000, springNose: 420000, damperNose: 38000 };
-  a.limits.vneKt = 800;
-  a.limits.structuralFailureG = 13.5;
-  a.geometry = {
-    ...a.geometry,
+  const c172 = CONFIG.aircraft;
+  return {
+    name: 'F-16C Fighting Falcon',
+    registration: '90-0772',
+    /** Clean, full internal fuel (~3,200 kg), pilot, gun ammo. */
+    mass: 12000,
+    inertia: { pitch: 75674, yaw: 85552, roll: 12875 },
+    wingArea: 27.87,
+    wingSpan: 9.96,
+    meanChord: 3.45,
+    oswald: 0.8,
+
+    aero: {
+      /** Cambered (LEF-scheduled) wing: CL at zero body α. */
+      cl0: 0.1,
+      clAlpha: 3.5,
+      /** Vortex lift from the strakes keeps the lift rising to CLmax ≈ 1.6 at ~32°. */
+      stallAlphaDeg: 32,
+      stallAlphaNegDeg: -20,
+      stallRoundingDeg: 14,
+      stallBreakWidthDeg: 15,
+      flatPlateLift: 1.3,
+      flatPlateDrag: 1.7,
+      cd0: 0.0185,
+      cdGear: 0.02,
+      /** Flaperons 20° (gear handle down). */
+      cdFlapsFull: 0.02,
+      clFlapsFull: 0.3,
+      stallAlphaFlapsShiftDeg: 0,
+      cmFlapsFull: -0.03,
+      cdBeta: 0.4,
+      cyBeta: -1.0,
+      cyRudder: -0.1,
+      /** Relaxed static stability: nearly neutral in pitch; the FBW does the rest. */
+      cm0: 0,
+      cm0Tail: 0,
+      cmAlpha: -0.25,
+      cmQ: -5,
+      cmAlphaDot: -1.5,
+      /** All-moving stabilator (~10 m², ±25°): big authority — it has to rotate against the thrust line. */
+      cmElevator: 0.6,
+      cmTrim: 0.05,
+      clBeta: -0.06,
+      clP: -0.35,
+      clR: 0.1,
+      /** Flaperons + differential stabilator. */
+      clAileron: 0.05,
+      clRudder: 0.01,
+      cnBeta: 0.12,
+      cnP: -0.02,
+      cnR: -0.35,
+      cnAileron: -0.004,
+      cnRudder: 0.045,
+      stripStallBlendDeg: 3,
+      stripAsymOnset: 0.01,
+      stripAsymFull: 0.05,
+      stripAsymBeta: 0.3,
+      stripAsymAileron: 0.05,
+      wingStrips: 4,
+      /** Leading-edge flaps, not twist, keep the outer wing flying. */
+      washoutDeg: 0,
+      stripStallBreakWidthDeg: 20,
+      /** Low-aspect-ratio wing: weak autorotation (the F-16 is spin-resistant; the FBW keeps it out of it anyway). */
+      stripRollGainStalled: 0.3,
+      stripYawGain: 1,
+      aileronSpanStart: 0.3,
+      /** Past ~30° α the fin sits in the fuselage/strake wake (the F-16's famous loss of directional stability). */
+      stallYawDampingLoss: 0.5,
+      stallRudderLoss: 0.5,
+      bodyCrossflowCn: 0.4,
+      postStallFlapLiftFraction: 0.5,
+      stallPitchBreak: -0.02,
+      stallTailBlanking: 0.3,
+      /** No propeller: nothing blows over the tail, no P-factor. */
+      propwashTail: 0,
+      propwashTailMaxRatio: 1,
+      cmGroundEffect: 0.03,
+      groundEffectLift: 0.12,
+      groundEffectScale: 0.25,
+      pFactor: 0,
+      /** Two 60° petals beside the nozzle. */
+      cdSpeedBrake: 0.06,
+      transonic: { machCrit: 0.82, machPeak: 1.1, peakFactor: 2.4, factorAtMach2: 2.0, inducedGain: 0.7 },
+    },
+
+    engine: {
+      type: 'jet',
+      jet: {
+        /** F110-GE-129: 17,155 lbf dry, ~29,000 lbf with afterburner (installed). */
+        milThrustN: 76300,
+        maxThrustN: 129000,
+        idleThrustN: 3500,
+        abDetent: 0.9,
+        abMin: 0.3,
+        abLightCore: 0.92,
+        abRampUpPerSec: 1.0,
+        abRampDownPerSec: 3,
+        spoolUpTauIdle: 3.2,
+        spoolUpTauMil: 0.6,
+        spoolDownTau: 1.1,
+        densityExponent: 0.8,
+        lowSpeedLapse: 0.45,
+        ramDry: 0.3,
+        ramAb: 0.4,
+        /** Nozzle centre, slightly below the CG (≈ 1.45 m above the runway). */
+        thrustPoint: { x: 0, y: -0.3, z: 7.0 },
+      },
+      // Piston/prop keys unused by a jet except where noted.
+      maxPowerW: 0,
+      staticThrustN: 76300,
+      propEfficiency: 1,
+      spoolUpTau: 1,
+      spoolDownTau: 1,
+      idlePower: 0,
+      /** Core speed (N2), % — what `state.engine.rpm` reports for a jet. */
+      idleRpm: 70,
+      maxRpm: 100,
+      /** Jet fuel starter spin-up to light-off, s (shortened for play). */
+      startTime: 6,
+      /** Windmilling core % per knot with the engine off. */
+      windmillRpmPerKt: 0.05,
+      /** Starter-motored core %, before light-off. */
+      crankRpm: 25,
+      rpmTau: 0.35,
+      spinDownTau: 3,
+      windmillDragCoeff: 0,
+    },
+
+    flaps: {
+      /** Flaperon droop, deg (they also come down automatically with the gear handle). */
+      notchesDeg: [0, 10, 20],
+      rateDegPerSec: 15,
+      vfeKt: 370,
+      autoWithGearDeg: 20,
+      autoRetractKt: 370,
+    },
+
+    gear: {
+      retractable: true,
+      transitTime: 4,
+      vleKt: 300,
+      /** Gear operating speed, knots. */
+      vloKt: 300,
+      retractDelay: 1.5,
+      squatSwitch: true,
+    },
+
+    surfaces: {
+      elevatorMaxDeg: 25,
+      aileronMaxDeg: 20,
+      rudderMaxDeg: 30,
+      flapMaxDeg: 20,
+      trimTabMaxDeg: 0,
+      nosewheelSteerMaxDeg: 32,
+    },
+
+    geometry: {
+      ...c172.geometry,
     length: 15.06,
     height: 4.88,
     noseWheel: { x: 0, y: -1.75, z: -3.5 },
@@ -1186,8 +1829,272 @@ function makeF16(): AircraftConfig {
       { name: 'bellyMid', x: 0, y: -0.8, z: 0.0 },
       { name: 'cabinRoof', x: 0, y: 1.25, z: -3.8 },
     ],
+    },
+
+    /** Visual-only (src/aircraft; the F-16 model owner may override). */
+    model: structuredClone(c172.model),
+
+    ground: {
+      /** Struts sized for ~11× the Cessna's weight. */
+      springMain: 650000,
+      damperMain: 65000,
+      springNose: 420000,
+      damperNose: 38000,
+      rollingFriction: { ...c172.ground.rollingFriction },
+      /** Anti-skid brakes. */
+      brakeFriction: 0.45,
+      lateralFriction: 0.7,
+      frictionSmoothing: 0.25,
+      /** Nosewheel steering is for taxiing: its authority fades out by ~50 kt. */
+      steeringFadeSpeed: 25,
+      steeringMinFraction: 0.08,
+      longitudinalSmoothing: 0.05,
+      bottomOutStiffness: 10,
+      reboundDampingFactor: 3,
+      tailSkidFriction: 0.4,
+    },
+
+    fbw: {
+      maxG: 9,
+      minG: -3,
+      aoaLimitDeg: 25,
+      aoaLimitGearDownDeg: 16,
+      minAoaDeg: -10,
+      maxRollRateDeg: 300,
+      maxRollRateGearDownDeg: 120,
+      rollAoaStartDeg: 10,
+      rollAtAoaLimitFraction: 0.25,
+      betaLimitStartDeg: 3,
+      betaLimitFullDeg: 8,
+      rollShaping: 0.6,
+      pitchShaping: 0.5,
+      pathRateGearDownDeg: 6,
+      bankCompensationDeg: 45,
+      pitchOmega: 5,
+      pitchZeta: 0.8,
+      rollTau: 0.12,
+      yawOmega: 3,
+      yawZeta: 0.8,
+      pedalBetaDeg: 6,
+      groundElevatorGain: 0.5,
+      groundPitchRateGain: 10,
+      groundPitchRateDeg: 5,
+      /** Tail clearance: the tailcone meets the runway at ≈ 13.5° with the struts compressed. */
+      groundPitchLimitDeg: 12,
+      groundPitchProtectGain: 2,
+      liftoffBlendS: 1,
+    },
+
+    limits: {
+      vsoKt: 115,
+      vs1Kt: 130,
+      vrKt: 150,
+      vxKt: 250,
+      vyKt: 350,
+      vaKt: 350,
+      vnoKt: 600,
+      /** 800 KCAS placard. */
+      vneKt: 800,
+      gLimitPos: 9,
+      gLimitNeg: -3,
+      /** Ultimate load ≈ 1.5 × 9 g. */
+      structuralFailureG: 13.5,
+      structuralFailureNegG: -6,
+      /** IAS beyond 800 × 1.08 ≈ 865 KIAS fails the airframe. */
+      overspeedFailureFactor: 1.08,
+      maxAngularRate: 8,
+    },
+
+    stall: {
+      warningMarginDeg: 3,
+      recoveryHysteresisDeg: 2,
+    },
+
+    landing: {
+      butterFpm: 150,
+      smoothFpm: 360,
+      firmFpm: 660,
+      hardFpm: 960,
+      maxBankDeg: 12,
+      /** Nose gear first. */
+      minPitchDeg: -3,
+      minAirborneTime: 1.5,
+      ditchSpeedKt: 0,
+      scrapeSpeedMs: 3,
+      terrainImpactMs: 8,
+      terrainPenetrationM: 0.3,
+      nearGroundAglM: 40,
+      obstacleCheckAglM: 400,
+    },
+
+    spawn: {
+      runwayStartOffset: 60,
+      /** 3° final from 6 km at 150 kt, flaperons down (notch 2 = 20°). */
+      approach: { distance: 6000, height: 330, speedKt: 150, flapsNotch: 2, throttle: 0.5, aimPointM: 300 },
+    },
   };
-  return a;
 }
 
 export const F16_AIRCRAFT: AircraftConfig = makeF16();
+
+/**
+ * Fairchild Republic A-10C Thunderbolt II ("Warthog"): straight-wing, twin TF34-GE-100A
+ * turbofans (40.3 kN each, no afterburner), built around the 30 mm GAU-8/A Avenger.
+ *
+ * GEOMETRY IS FIXED (orchestrator contract, real dimensions: 16.26 m long, 17.53 m span, 4.47 m
+ * tall, 47.0 m² wing, 5.40 m wheelbase, 5.25 m track): the 3D model and the physics contact points
+ * both read it. Body frame: origin = CG, +X right, +Y up, −Z nose; wheels touch the ground at
+ * y = −1.95 with the struts extended. The nose gear is offset 0.30 m right of the centreline (the
+ * gun's firing barrel sits on the centreline). Twin fins at x = ±2.87 on the tailplane tips.
+ * Engine pods on the upper rear fuselage, centred at x = ±1.55, y = +1.1, z = +3.1 … +6.4.
+ *
+ * FLIGHT MODEL: placeholder (F-16 aero with the A-10 geometry) until src/physics calibrates it.
+ */
+function makeA10(): AircraftConfig {
+  const f16 = structuredClone(F16_AIRCRAFT);
+  return {
+    ...f16,
+    name: 'A-10C Thunderbolt II',
+    registration: '80-0281',
+    wingArea: 47.01,
+    wingSpan: 17.53,
+    meanChord: 2.73,
+    engine: {
+      ...f16.engine,
+      jet: {
+        ...f16.engine.jet!,
+        /** 2 × TF34-GE-100A, 9,065 lbf each; no afterburner (maxThrustN = milThrustN). */
+        milThrustN: 80600,
+        maxThrustN: 80600,
+        idleThrustN: 4000,
+        /** Both nozzles combined; the nacelles are canted so the thrust line passes just above the CG. */
+        thrustPoint: { x: 0, y: 0.35, z: 6.4 },
+      },
+      staticThrustN: 80600,
+    },
+    geometry: {
+      ...f16.geometry,
+      length: 16.26,
+      height: 4.47,
+      noseWheel: { x: 0.3, y: -1.95, z: -4.85 },
+      leftMainWheel: { x: -2.62, y: -1.95, z: 0.55 },
+      rightMainWheel: { x: 2.62, y: -1.95, z: 0.55 },
+      mainWheelRadius: 0.46,
+      noseWheelRadius: 0.3,
+      strutTravel: 0.25,
+      propHub: { x: 0, y: 1.1, z: 3.1 },
+      propRadius: 0.62,
+      spinnerTip: { x: 0, y: -0.55, z: -7.25 },
+      pilotEye: { x: 0, y: 1.1, z: -4.3 },
+      wingRootLeadingEdge: { x: 0, y: -0.6, z: -0.75 },
+      wingRootChord: 3.05,
+      wingTipChord: 1.9,
+      wingTaperStart: 0.35,
+      dihedralDeg: 5,
+      horizontalTail: { x: 0, y: 0.45, z: 8.2, span: 5.74, chord: 1.85 },
+      verticalTailTop: { x: 0, y: 2.52, z: 8.6 },
+      structuralPoints: [
+        { name: 'noseTip', x: 0, y: -0.35, z: -6.95 },
+        { name: 'chin', x: 0, y: -1.0, z: -3.6 },
+        { name: 'bellyMid', x: 0, y: -1.05, z: 0.5 },
+        { name: 'leftWingtip', x: -8.76, y: 0.05, z: 0.9 },
+        { name: 'rightWingtip', x: 8.76, y: 0.05, z: 0.9 },
+        { name: 'leftEngine', x: -1.55, y: 1.75, z: 4.6 },
+        { name: 'rightEngine', x: 1.55, y: 1.75, z: 4.6 },
+        { name: 'leftFinTop', x: -2.87, y: 2.52, z: 8.8 },
+        { name: 'rightFinTop', x: 2.87, y: 2.52, z: 8.8 },
+        { name: 'leftFinRoot', x: -2.87, y: -0.35, z: 8.6 },
+        { name: 'rightFinRoot', x: 2.87, y: -0.35, z: 8.6 },
+        { name: 'tailcone', x: 0, y: -0.25, z: 9.3 },
+        { name: 'cabinRoof', x: 0, y: 1.6, z: -4.0 },
+      ],
+    },
+    limits: { ...f16.limits, vsoKt: 100, vs1Kt: 115, vrKt: 120, vxKt: 180, vyKt: 210, vaKt: 300, vnoKt: 400, vneKt: 450, gLimitPos: 7.33, gLimitNeg: -3, structuralFailureG: 11, structuralFailureNegG: -5 },
+  };
+}
+
+export const A10_AIRCRAFT: AircraftConfig = makeA10();
+
+/** A-10C: GAU-8/A Avenger (1,150 rounds, PGU-13/14 combat mix) + 4 × AGM-65D Maverick on two LAU-88s (stations 3 and 9). */
+export const A10_WEAPONS: WeaponsConfig = {
+  gun: {
+    name: 'GAU-8/A Avenger',
+    caliberMm: 30,
+    barrels: 7,
+    /** 3,900 rounds/min. */
+    rateRps: 65,
+    spinUpS: 0.55,
+    spinDownS: 0.7,
+    rounds: 1150,
+    muzzleVelocity: 1010,
+    projectileMassKg: 0.425,
+    /** ½ρ·Cd·A/m with Cd ≈ 0.3: ~700 m/s left at 1,220 m, ~1.5 s time of flight. */
+    dragK: 3.0e-4,
+    /** "80 % of rounds inside a 40 ft circle at 4,000 ft". */
+    dispersionMrad: 5,
+    /** ~10,000 lbf — about one engine's thrust. */
+    recoilN: 45000,
+    muzzle: { x: 0, y: -0.55, z: -7.25 },
+    boresightDownDeg: 2,
+    tracerEvery: 4,
+    maxFlightS: 6,
+    damage: 10,
+    splashRadiusM: 3,
+  },
+  missiles: {
+    name: 'AGM-65D Maverick',
+    /** LAU-88 outboard/inboard rails under stations 3 and 9; fired left, right, left, right. */
+    stations: [
+      { x: -4.62, y: -1.35, z: 0.35 },
+      { x: 4.62, y: -1.35, z: 0.35 },
+      { x: -3.98, y: -1.35, z: 0.35 },
+      { x: 3.98, y: -1.35, z: 0.35 },
+    ],
+    massKg: 220,
+    diameterM: 0.305,
+    lengthM: 2.49,
+    boostThrustN: 26000,
+    boostS: 1.5,
+    sustainThrustN: 4000,
+    sustainS: 3.5,
+    cd: 0.35,
+    navConstant: 4,
+    maxG: 15,
+    acquireConeDeg: 8,
+    gimbalLimitDeg: 60,
+    lockTimeS: 0.8,
+    maxRangeM: 9000,
+    minRangeM: 500,
+    fuzeRadiusM: 2.5,
+    damage: 400,
+    blastRadiusM: 18,
+    maxFlightS: 60,
+  },
+};
+
+/** F-16C: M61A1 Vulcan, 511 rounds of 20 mm in the left strake. No air-to-ground missiles (yet). */
+export const F16_WEAPONS: WeaponsConfig = {
+  gun: {
+    name: 'M61A1 Vulcan',
+    caliberMm: 20,
+    barrels: 6,
+    /** 6,000 rounds/min. */
+    rateRps: 100,
+    spinUpS: 0.3,
+    spinDownS: 0.5,
+    rounds: 511,
+    muzzleVelocity: 1030,
+    projectileMassKg: 0.1,
+    dragK: 5.8e-4,
+    dispersionMrad: 8,
+    recoilN: 18000,
+    /** Port in the left strake root, beside the cockpit (GUN_MUZZLE in src/aircraft/f16). */
+    muzzle: { x: -0.605, y: 0.03, z: -4.12 },
+    boresightDownDeg: 0,
+    tracerEvery: 5,
+    maxFlightS: 5,
+    damage: 3,
+    splashRadiusM: 1.5,
+  },
+  missiles: null,
+};

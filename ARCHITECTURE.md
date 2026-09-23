@@ -255,6 +255,22 @@ profiling), and each system's CPU time appears in `window.sim.perf.systems`.
 This design means ten engineers (or agents) can add features in parallel without ever editing
 the same wiring file.
 
+## 9b. The fleet (src/fleet) — more than one aircraft
+
+Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`), names,
+a **full config** (the same shape as `CONFIG`, with its own `aircraft` section and optional camera
+overrides — the physics, cameras and instruments just receive it), which HUD it uses (`steam` gauges
+or a `jet` head-up display), which engine sound (`piston` or `jet`), and a `createModel()` factory
+returning an `AircraftModelHandle` (`root`, `setVisualState`, optional panel drawer, landing light,
+and `getBreakupParts()` / `restoreBreakupParts()` for the crash). The player picks one from the
+dropdown at the top right (or `?aircraft=f16`); `app.ts` swaps the model and the config and
+restarts on the runway, and every system hears `onAircraftChange(def, model)`.
+
+**To add an aircraft:** (1) add its section to `src/config.ts` with the same shape as
+`CONFIG.aircraft` — geometry first, because the physics contact points and the 3D model share it;
+(2) build its model under `src/aircraft/<name>/` implementing `AircraftModelHandle`; (3) add one
+entry to `FLEET`. Tests in `tests/fleet/` check every entry spawns resting on its gear.
+
 ## 10. The aircraft on screen (src/aircraft)
 
 A procedural Cessna 172RG built entirely in code: a lofted fuselage (cross-sections joined into a
@@ -287,9 +303,18 @@ both read `aircraft.geometry` from the config, and a test checks they agree with
   landing rating, PAUSED, confirmations for mute/light/time of day) and the help screen (H). It
   scales for 1024–1440+ px wide (simplified gauge faces below ~112 px) and keeps the middle of the
   screen clear.
-- **Audio (`src/audio`)** — synthesised with Web Audio: the Lycoming engine (firing frequency from
-  RPM, harmonics, prop buzz, exhaust rumble), wind, the stall horn, tyre chirps, gear and flap
-  motors, the crash. Starts on the first key press or click (browser rule).
+- **Audio (`src/audio`)** — synthesised with Web Audio, one engine *voice* per aircraft
+  (`AircraftDef.sound`, swapped with a fade on `onAircraftChange`): the Cessna's Lycoming O-360 +
+  prop (firing frequency from RPM, uneven cylinders, prop buzz, exhaust) and the F-16's F110
+  turbofan (turbine whine at the HP blade-pass rate from N2 %, fan buzz-saw, jet roar, afterburner
+  rumble + crackle + light-off whoomph, cockpit intake howl and ECS, hydraulic whine for gear and
+  speed brake, directivity, distance and Doppler). Also wind, stall and gear horns, tyres, motors,
+  and a layered crash (boom, crunch, metal tearing, debris, scraping, fireball, secondary
+  explosions — randomised, or driven by the crash effects' `sim:explosion` / `sim:impact` window
+  events — and a fire that burns down; reset silences it). Master → glue compressor → limiter →
+  soft clipper, so nothing clips. Starts on the first key press or click (browser rule).
+  `runAudioSelfTest()` renders and measures every sound in the page (levels, pitch, mix checks);
+  `node scripts/audio-check.mjs <url>` runs it in Chrome for Testing and meters the live output.
 - **Effects (`src/fx`)** — pooled GPU particles for the crash fireball (blackbody colours), a
   smoke column that drifts with the wind, burning debris and embers, and tyre smoke/dust/spray on
   touchdown; sprites that would cover too much of the screen fade out.

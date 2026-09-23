@@ -111,7 +111,9 @@ export function arcToAngle(s: SectionParams, ts: ArrayLike<number>, out: Float64
   _cum[0] = 0;
   for (let i = 1; i <= ARC_SAMPLES; i++) {
     superSectionPoint(s, (0.5 * i) / ARC_SAMPLES, _ap);
-    _cum[i] = _cum[i - 1] + Math.hypot(_ap.x - px, _ap.y - py);
+    const ex = _ap.x - px;
+    const ey = _ap.y - py;
+    _cum[i] = _cum[i - 1] + Math.sqrt(ex * ex + ey * ey);
     px = _ap.x;
     py = _ap.y;
   }

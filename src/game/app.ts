@@ -17,7 +17,8 @@
  *   ?tod=0..3                                time-of-day preset
  *   ?pause=1                                 start paused (the world still streams and renders)
  *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
- *   ?aircraft=c172rg|f16                     which aircraft to fly (src/fleet)
+ *   ?aircraft=c172rg|f16|a10                 which aircraft to fly (src/fleet)
+ *   ?spawn=range                             start 4 km short of the target range, 1,500 ft, 250 kt
  */
 import * as THREE from 'three';
 import { CONFIG, FT_TO_M } from '../config';
@@ -28,6 +29,7 @@ import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
 import type { AircraftVisualState } from '../aircraft/types';
 import { FLEET, getAircraftDef, type AircraftDef, type AircraftModelHandle } from '../fleet';
+import { loadAircraftChoice, safeLocalStorage } from '../ui/picker';
 import { createInputManager } from '../input/inputManager';
 import { createControlState, updateControls, resetControls, type SimAction } from '../input/controlSystem';
 import { createCameraRig, setCameraMode, nextCameraMode, snapCamera, updateCameraRig, shakeTarget, type CameraRigState } from '../camera/cameraRig';
@@ -37,6 +39,7 @@ import { createFpsMeter, recordFrame, fpsStats } from './fps';
 import { interpolatePose } from './interpolate';
 import { buildSimSnapshot, installSimApi } from './simApi';
 import { createSystems } from './systems';
+import { combatWorld } from '../combat/world';
 
 export interface App {
   dispose(): void;
@@ -66,12 +69,15 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(cfg.camera.chase.fov, innerWidth / innerHeight, cfg.camera.near, cfg.camera.far);
   scene.add(camera);
+  // Targets, hits and the weapons status, shared by the weapons/targets/fx/audio/HUD systems.
+  const combat = combatWorld(scene);
 
   // ── World, sky, aircraft ──────────────────────────────────────────────────
   const env = createEnvironment();
   const atmosphere = createAtmosphere(renderer, scene, { groundHeight: (x: number, z: number) => env.groundHeight(x, z) });
   // The aircraft being flown: its def carries the physics/camera config (`ac`) and the model factory.
-  let def: AircraftDef = getAircraftDef(params.get('aircraft'));
+  // URL first, then the player's last choice (saved by the aircraft picker), then the default.
+  let def: AircraftDef = getAircraftDef(params.get('aircraft') ?? loadAircraftChoice(safeLocalStorage(), cfg.menu.storageKey));
   let ac = def.config;
   let aircraft: AircraftModelHandle = def.createModel();
   scene.add(aircraft.root);
@@ -190,10 +196,27 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   });
 
   const spawn = params.get('spawn');
-  if (spawn) {
+  if (spawn === 'range') {
+    // 4 km short of the target range, pointing at it (set by the targets system; falls back to north).
+    const r = combat.range ?? { x: 0, z: -7000, headingDeg: 0 };
+    const h = (r.headingDeg * Math.PI) / 180;
+    teleport({ x: r.x - Math.sin(h) * 4000, z: r.z + Math.cos(h) * 4000, aglFt: 1500, headingDeg: r.headingDeg, speedKt: def.id === 'c172rg' ? 110 : 250 });
+  } else if (spawn) {
     const [x, z, agl, hdg, kt] = spawn.split(',').map(Number);
     if (Number.isFinite(x) && Number.isFinite(z)) teleport({ x, z, aglFt: Number.isFinite(agl) ? agl : 1500, headingDeg: Number.isFinite(hdg) ? hdg : 0, speedKt: Number.isFinite(kt) ? kt : 95 });
   }
+
+  /** window.sim.combat: weapons status, stats and the targets (for QA scripts and tests). */
+  const combatSnapshot = () => ({
+    ...combat.status,
+    stats: { ...combat.stats },
+    range: combat.range,
+    targets: combat.targets.length,
+    alive: combat.targets.filter((t) => t.alive).length,
+    list: () => combat.targets.map((t) => ({ id: t.id, kind: t.kind, alive: t.alive, health: t.health, x: t.position.x, y: t.position.y, z: t.position.z, headingDeg: t.headingDeg, group: t.group })),
+  });
+
+  Object.defineProperty(simApi.object, 'combat', { get: combatSnapshot, enumerable: true, configurable: true });
 
   const handleAction = (a: SimAction) => {
     switch (a) {
@@ -250,7 +273,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     const cu = updateControls(controlState, inFrame, paused ? 0 : frameDt);
     if (!paused) controlState = cu.state;
     for (const a of cu.actions) handleAction(a);
-    const controls: Controls = controlState.controls;
+    // Systems may add to the pilot's controls (the weapons system sets gunFiring → gun recoil).
+    const controls: Controls = paused ? controlState.controls : systems.adjustControls(controlState.controls, state, frameDt);
 
     // Physics at a fixed 120 Hz.
     let alpha = 1;
@@ -288,6 +312,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.speedBrake = controls.speedBrake ? 1 : 0;
     visual.crashed = state.phase === 'crashed';
     visual.crashAge = state.crash ? Math.max(0, state.time - state.crash.time) : 0;
+    visual.gunSpin = combat.status.gunSpin;
+    visual.gunFiring = combat.status.gunFiring;
+    visual.stores = combat.status.stores;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.
@@ -315,9 +342,11 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     focus.copy(aircraft.root.position);
     atmosphere.update(camera, frameDt, focus);
     const fps = fpsStats(fpsMeter);
-    systems.update({ state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings, def, aircraft });
+    const sysFrame = { state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings, def, aircraft };
+    systems.update(sysFrame);
 
     renderer.render(scene, camera);
+    systems.postRender(sysFrame);
 
     const info = renderer.info;
     renderStats.calls = info.render.calls;

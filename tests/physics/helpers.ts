@@ -3,7 +3,7 @@
  * control set or a tiny "pilot" function, simple autopilot loops, and a flat
  * test world with a real runway rectangle (grass elsewhere).
  */
-import { CONFIG, MS_TO_KT, RAD_TO_DEG } from '../../src/config';
+import { CONFIG, F16_AIRCRAFT, MS_TO_KT, RAD_TO_DEG, type Config } from '../../src/config';
 import type { AircraftState, Controls, Environment } from '../../src/types';
 import { step, FLAT_ENV, createTrimmedState, type TrimRequest } from '../../src/physics';
 import { isOnRunway } from '../../src/world/runway';
@@ -19,7 +19,12 @@ export interface FlyOptions {
   until?: (s: AircraftState) => boolean;
   /** Called after every step. */
   each?: (s: AircraftState) => void;
+  /** Aircraft config (default: the Cessna). */
+  cfg?: Config;
 }
+
+/** The F-16's full config, as the fleet passes it to the physics. */
+export const F16_CFG: Config = { ...CONFIG, aircraft: F16_AIRCRAFT };
 
 /** Step the physics at the fixed 120 Hz rate for `seconds` of simulated time. */
 export function fly(state: AircraftState, pilot: Pilot, seconds: number, opts: FlyOptions = {}): AircraftState {
@@ -28,7 +33,7 @@ export function fly(state: AircraftState, pilot: Pilot, seconds: number, opts: F
   let s = state;
   for (let i = 0; i < n; i++) {
     const c = typeof pilot === 'function' ? pilot(s) : pilot;
-    s = step(s, c, DT, env);
+    s = step(s, c, DT, env, opts.cfg);
     opts.each?.(s);
     if (opts.until?.(s)) break;
   }
@@ -48,8 +53,8 @@ export const RUNWAY_ENV: Environment = {
 };
 
 /** A trimmed, airborne aircraft plus the controls that hold it there. */
-export function trimmed(req: Partial<TrimRequest> = {}): { state: AircraftState; controls: Controls } {
-  return createTrimmedState({ altitudeM: 1000, iasKt: 90, flightPathDeg: 0, flapsNotch: 0, gearDown: true, headingDeg: 0, ...req });
+export function trimmed(req: Partial<TrimRequest> = {}, cfg: Config = CONFIG): { state: AircraftState; controls: Controls } {
+  return createTrimmedState({ altitudeM: 1000, iasKt: 90, flightPathDeg: 0, flapsNotch: 0, gearDown: true, headingDeg: 0, ...req }, FLAT_ENV, cfg);
 }
 
 /** Aileron command that holds a bank angle (deg) with rate damping. */

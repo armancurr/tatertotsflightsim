@@ -17,6 +17,44 @@ function tilePixels(t: number) {
   return px;
 }
 
+/**
+ * Alpha statistics of a tile: fraction of the covered texels that are nearly opaque (> 0.9) or
+ * clearly translucent (< 0.75), the largest alpha step between neighbouring texels, and how much the
+ * silhouette radius (a > 0.5, measured from the alpha centroid) varies with angle (std / mean).
+ */
+function alphaStats(t: number) {
+  const a = tilePixels(t).map((p) => p.a / 255);
+  let cov = 0, opaque = 0, soft = 0, step = 0, sx = 0, sy = 0, sw = 0;
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      const v = a[y * TILE + x];
+      if (v > 0.03) {
+        cov++;
+        if (v > 0.9) opaque++;
+        if (v < 0.75) soft++;
+      }
+      if (x + 1 < TILE) step = Math.max(step, Math.abs(a[y * TILE + x + 1] - v));
+      if (y + 1 < TILE) step = Math.max(step, Math.abs(a[(y + 1) * TILE + x] - v));
+      sx += x * v; sy += y * v; sw += v;
+    }
+  }
+  const cx = sx / sw, cy = sy / sw;
+  const radii: number[] = [];
+  for (let k = 0; k < 64; k++) {
+    const ang = (k / 64) * Math.PI * 2;
+    let r = 0;
+    for (let s = 0; s < TILE; s += 0.5) {
+      const x = Math.round(cx + Math.cos(ang) * s), y = Math.round(cy + Math.sin(ang) * s);
+      if (x < 0 || y < 0 || x >= TILE || y >= TILE) break;
+      if (a[y * TILE + x] > 0.5) r = s;
+    }
+    radii.push(r);
+  }
+  const m = radii.reduce((s, r) => s + r, 0) / radii.length;
+  const sd = Math.sqrt(radii.reduce((s, r) => s + (r - m) ** 2, 0) / radii.length);
+  return { opaqueFrac: opaque / cov, softFrac: soft / cov, maxStep: step, radiusCV: m > 0 ? sd / m : 0 };
+}
+
 describe('generateParticleAtlas', () => {
   it('has the documented layout', () => {
     expect(atlas.width).toBe(TILE * ATLAS_COLS);
@@ -56,6 +94,22 @@ describe('generateParticleAtlas', () => {
     for (const p of px) {
       expect(Math.abs(p.r - 128)).toBeLessThanOrEqual(1);
       expect(Math.abs(p.g - 128)).toBeLessThanOrEqual(1);
+    }
+  });
+  it('smoke puffs are soft, ragged billows — not solid discs (restored)', () => {
+    for (const t of SMOKE_TILES) {
+      const s = alphaStats(t);
+      expect(s.opaqueFrac, `tile ${t} opaque`).toBeLessThan(0.3);
+      expect(s.softFrac, `tile ${t} soft`).toBeGreaterThan(0.5);
+      expect(s.radiusCV, `tile ${t} not a circle`).toBeGreaterThan(0.07);
+      expect(s.maxStep, `tile ${t} step`).toBeLessThan(0.25);
+    }
+  });
+  it('flames are soft licks — not clip-art icons with hard edges (restored)', () => {
+    for (const t of FLAME_TILES) {
+      const s = alphaStats(t);
+      expect(s.maxStep, `tile ${t} step`).toBeLessThan(0.25);
+      expect(s.opaqueFrac, `tile ${t} opaque`).toBeLessThan(0.35);
     }
   });
   it('flames are tongues: mass in the lower part, narrowing to the top', () => {

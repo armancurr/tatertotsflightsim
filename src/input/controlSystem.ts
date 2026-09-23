@@ -67,6 +67,8 @@ export type SimAction =
   | 'mute'
   | 'timeOfDay'
   | 'cameraNext'
+  | 'fireMissile'
+  | 'lockTarget'
   | CameraModeAction;
 
 export interface AxisState {
@@ -105,6 +107,7 @@ function defaultControls(): Controls {
     parkingBrake: false,
     engineOn: true,
     speedBrake: false,
+    trigger: false,
   };
 }
 
@@ -155,6 +158,8 @@ const ACTION_BINDINGS: readonly (readonly [KeyName, SimAction])[] = [
   ['cameraChase', 'camera:chase'],
   ['cameraExternal', 'camera:external'],
   ['cameraOrbit', 'camera:orbit'],
+  ['fireMissile', 'fireMissile'],
+  ['lockTarget', 'lockTarget'],
 ];
 
 /** Symmetric deadzone with rescale so the output still spans 0..1 outside it. */
@@ -308,6 +313,7 @@ export function updateControls(
     parkingBrake,
     speedBrake,
     engineOn,
+    trigger: isDown(keys.fireGun),
   };
   return {
     state: {

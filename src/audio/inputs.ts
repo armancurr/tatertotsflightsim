@@ -8,6 +8,7 @@ import type { AircraftState, CameraMode, Controls, SurfaceType, Vec3 } from '../
 import type { AudioInputs } from './types';
 import { gearWarning as gearWarningOf } from '../ui/gearWarning';
 import { gearStateFromPos } from '../ui/instruments';
+import { qRotate } from '../math/quat';
 
 export interface AudioInputSource {
   state: AircraftState;
@@ -33,6 +34,7 @@ const DEG = Math.PI / 180;
 /** A camera moving further than this in one frame was teleported (mode switch/reset), m. */
 const TELEPORT_M = 60;
 const CLOSING_TAU = 0.15;
+const TAIL = { x: 0, y: 0, z: 1 };
 
 export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => AudioInputs {
   let first = true;
@@ -44,11 +46,14 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
   const lastCam = { x: 0, y: 0, z: 0 };
   let hasLastCam = false;
   let closing = 0;
+  let lastSpeedBrake: boolean | null = null;
+  let speedBrakeTimer = 0;
   // Reused output object: no per-frame allocation. Callers must not keep it across frames.
   const out: AudioInputs = {
     rpm: 0, power: 0, engineRunning: false, starting: false, airspeedKt: 0, onGround: true, groundSpeedKt: 0,
     stallWarning: false, gearMoving: false, flapsMoving: false, touchdownFpm: null, crashed: false,
     cameraMode: 'chase', paused: false, brake: 0, surface: 'runway', gearWarning: false,
+    afterburner: 0, speedBrakeMoving: false, aft: 0,
   };
 
   return (s) => {
@@ -88,9 +93,16 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
       stallWarning = f(d.alpha) / DEG >= stallDeg - cfg.aircraft.stall.warningMarginDeg && iasKt >= cfg.audio.stallHornMinKt;
     }
 
+    // Speed brake (jets): the hydraulics run for the travel time after every toggle.
+    const sb = !!s.controls.speedBrake;
+    if (lastSpeedBrake !== null && sb !== lastSpeedBrake) speedBrakeTimer = cfg.audio.jet.speedBrakeTravelS;
+    else speedBrakeTimer = Math.max(0, speedBrakeTimer - dt);
+    lastSpeedBrake = sb;
+
     // Listener: distance and Doppler closing speed (aircraft vs camera velocity along the line of sight).
     let listenerDistanceM: number | undefined;
     let closingSpeedMs: number | undefined;
+    let aft: number | undefined;
     const cam = s.cameraPosition;
     if (cam && Number.isFinite(cam.x) && Number.isFinite(cam.y) && Number.isFinite(cam.z)) {
       const p = st.position;
@@ -111,6 +123,11 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
       lastCam.z = cam.z;
       hasLastCam = true;
       if (dist > 1e-3 && Number.isFinite(dist)) {
+        // Directivity: the tail (body +Z) direction vs the direction to the camera.
+        const tail = qRotate(st.orientation, TAIL);
+        const tl = Math.hypot(tail.x, tail.y, tail.z);
+        const c = (tail.x * rx + tail.y * ry + tail.z * rz) / (tl * dist);
+        aft = Number.isFinite(c) ? Math.max(-1, Math.min(1, c)) : undefined;
         const v = st.velocity;
         const target = ((f(v.x) - cvx) * rx + (f(v.y) - cvy) * ry + (f(v.z) - cvz) * rz) / dist;
         const k = dt > 0 ? 1 - Math.exp(-dt / CLOSING_TAU) : 0;
@@ -153,6 +170,9 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
     out.closingSpeedMs = closingSpeedMs;
     out.crashSpeedKt = crashed && st.crash ? f(st.crash.speedKt, iasKt) : undefined;
     out.gearWarning = !!gearHorn && !crashed;
+    out.afterburner = Math.max(0, Math.min(1, f(st.engine.afterburner ?? 0)));
+    out.speedBrakeMoving = speedBrakeTimer > 0;
+    out.aft = aft;
     return out;
   };
 }

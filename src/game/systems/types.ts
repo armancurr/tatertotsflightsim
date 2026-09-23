@@ -67,9 +67,19 @@ export interface SimSystem {
   ready?(camera: THREE.PerspectiveCamera): Promise<void>;
   /** Instrument readings (one system provides them: the HUD). */
   readings?(state: AircraftState, controls: Controls, dt: number): InstrumentReadings | null;
+  /**
+   * Adjust the pilot's controls just before the physics steps (chained in system order), e.g. the
+   * weapons system sets `gunFiring` so the physics applies the gun's recoil. Return a new object.
+   */
+  adjustControls?(controls: Controls, state: AircraftState, dt: number): Controls;
   /** Camera shake intensity 0..1 (the max over systems is used). */
   cameraShake?(state: AircraftState): number;
   update?(f: SystemFrame): void;
+  /**
+   * After the main scene render (same frame): draw extra views, e.g. the Maverick seeker picture
+   * in a corner viewport (restore the renderer's viewport/scissor/target when done).
+   */
+  postRender?(f: SystemFrame): void;
   onAction?(a: SimAction): void;
   onReset?(which: 'runway' | 'approach' | 'teleport'): void;
   /** The player picked another aircraft (the new model is already in the scene; a reset follows). */

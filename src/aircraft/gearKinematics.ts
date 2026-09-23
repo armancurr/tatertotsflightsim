@@ -264,14 +264,16 @@ function segDist(px: number, pz: number, ax: number, az: number, bx: number, bz:
   const dx = bx - ax;
   const dz = bz - az;
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz)));
-  return Math.hypot(px - ax - t * dx, pz - az - t * dz);
+  const ex = px - ax - t * dx;
+  const ez = pz - az - t * dz;
+  return Math.sqrt(ex * ex + ez * ez);
 }
 
 /** Signed plan-view distance (m) into the belly openings: > 0 inside a well or slot, < 0 on skin. */
 export function wellCutDistance(x: number, z: number): number {
   const m = WELL.main;
   const ax = Math.abs(x);
-  const wheel = m.r - Math.hypot(ax - m.cx, z - m.cz);
+  const wheel = m.r - Math.sqrt((ax - m.cx) * (ax - m.cx) + (z - m.cz) * (z - m.cz));
   const slot = m.slotHalfWidth - segDist(ax, z, m.slotX0, m.slotZ0, m.cx, m.cz);
   const n = WELL.nose;
   const nose = Math.min(n.halfWidth - ax, z - n.z0, n.z1 - z);

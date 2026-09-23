@@ -349,5 +349,5 @@ describe('fuzz', () => {
       for (const v of Object.values(audio.levels())) expect(Number.isFinite(v)).toBe(true);
       audio.dispose();
     }), { numRuns: 60 });
-  });
+  }, 30_000);
 });

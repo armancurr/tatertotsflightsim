@@ -97,6 +97,13 @@ export interface Controls {
   engineOn: boolean;
   /** Speed brake extended (jets; ignored by aircraft without one). */
   speedBrake?: boolean;
+  /** Gun trigger held (pilot input; the weapons system decides whether rounds actually leave). */
+  trigger?: boolean;
+  /**
+   * Rounds are leaving the gun this step (set by the weapons system: trigger + barrels at speed +
+   * ammo left). The physics applies `cfg.weapons.gun.recoilN` at the muzzle while it is true.
+   */
+  gunFiring?: boolean;
 }
 
 /**

@@ -9,6 +9,7 @@
 import { CONFIG, type Config } from '../config';
 import type { Controls, EngineState } from '../types';
 import { clamp, expApproach } from '../math/vec3';
+import { jetCoreTarget, jetThrottleForCore, jetThrust, steadyJetEngine } from './jet';
 
 /** Fraction of max power the engine settles at for a throttle position and air density. */
 export function powerTarget(throttle: number, density: number, cfg: Config = CONFIG): number {
@@ -121,4 +122,26 @@ export function steadyEngine(power: number, density: number, axialSpeed: number,
     rpm: runningRpm(power, density, iasKt, cfg),
     thrust: propThrust(power, axialSpeed, density, cfg),
   };
+}
+
+// ─── Engine-type dispatch (piston or jet), used by the trim solver and state creation ──────────
+
+/** Thrust (N) of either engine type at a steady power (piston: power fraction; jet: core fraction, no AB). */
+export function engineThrust(power: number, axialSpeed: number, density: number, mach: number, cfg: Config = CONFIG): number {
+  return cfg.aircraft.engine.type === 'jet' ? jetThrust(power, 0, density, mach, cfg) : propThrust(power, axialSpeed, density, cfg);
+}
+
+/** Steady power (piston: fraction of max power; jet: core fraction) a throttle position settles at. */
+export function enginePowerTarget(throttle: number, density: number, cfg: Config = CONFIG): number {
+  return cfg.aircraft.engine.type === 'jet' ? jetCoreTarget(throttle, cfg) : powerTarget(throttle, density, cfg);
+}
+
+/** Throttle that gives a steady power (unclamped for pistons). */
+export function engineThrottleForPower(power: number, density: number, cfg: Config = CONFIG): number {
+  return cfg.aircraft.engine.type === 'jet' ? jetThrottleForCore(power, cfg) : throttleForPower(power, density, cfg);
+}
+
+/** A warm engine running steadily at `power` (either type). */
+export function steadyEngineAny(power: number, density: number, axialSpeed: number, iasKt: number, mach: number, cfg: Config = CONFIG): EngineState {
+  return cfg.aircraft.engine.type === 'jet' ? steadyJetEngine(power, density, mach, cfg) : steadyEngine(power, density, axialSpeed, iasKt, cfg);
 }

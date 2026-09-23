@@ -4,6 +4,8 @@
  * hud.ts (--fsh-fs = base font size in px).
  */
 
+import { CONTROLS_CSS } from './controls';
+
 export const HUD_STYLE_ID = 'fsh-style';
 
 export const HUD_CSS = `
@@ -28,6 +30,7 @@ export const HUD_CSS = `
   -webkit-backdrop-filter: blur(9px) saturate(1.25);
 }
 .fsh-root canvas { position: absolute; display: block; }
+.fsh-jet { position: absolute; }
 .fsh-cluster { border-radius: 16px; }
 .fsh-compass { border-radius: 12px; }
 .fsh-strip { border-radius: 12px; }
@@ -113,6 +116,7 @@ export const HUD_CSS = `
 .fsh-help-keys { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; align-items: center; }
 .fsh-help-sep { opacity: 0.45; margin: 0 2px; }
 @media (max-width: 700px) { .fsh-help-grid { grid-template-columns: 1fr; } }
+${CONTROLS_CSS}
 `;
 
 const users = new WeakMap<Document, number>();

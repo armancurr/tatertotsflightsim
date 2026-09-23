@@ -62,7 +62,7 @@ describe('keyboard adapter', () => {
       expect(key('keydown', code).defaultPrevented).toBe(true);
       expect(key('keyup', code).defaultPrevented).toBe(true);
     }
-    expect(key('keydown', 'KeyQ').defaultPrevented).toBe(false);
+    expect(key('keydown', 'KeyK').defaultPrevented).toBe(false);
     expect(key('keydown', 'F5').defaultPrevented).toBe(false);
   });
   it('leaves browser shortcuts alone (Cmd/Ctrl + key is not a control input)', () => {

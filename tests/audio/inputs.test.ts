@@ -138,3 +138,62 @@ describe('createAudioInputTracker', () => {
     }));
   });
 });
+
+describe('jet inputs', () => {
+  const base = { cameraMode: 'external' as const, paused: false, dt: DT };
+  it('passes the afterburner through (0 for pistons without the field), clamped to 0..1', () => {
+    const track = createAudioInputTracker();
+    const eng = (ab?: number) => ({ running: true, starting: false, startTimer: 0, failed: false, power: 1, rpm: 100, thrust: 0, afterburner: ab });
+    expect(track({ ...base, state: state(), controls: controls() }).afterburner).toBe(0);
+    expect(track({ ...base, state: state({ engine: eng(0.7) }), controls: controls() }).afterburner).toBe(0.7);
+    expect(track({ ...base, state: state({ engine: eng(3) }), controls: controls() }).afterburner).toBe(1);
+    expect(track({ ...base, state: state({ engine: eng(Number.NaN) }), controls: controls() }).afterburner).toBe(0);
+  });
+  it('the speed brake runs the hydraulics for speedBrakeTravelS after each toggle', () => {
+    const track = createAudioInputTracker();
+    const travel = CONFIG.audio.jet.speedBrakeTravelS;
+    expect(track({ ...base, state: state(), controls: controls({ speedBrake: false }) }).speedBrakeMoving).toBe(false);
+    expect(track({ ...base, state: state(), controls: controls({ speedBrake: true }) }).speedBrakeMoving).toBe(true);
+    let moving = true;
+    let t = 0;
+    while (moving && t < 10) {
+      moving = !!track({ ...base, state: state(), controls: controls({ speedBrake: true }) }).speedBrakeMoving;
+      t += DT;
+    }
+    expect(t).toBeGreaterThan(travel - 0.1);
+    expect(t).toBeLessThan(travel + 0.2);
+    expect(track({ ...base, state: state(), controls: controls({ speedBrake: false }) }).speedBrakeMoving).toBe(true);
+  });
+  it('aft: +1 with the camera straight behind the tail, −1 ahead of the nose, 0 abeam', () => {
+    const track = createAudioInputTracker();
+    // identity orientation: nose −Z (north), tail +Z
+    const at = (cam: { x: number; y: number; z: number }) => track({ ...base, state: state({ position: { x: 0, y: 100, z: 0 } }), controls: controls(), cameraPosition: cam }).aft!;
+    expect(at({ x: 0, y: 100, z: 30 })).toBeCloseTo(1, 6);
+    expect(at({ x: 0, y: 100, z: -30 })).toBeCloseTo(-1, 6);
+    expect(at({ x: 30, y: 100, z: 0 })).toBeCloseTo(0, 6);
+    // heading east (yaw −90° about +Y): the tail points west (−X)
+    const s = Math.SQRT1_2;
+    const east = state({ position: { x: 0, y: 100, z: 0 }, orientation: { x: 0, y: -s, z: 0, w: s } });
+    expect(track({ ...base, state: east, controls: controls(), cameraPosition: { x: -30, y: 100, z: 0 } }).aft!).toBeCloseTo(1, 6);
+  });
+  it('fuzz: jet inputs are always finite and bounded', () => {
+    const wild = fc.oneof(fc.double(), fc.constantFrom(Number.NaN, Infinity, -Infinity));
+    fc.assert(fc.property(fc.array(fc.tuple(wild, wild, wild, fc.boolean()), { minLength: 1, maxLength: 20 }), (rows) => {
+      const track = createAudioInputTracker();
+      for (const [ab, qx, cx, sb] of rows) {
+        const a = track({
+          ...base, dt: DT,
+          state: state({ orientation: { x: qx, y: 0.2, z: 0, w: 0.9 }, engine: { running: true, starting: false, startTimer: 0, failed: false, power: 1, rpm: 100, thrust: 0, afterburner: ab } }),
+          controls: controls({ speedBrake: sb }), cameraPosition: { x: cx, y: 0, z: 5 },
+        });
+        expect(Number.isFinite(a.afterburner!)).toBe(true);
+        expect(a.afterburner!).toBeGreaterThanOrEqual(0);
+        expect(a.afterburner!).toBeLessThanOrEqual(1);
+        if (a.aft !== undefined) {
+          expect(Number.isFinite(a.aft)).toBe(true);
+          expect(Math.abs(a.aft)).toBeLessThanOrEqual(1 + 1e-9);
+        }
+      }
+    }));
+  });
+});

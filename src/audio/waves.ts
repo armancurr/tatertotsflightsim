@@ -188,3 +188,80 @@ export function noiseSamples(kind: NoiseKind, n: number, seed: number): Float32A
   for (let i = 0; i < n; i++) out[i] *= 0.99;
   return out;
 }
+
+/**
+ * Afterburner "crackle": sparse, positively skewed pressure spikes (sharp rise, fast decay, slower
+ * shallow undershoot) of random, heavy-tailed strength — the signature of a shock-laden supersonic
+ * jet. `density` = probability of a spike per sample. Loops seamlessly (spikes wrap around).
+ */
+export function crackleSamples(n: number, seed: number, density: number): Float32Array {
+  const rnd = mulberry32(seed);
+  const len = Math.max(1, Math.floor(n));
+  const s = new Float32Array(len);
+  const d = Math.min(0.1, Math.max(1e-5, Number.isFinite(density) ? density : 0.003));
+  for (let i = 0; i < len; i++) {
+    if (rnd() >= d) continue;
+    const amp = 0.08 + 0.92 * Math.pow(rnd(), 2.2);
+    const width = 1.5 + rnd() * 4;
+    const span = Math.ceil(width * 8);
+    for (let j = 0; j < span; j++) {
+      const x = j / width;
+      s[(i + j) % len] += amp * (Math.exp(-x) - 0.3 * Math.exp(-x / 3) * Math.min(1, x));
+    }
+  }
+  let peak = 0;
+  for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(s[i]));
+  if (peak > 0) for (let i = 0; i < len; i++) s[i] = (s[i] / peak) * 0.99;
+  return s;
+}
+
+/**
+ * Fan "buzz-saw": supersonic fan-blade tips radiate at every harmonic of the shaft rate, with
+ * uneven, blade-to-blade-irregular amplitudes (multiple pure tones). One shaft revolution.
+ */
+export function buzzsawWaveform(n: number, seed: number, harmonics = 36): Float32Array {
+  const rnd = mulberry32(seed);
+  const s = new Float32Array(n);
+  const amps: number[] = [];
+  const phases: number[] = [];
+  for (let k = 1; k <= harmonics; k++) {
+    amps.push(Math.pow(k, -0.75) * (0.35 + 0.9 * rnd()));
+    phases.push(2 * Math.PI * rnd());
+  }
+  for (let j = 0; j < n; j++) {
+    const t = j / n;
+    let v = 0;
+    for (let k = 1; k <= harmonics; k++) v += amps[k - 1] * Math.sin(2 * Math.PI * k * t + phases[k - 1]);
+    s[j] = v;
+  }
+  return normalise(s);
+}
+
+/** Turbine whine partial: a sine with a little 2nd/3rd harmonic (blade-pass tones are not pure). */
+export function whineWaveform(n: number): Float32Array {
+  const s = new Float32Array(n);
+  for (let j = 0; j < n; j++) {
+    const t = (2 * Math.PI * j) / n;
+    s[j] = Math.sin(t) + 0.22 * Math.sin(2 * t + 0.4) + 0.07 * Math.sin(3 * t + 1.1);
+  }
+  return normalise(s);
+}
+
+/**
+ * Soft-clipper transfer curve for a WaveShaperNode over input −1..1: linear up to `knee`, then a tanh
+ * shoulder that approaches (never reaches) `ceiling`. Monotone, odd, |out| < ceiling.
+ */
+export function softClipCurve(n: number, knee: number, ceiling: number): Float32Array {
+  const len = Math.max(3, Math.floor(n) | 1);
+  const c = new Float32Array(len);
+  const k = Math.min(0.95, Math.max(0.1, knee));
+  const top = Math.min(1, Math.max(k + 0.01, ceiling));
+  const room = top - k;
+  for (let i = 0; i < len; i++) {
+    const x = (i / (len - 1)) * 2 - 1;
+    const a = Math.abs(x);
+    const y = a <= k ? a : k + room * Math.tanh((a - k) / room);
+    c[i] = Math.sign(x) * Math.min(y, top - 1e-6);
+  }
+  return c;
+}

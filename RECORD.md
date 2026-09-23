@@ -4,13 +4,12 @@ The log of what was built, decisions taken, failures met and their causes. Newes
 
 ## 2026-09-22 — Wave 0 (orchestrator)
 
-- Project lives at `/Users/jt/Code/Flight Simulator` (the spec's exact folder name, placed in
-  the Code folder per JT's instruction), a git repo on `main`.
+- Project folder `Flight Simulator` (the spec's exact folder name), a git repo on `main`.
 - Aircraft: **Cessna 172RG Cutlass RG** — the real 172 variant with retractable gear, so the
   spec's gear control is authentic rather than invented.
 - Stack: Three.js r186 + TypeScript + Vite 8 + Vitest 5. `npm start` → 127.0.0.1:8092.
-- npm's global cache (`~/.npm`) has root-owned files (EACCES); installs use
-  `npm_config_cache=<scratchpad>/npm-cache`. Cause: an old `sudo npm`. Not fixed (outside the project).
+- On the development machine npm's global cache had root-owned files (EACCES, from an old
+  `sudo npm`), so installs there used a private cache directory. A machine issue, not a project one.
 - Playwright's bundled headless shell for 1.63 isn't downloaded; `scripts/shot.mjs` uses the
   installed Google Chrome (`channel: 'chrome'`) instead, which also gives real Metal GPU WebGL
   (`ANGLE Metal Renderer: Apple M2 Max`).
@@ -94,7 +93,7 @@ Everything remaining is in RESUME.md.
   `window.sim.teleport/setTimeOfDay/debug/render`; URL `?spawn=x,z,aglFt,hdg,kt&cam=&tod=&pause=1&no=`;
   Vite watch-ignores anchored to the checkout root so worktree dev servers hot-reload.
 - Wave 3: 10 Opus agents in worktrees (aircraft, airport, buildings, roads+cars, traffic, terrain,
-  water, sky, trees, ux) — briefs in the session scratchpad `briefs/common3.md`.
+  water, sky, trees, ux) — each with a written brief (kept outside the repository).
 - **Play-test bug #2** (flying the real app in Chrome): a 1.5 s ↓ at Vr lifted off, the elevator
   snapped back to neutral in 0.3 s, the nose fell toward the 76-kt trim, the aircraft settled back
   on the runway; G pressed during that hop retracted the gear → "Gear-up landing" crash.
@@ -170,3 +169,21 @@ Headless check of the merged build (Chrome for Testing): clean console, 227 draw
 triangles, every system < 0.03 ms CPU. The main dev server had to be restarted after the merge
 (Vite cached the deleted `src/world/water.ts`). New docs: `README.md`, `ELEVATOR_PITCH.md`,
 `ARCHITECTURE.md`, generated `REPO_MAP.md` (`npm run repo-map`), rewritten `RESUME.md`.
+
+## 2026-09-22 — Wave 4: Tater's Flight Sim (open-source prep, F-16, crash, spins)
+
+JT: rename to **Tater's Flight Sim** ("Tater Tots Flight Simulator"), open-source it, make the
+crash spectacular (fluid, break-apart, fireball), real spins and correct stalls, an F-16 selectable
+from a top-right dropdown (keep the Cessna; built for more aircraft later), a potato-with-goggles-
+and-cape livery, a controls menu, working restart, finish other aircraft, clouds, cars, fix the
+cockpit view — and later: the attitude indicator turns the wrong way; every gauge must work with
+unit, functional and fuzz tests.
+
+Orchestrator contracts first (commits 4a71946…): `src/fleet` (AircraftDef, AircraftModelHandle,
+BreakupPart, FLEET with the Cessna and an F-16 placeholder), live aircraft switching in `app.ts`
+(`?aircraft=`, `sim.selectAircraft`, `SystemContext.actions` for the menu, `onAircraftChange`),
+`F16_AIRCRAFT` with the final real-world geometry (15.06 m, 9.96 m span, 4.88 m tall, 4.00 m
+wheelbase, 2.36 m track) shared by the physics and the model, jet fields (afterburner, speed brake
+on X), page title "Tater's Flight Sim · Tater Tots Flight Simulator", package `taters-flight-sim`.
+Suite 1,438/1,438. Then 10 worktree agents: physics, f16, cessna, crash, traffic, cars, clouds, ui,
+audio, oss.

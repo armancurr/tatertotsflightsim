@@ -71,6 +71,26 @@ export function addSoot<T extends THREE.MeshStandardMaterial>(m: T, char: { valu
   return m;
 }
 
+/**
+ * Cabin fill light: sunlight scattered round the cabin by its own bright surfaces and the big
+ * windows (single-sun + sky-probe lighting leaves the side facing away from the sun black). An
+ * extra ambient irradiance (linear RGB, shared uniform) added to the indirect diffuse term; the
+ * model sets it from the scene's sun every frame, so it fades with the daylight.
+ */
+export function addCabinFill<T extends THREE.MeshStandardMaterial>(m: T, fill: { value: THREE.Color }): T {
+  const prev = m.onBeforeCompile;
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.onBeforeCompile = (shader, renderer) => {
+    prev.call(m, shader, renderer);
+    shader.uniforms.uCabinFill = fill;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uCabinFill;')
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\nreflectedLight.indirectDiffuse += uCabinFill * BRDF_Lambert( diffuseColor.rgb );');
+  };
+  m.customProgramCacheKey = () => prevKey() + '|cabinFill';
+  return m;
+}
+
 /** Adds per-vertex roughness/metalness (attribute `rm`) to a standard/physical material. */
 function perVertexRM<T extends THREE.MeshStandardMaterial>(m: T, key: string): T {
   m.onBeforeCompile = (shader) => {
@@ -109,6 +129,7 @@ export function createMaterials(tex: FuselageTextures | null): AircraftMaterials
     map: tex?.map ?? null,
     roughnessMap: tex?.orm ?? null,
     clearcoatMap: tex?.orm ?? null,
+    normalMap: tex?.normal ?? null,
     roughness: tex ? 1 : 0.3,
     alphaTest: tex ? 0.5 : 0,
     alphaToCoverage: !!tex,
