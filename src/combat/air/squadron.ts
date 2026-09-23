@@ -14,7 +14,7 @@ import type { AirKind, CombatEvent, GroundTarget } from '../types';
 import type { CombatWorld } from '../world';
 import { newFlightState, stepFlight, type FlightSpec, type FlightState } from './flight';
 import { createPilot, steer, threaten, type Pilot, type PlayerInfo, type ThreatKind } from './pilot';
-import { deltaS, newPathSample, samplePath } from './paths';
+import { newPathSample, samplePath } from './paths';
 import { planAir, slotPoint, type SlotPlan } from './plan';
 import { startFall, stepFall, type Fall } from './wreck';
 import { FlarePool, groundImpact, partTrail, wreckTrail } from './airFx';
@@ -488,7 +488,6 @@ export function createAirSquadron(o: AirSquadronOptions): AirSquadron {
       entities.length = 0;
     },
   };
-  void deltaS;
   return self;
 }
 
