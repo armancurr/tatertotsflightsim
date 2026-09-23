@@ -7,7 +7,7 @@ import type { TargetKind, WeaponKind } from '../combat/types';
 import { gunShortName, missileLongName } from './weaponsHudMath';
 import type { CrashRecord, InstrumentReadings, TouchdownRecord } from '../types';
 import { gearFlags } from './gearWarning';
-import { flapPlacardKt } from '../physics/aero';
+import { flapPlacardKt } from '../physics/placards';
 
 export type MessageLevel = 'info' | 'warn' | 'good';
 

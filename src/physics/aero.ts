@@ -9,6 +9,8 @@ import type { Vec3 } from '../types';
 import { clamp, smoothstep } from '../math/vec3';
 import { airDataFromBodyVelocity, pqrFromOmega, torqueFromLMN } from './frames';
 
+export { flapPlacardKt } from './placards';
+
 const DEG = Math.PI / 180;
 
 /** 0 (flaps up) .. 1 (full flaps). */
@@ -26,22 +28,6 @@ export function aileronEffectiveness(flapsDeg: number, cfg: Config = CONFIG): nu
   if (up === undefined || !Number.isFinite(up)) return 1;
   const f = clamp(Number.isFinite(flapsDeg) ? flapsDeg : 0, 0, 1);
   return up + (1 - up) * f;
-}
-
-/**
- * Flap placard speed (kt) for a flap angle: Infinity with the flaps up; with flaps.placardKt the
- * placard of the lowest notch at or beyond the angle (a flap in transit counts as the next notch
- * down), otherwise flaps.vfeKt.
- */
-export function flapPlacardKt(flapsDeg: number, cfg: Config = CONFIG): number {
-  const fl = cfg.aircraft.flaps;
-  if (!(flapsDeg > 0.5)) return Infinity;
-  const table = fl.placardKt;
-  if (!table || table.length !== fl.notchesDeg.length) return fl.vfeKt;
-  for (let i = 1; i < fl.notchesDeg.length; i++) {
-    if (fl.notchesDeg[i] >= flapsDeg - 0.5) return table[i];
-  }
-  return table[table.length - 1];
 }
 
 /** Positive stall angle of attack (rad) for a flap deflection. */
