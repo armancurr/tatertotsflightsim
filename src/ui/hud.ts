@@ -297,7 +297,8 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   const jetSlot = slot(jetEl);
   jetSlot.el.setAttribute('data-hud', 'jet');
   const jetState = createJetHudState();
-  const jetKey = new Float64Array(18).fill(NaN);
+  const jetKey = new Float64Array(17).fill(NaN);
+  const jetNext = new Float64Array(17);
   let jetDirty = true;
   let menuOpen = false;
 
@@ -474,18 +475,28 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   /** The jet HUD redraws only when something it shows has changed (quantised to what is visible). */
   const drawJet = (r: JetReadings) => {
     trackJetHud(jetState, r);
-    const k = jetKey;
-    const vals = [
-      Math.round(r.pitchDeg * 20), Math.round(r.rollDeg * 20), Math.round(r.headingDeg * 10), Math.round(r.airspeedKt),
-      Math.round(r.altitudeFt / 10), Math.round(r.aoaDeg * 10), Math.round(r.gLoad * 10), Math.round((r.mach ?? 0) * 100),
-      Math.round(r.throttlePct), Math.round((r.afterburner ?? 0) * 20), r.gear === 'down' ? 0 : r.gear === 'up' ? 1 : 2,
-      r.speedBrake ? 1 : 0, Math.round(r.verticalSpeedFpm / 10), Math.round(r.altitudeAglFt / 10), Math.round((r.betaDeg ?? 0) * 10),
-      Math.round(jetState.maxG * 10), r.engineStatus === 'RUNNING' ? 0 : 1, 0,
-    ];
+    const v = jetNext;
+    v[0] = Math.round(r.pitchDeg * 20);
+    v[1] = Math.round(r.rollDeg * 20);
+    v[2] = Math.round(r.headingDeg * 10);
+    v[3] = Math.round(r.airspeedKt);
+    v[4] = Math.round(r.altitudeFt / 10);
+    v[5] = Math.round(r.aoaDeg * 10);
+    v[6] = Math.round(r.gLoad * 10);
+    v[7] = Math.round((r.mach ?? 0) * 100);
+    v[8] = Math.round(r.throttlePct);
+    v[9] = Math.round((r.afterburner ?? 0) * 20);
+    v[10] = r.gear === 'down' ? 0 : r.gear === 'up' ? 1 : 2;
+    v[11] = r.speedBrake ? 1 : 0;
+    v[12] = Math.round(r.verticalSpeedFpm / 10);
+    v[13] = Math.round(r.altitudeAglFt / 10);
+    v[14] = Math.round((r.betaDeg ?? 0) * 10);
+    v[15] = Math.round(jetState.maxG * 10);
+    v[16] = r.engineStatus === 'RUNNING' ? 0 : 1;
     let same = !jetDirty;
-    for (let i = 0; i < vals.length; i++) {
-      if (k[i] !== vals[i]) same = false;
-      k[i] = vals[i];
+    for (let i = 0; i < v.length; i++) {
+      if (jetKey[i] !== v[i] && !(Number.isNaN(jetKey[i]) && Number.isNaN(v[i]))) same = false;
+      jetKey[i] = v[i];
     }
     if (same) return;
     jetDirty = false;
