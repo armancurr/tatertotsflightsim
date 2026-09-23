@@ -178,13 +178,15 @@ export function createTerrainMaterial(layout: WorldLayout, cfg: Config = CONFIG,
     v = replaceOnce(v, '#include <worldpos_vertex>', `#include <worldpos_vertex>\n${TERRAIN_WORLDPOS_VERTEX}`);
     shader.vertexShader = v;
     let f = shader.fragmentShader;
-    f = replaceOnce(f, '#include <common>', `#include <common>\n${TERRAIN_FRAGMENT_PARS}`);
+    // the atmosphere's fog override carries the sun direction (bale shadows); plain three fog doesn't
+    const atmoSun = THREE.ShaderChunk.fog_pars_fragment.includes('atmoFog') ? '#define TERRAIN_ATMO_SUN\n' : '';
+    f = replaceOnce(f, '#include <common>', `${atmoSun}#include <common>\n${TERRAIN_FRAGMENT_PARS}`);
     f = replaceOnce(f, '#include <map_fragment>', TERRAIN_MAP_FRAGMENT);
     f = replaceOnce(f, '#include <roughnessmap_fragment>', TERRAIN_ROUGHNESS_FRAGMENT);
     f = replaceOnce(f, '#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${TERRAIN_NORMAL_FRAGMENT}`);
     shader.fragmentShader = f;
   };
-  material.customProgramCacheKey = () => 'terrain-v2';
+  material.customProgramCacheKey = () => `terrain-v3${THREE.ShaderChunk.fog_pars_fragment.includes('atmoFog') ? '-atmo' : ''}`;
   return {
     material,
     ready,
