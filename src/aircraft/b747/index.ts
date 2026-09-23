@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { B747_AIRCRAFT } from '../../config';
 import type { AircraftModelHandle } from '../../fleet/types';
+import { attachFlightDeck } from './flightDeck'; // b747deck: the flight deck interior
 
 export function createB747Model(): AircraftModelHandle {
   const g = B747_AIRCRAFT.geometry;
@@ -39,12 +40,12 @@ export function createB747Model(): AircraftModelHandle {
     }
   }
   add(new THREE.BoxGeometry(0.8, 12, 9), 0, 8.2, 34.5, 'b747.fin');
-  return {
+  return attachFlightDeck({
     root,
     setVisualState() {},
     dispose() {
       geos.forEach((x) => x.dispose());
       mat.dispose();
     },
-  };
+  });
 }
