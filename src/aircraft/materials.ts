@@ -129,6 +129,7 @@ export function createMaterials(tex: FuselageTextures | null): AircraftMaterials
     map: tex?.map ?? null,
     roughnessMap: tex?.orm ?? null,
     clearcoatMap: tex?.orm ?? null,
+    normalMap: tex?.normal ?? null,
     roughness: tex ? 1 : 0.3,
     alphaTest: tex ? 0.5 : 0,
     alphaToCoverage: !!tex,

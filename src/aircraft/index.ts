@@ -156,6 +156,21 @@ function fuselageDetails(): { fuselage: THREE.BufferGeometry[]; engine: THREE.Bu
   const blade = new THREE.BoxGeometry(0.008, 0.08, 0.06);
   blade.translate(0.0, sec.bottom - 0.04, 1.0);
   out.push(tint(blade, 0x1c1c1c, 0.6, 0.2));
+  // Refuelling step (lower cowl side) and grab handle (upper cowl side) on each side, for
+  // reaching the wing fuel caps — a high wing has no walkway.
+  for (const s of [-1, 1]) {
+    fuselageSection(-1.5, sec);
+    const hw = sec.halfWidth;
+    const pad = new THREE.BoxGeometry(0.02, 0.012, 0.09);
+    pad.translate(s * (hw + 0.012), -0.2, -1.5);
+    engine.push(tint(pad, 0x3c3d3f, 0.7, 0.4));
+    engine.push(tint(tube(V(s * (hw - 0.01), -0.19, -1.53), V(s * (hw + 0.018), -0.205, -1.5), 0.006, 0.006, 6), 0x9ea0a2, 0.35, 0.8));
+    const handle = new THREE.TorusGeometry(0.045, 0.006, 6, 14, Math.PI);
+    handle.rotateY(Math.PI / 2);
+    handle.rotateX(-Math.PI / 2);
+    handle.translate(s * (hw - 0.03), 0.17, -1.55);
+    engine.push(tint(handle, 0xb8babc, 0.3, 0.9));
+  }
   // Boarding steps behind each door.
   for (const s of [-1, 1]) {
     fuselageSection(0.42, sec);
@@ -323,6 +338,8 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     detailMesh('details.wing.left', wing.parts.left, P.leftWing),
     detailMesh('details.wing.right', wing.parts.right, P.rightWing),
   ];
+  // Inlets, cuffs, pitot, caps and fin whiskers are too small to cast a visible shadow.
+  for (const m of detailMeshes.slice(1)) m.castShadow = false;
 
   // ── Lights ────────────────────────────────────────────────────────────────
   const lensGeo = (pos: THREE.Vector3, sx: number, sy: number, sz: number, hex: number) => {
@@ -682,6 +699,7 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
       if (textures) {
         textures.map.dispose();
         textures.orm.dispose();
+        textures.normal.dispose();
         textures.cabin.dispose();
         textures.fin.dispose();
       }

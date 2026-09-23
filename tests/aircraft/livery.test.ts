@@ -303,6 +303,46 @@ describe('functional: the livery painter puts the decals where they belong', () 
     expect(Buffer.from(again.fin).equals(Buffer.from(px.fin))).toBe(true);
   });
 
+  it('the normal map is flat on plain skin and tilts across the panel-line grooves and rivet rows', () => {
+    const { w, h } = liverySizes(quality);
+    const at = (r: number, c: number) => {
+      const i = (r * w + c) * 4;
+      return [plain.normal[i], plain.normal[i + 1], plain.normal[i + 2]];
+    };
+    const rowOf = (z: number) => Math.floor(((z - FUSE_Z0) / (FUSE_Z1 - FUSE_Z0)) * h);
+    // Plain skin (mid tailcone, between frames): straight up.
+    const flat = at(rowOf(3.25), Math.floor(w * 0.25));
+    expect(Math.abs(flat[0] - 128)).toBeLessThanOrEqual(1);
+    expect(Math.abs(flat[1] - 128)).toBeLessThanOrEqual(1);
+    expect(flat[2]).toBeGreaterThan(250);
+    // Across a tailcone frame seam (constant z) the normal tilts along v, opposite on either side.
+    const seam = rowOf(2.95);
+    let tilted = 0;
+    for (let dr = -3; dr <= 3; dr++) {
+      for (let c = 0; c < w; c += 7) {
+        const n = at(seam + dr, c);
+        if (Math.abs(n[1] - 128) > 1) tilted++;
+      }
+    }
+    expect(tilted).toBeGreaterThan(20);
+    // The deeper door/cowl panel lines tilt the normal clearly somewhere.
+    let lo = 255;
+    let hi = 0;
+    for (let i = 1; i < plain.normal.length; i += 4) {
+      lo = Math.min(lo, plain.normal[i]);
+      hi = Math.max(hi, plain.normal[i]);
+    }
+    expect(hi - lo).toBeGreaterThan(10);
+    // Every texel is a unit-ish normal pointing out of the surface.
+    for (let i = 0; i < plain.normal.length; i += 4 * 97) {
+      const x = plain.normal[i] / 127.5 - 1;
+      const y = plain.normal[i + 1] / 127.5 - 1;
+      const z = plain.normal[i + 2] / 127.5 - 1;
+      expect(z).toBeGreaterThan(0.5);
+      expect(Math.abs(Math.hypot(x, y, z) - 1)).toBeLessThan(0.03);
+    }
+  });
+
   it('windows stay cut out (alpha 0) and the paint is opaque elsewhere, with or without decals', () => {
     // Door window centre, left side.
     expect(texel(px, -1, -0.3, 0.62)[3]).toBe(0);
