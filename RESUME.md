@@ -113,8 +113,22 @@ npm run repo-map            # regenerate REPO_MAP.md after adding/moving files
    dusk ground glow from explosions is weak.
 6. **Performance on a quiet machine:** re-measure fps in combat (target ≥ 55 at 1440×900 on an
    M2 Max), the Maverick picture-in-picture GPU cost, and the full suite.
-7. **Publishing:** replace `<owner>` in `README.md`, `package.json`, `CONTRIBUTING.md`; CI on
-   CPU-only runners is slow (the e2e tests take 25–45 min); Windows is untested.
+7. **F-16 cockpit interior:** only the HUD combiner is new — the glareshield, MFD bezels,
+   up-front controls, side-stick/throttle and canopy sills still need the realism pass the Cessna
+   and A-10 cockpits got. The Cessna's windshield posts are still wide flat beige bands; the A-10's
+   HUD glass sits a little low (the horizon rides its top edge in level cruise).
+8. **Vehicle visibility from altitude:** at 700 m+ the tanks are tiny and low-contrast (the HUD
+   diamonds find them). Add soft contact shadows — a transparent ground blob was painted over by
+   the terrain pass and a hashed-alpha one looked speckled; try a decal in the terrain shader.
+9. **Keyboard gunnery:** the A-10 needs ~10° nose-down trim at 280–300 kt; the QA pilot's
+   `gunRun()` doesn't converge the pipper yet; T can jump between neighbouring tanks in a tight
+   platoon (every press restarts the lock timer).
+10. **Known rare bugs:** a car-car overlap at unusual junction shapes (the cars property test is
+    pinned to a seed until it's fixed); a WebGL "feedback loop formed between Framebuffer and active
+    Texture" warning on the A-10 range pages (suspect the Maverick picture-in-picture render).
+11. **Publishing:** replace `<owner>` in `README.md`, `package.json`, `CONTRIBUTING.md`; CI on
+    CPU-only runners is slow (the e2e tests take 25–45 min); Windows is untested. The long A-10
+    sortie e2e is opt-in: `npx vitest run -c tests/e2e/sortie.vitest.config.ts`.
 
 ## 6. Where everything lives
 
