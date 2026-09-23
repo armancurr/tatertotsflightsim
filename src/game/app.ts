@@ -28,6 +28,7 @@ import { createRenderer } from '../render/renderer';
 import { createAtmosphere } from '../render/atmosphere';
 import type { AircraftVisualState } from '../aircraft/types';
 import { FLEET, getAircraftDef, type AircraftDef, type AircraftModelHandle } from '../fleet';
+import { loadAircraftChoice, safeLocalStorage } from '../ui/picker';
 import { createInputManager } from '../input/inputManager';
 import { createControlState, updateControls, resetControls, type SimAction } from '../input/controlSystem';
 import { createCameraRig, setCameraMode, nextCameraMode, snapCamera, updateCameraRig, shakeTarget, type CameraRigState } from '../camera/cameraRig';
@@ -71,7 +72,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   const env = createEnvironment();
   const atmosphere = createAtmosphere(renderer, scene, { groundHeight: (x: number, z: number) => env.groundHeight(x, z) });
   // The aircraft being flown: its def carries the physics/camera config (`ac`) and the model factory.
-  let def: AircraftDef = getAircraftDef(params.get('aircraft'));
+  // URL first, then the player's last choice (saved by the aircraft picker), then the default.
+  let def: AircraftDef = getAircraftDef(params.get('aircraft') ?? loadAircraftChoice(safeLocalStorage(), cfg.menu.storageKey));
   let ac = def.config;
   let aircraft: AircraftModelHandle = def.createModel();
   scene.add(aircraft.root);
