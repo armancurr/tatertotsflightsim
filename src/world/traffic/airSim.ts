@@ -1,6 +1,6 @@
 /**
- * The air traffic simulation driver (PURE, no three.js): owns the runway-36
- * circuit, the crossing-GA and airliner slot schedulers and the helicopter, and
+ * The air traffic simulation driver (PURE, no three.js): owns the circuit (on
+ * the runway end into the wind, 36 by default), the crossing-GA and airliner slot schedulers and the helicopter, and
  * turns them into a fixed list of entities with poses every frame.
  *
  *  - Built as a time-sliced job (`airSimJob`): with a traffic start time t0

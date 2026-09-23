@@ -966,8 +966,12 @@ export const CONFIG = {
         ferry: { speedKt: 13, dwell: 110, accel: 0.07 },
       },
       air: {
-        /** Aircraft flying left-hand circuits for runway 36 (touch-and-go / full stop / go-around). */
+        /**
+         * Aircraft flying left-hand circuits (touch-and-go / full stop / go-around) on the runway end
+         * most into the surface wind (world.airportRender.wind; calm → 36), or the end named here.
+         */
         circuit: 3,
+        circuitRunway: 'auto' as string,
         /** GA aircraft on straight tracks across the area, and airliners at cruise. */
         crossing: 3,
         airliners: 3,
