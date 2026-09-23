@@ -4,7 +4,6 @@
  *   const ac = createAircraft();
  *   scene.add(ac.root);                       // integrator copies physics position/quaternion onto ac.root
  *   ac.setVisualState(visualState, dt);       // every frame
- *   ac.setPanelDrawer(drawPanel);             // real gauges (wave 2)
  *
  * Body frame = three.js object frame (+X right wing, +Y up, −Z nose, origin = CG);
  * wheels, prop hub, wing root and tail sit exactly on CONFIG.aircraft.geometry.
@@ -20,7 +19,8 @@ import { buildFuselage } from './fuselage';
 import { buildGear, GEAR_PART } from './gear';
 import { createFuselageTextures, doorOutlineDistance } from './livery';
 import { addCabinFill, createMaterials, createPartsMaterial, merge, tint } from './materials';
-import { drawPlaceholderPanel, PANEL } from './panel';
+import { PANEL } from './panel';
+import { drawCessnaPanel } from './panelFace';
 import { buildProp, PROP_PART } from './prop';
 import { FUSE_Z0, WINDSHIELD_BASE_Z, fuselageSection, type SectionParams } from './shape';
 import { buildTail } from './tail';
@@ -31,7 +31,8 @@ import { buildWing } from './wing';
 
 export type { AircraftVisualState, PanelDrawer } from './types';
 export { createDefaultVisualState } from './types';
-export { PANEL, PANEL_LAYOUT, drawPlaceholderPanel } from './panel';
+export { PANEL, PANEL_LAYOUT } from './panel';
+export { drawCessnaPanel } from './panelFace';
 
 /** Names of the parts the integrator / tests can look up with root.getObjectByName. */
 export const PART = {
@@ -67,7 +68,6 @@ export const PART = {
 export interface AircraftModel {
   root: THREE.Group;
   setVisualState(v: AircraftVisualState, dt: number): void;
-  setPanelDrawer(fn: PanelDrawer): void;
   landingLight: THREE.SpotLight;
   /**
    * The parts that separate in a crash (fuselage, engine, prop, wings with struts, tail, gear
@@ -477,7 +477,7 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
     };
   }
 
-  let drawer: PanelDrawer = drawPlaceholderPanel;
+  const drawer: PanelDrawer = drawCessnaPanel;
   const rest = createRestReadings();
   let panelClock = Infinity;
   const redrawPanel = (r: InstrumentReadings) => {
@@ -671,10 +671,6 @@ export function createAircraft(opts: { quality?: 'high' | 'low' } = {}): Aircraf
   return {
     root,
     setVisualState,
-    setPanelDrawer(fn: PanelDrawer) {
-      drawer = fn;
-      panelClock = Infinity;
-    },
     landingLight,
     getBreakupParts: () => breakup.parts,
     restoreBreakupParts: () => breakup.restore(),
