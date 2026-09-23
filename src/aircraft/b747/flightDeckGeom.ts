@@ -309,7 +309,7 @@ export function buildFlightDeck(): DeckBuild {
       new THREE.Vector2(-G.halfWidth, G.lipZ),
     ]);
     const tg = new THREE.ShapeGeometry(top);
-    tg.rotateX(Math.PI / 2); // (x, z) shape → XZ plane, facing -Y… flip below.
+    tg.rotateX(Math.PI / 2); // (x, z) shape → the XZ plane
     const pos = tg.getAttribute('position') as THREE.BufferAttribute;
     // Sloping down from the lip to the windscreen base, just under the pilots' sight line over the lip.
     for (let i = 0; i < pos.count; i++) {
@@ -317,14 +317,9 @@ export function buildFlightDeck(): DeckBuild {
       const t = (z - G.lipZ) / (WINDSCREEN.z0 - G.lipZ);
       pos.setXYZ(i, pos.getX(i), G.lipY + 0.004 + (WINDSCREEN.y0 - 0.004 - G.lipY) * t, z);
     }
+    // Make sure it faces up (flip the winding if the rotated shape faces down).
     const idx = tg.getIndex()!.array as Uint16Array;
-    for (let i = 0; i < idx.length; i += 3) {
-      const t = idx[i + 1];
-      idx[i + 1] = idx[i + 2];
-      idx[i + 2] = t;
-    }
     tg.computeVertexNormals();
-    // Make sure it faces up.
     const nrm = tg.getAttribute('normal') as THREE.BufferAttribute;
     if (nrm.getY(0) < 0) for (let i = 0; i < idx.length; i += 3) {
       const t = idx[i + 1];
