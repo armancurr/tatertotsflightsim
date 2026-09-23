@@ -103,7 +103,7 @@ export interface WingBuild {
   panel: THREE.BufferGeometry;
   lef: HingedPart;
   flaperon: HingedPart;
-  /** Rail + missile (parts material, vertex colours). */
+  /** LAU-129 launcher rail (parts material, vertex colours); the AIM-9M is buildAim9(). */
   tip: THREE.BufferGeometry;
 }
 
@@ -149,7 +149,7 @@ function buildRightWing(): WingBuild {
   };
 }
 
-/** LAU-129 wingtip rail with an AIM-9M (right side). */
+/** LAU-129 wingtip launcher rail (right side); the AIM-9M itself is a separate mesh (buildAim9). */
 function buildTipStore(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   const grey = 0x8a8f93;
@@ -162,26 +162,37 @@ function buildTipStore(): THREE.BufferGeometry {
   parts.push(tint(ellipsoid(V(railX, railTop - 0.06, railZ0), 0.065, 0.05, 0.3, 12, 8), grey, 0.55, 0.1));
   // Adapter between the tip rib and the rail.
   parts.push(tint(box(0.06, 0.07, wingChord(WING.tipX) * 0.9, V(WING.tipX + 0.02, wingY(WING.tipX), wingLeZ(WING.tipX) + wingChord(WING.tipX) * 0.5)), grey, 0.55, 0.1));
+  // Rail slot (the missile's hangers ride in it) under the rail.
+  parts.push(tint(box(0.03, 0.012, railZ1 - railZ0 - 0.2, V(railX - 0.035, railTop - 0.112, (railZ0 + railZ1) / 2)), 0x3a3d40, 0.6, 0.2));
+  return merge(parts);
+}
 
-  // AIM-9M: body, seeker dome, guidance section bands, canards, rear wings (X fins).
-  const mx = AIM9.x;
-  const my = AIM9.y;
-  const z0 = AIM9.noseZ;
-  const z1 = z0 + AIM9.length;
+/**
+ * AIM-9M Sidewinder, centred on its own origin (the station point = the missile's centre): nose
+ * (seeker dome) at z = −length/2, nozzle at +length/2; X fins (45°), so the same geometry serves
+ * both wingtips. The launch hangers (they leave with the missile) point up-inboard toward the rail
+ * on the right wing (x < 0 side of the body); `side` = −1 mirrors them for the left wing.
+ */
+export function buildAim9(side: 1 | -1 = 1): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const z0 = -AIM9.length / 2;
+  const z1 = AIM9.length / 2;
   const R = AIM9.radius;
   const body = 0xc7c9c5;
-  parts.push(tint(tube(V(mx, my, z0 + 0.12), V(mx, my, z1), R, R, 16), body, 0.45, 0.2));
-  // Seeker dome + nose taper.
+  const domeLen = R * 0.98 * 1.25;
+  parts.push(tint(tube(V(0, 0, z0 + domeLen), V(0, 0, z1 - 0.01), R, R, 16), body, 0.45, 0.2));
+  // Seeker dome.
   const dome = new THREE.SphereGeometry(R * 0.98, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2);
   dome.rotateX(-Math.PI / 2);
   dome.scale(1, 1, 1.25);
-  dome.translate(mx, my, z0 + 0.12);
+  dome.translate(0, 0, z0 + domeLen);
   parts.push(tint(dome, 0x2b2a26, 0.08, 0.3));
   // Bands: yellow (warhead) and brown (rocket motor).
-  parts.push(tint(tube(V(mx, my, z0 + 0.62), V(mx, my, z0 + 0.66), R + 0.0015, R + 0.0015, 16, true), 0xd8b020, 0.5, 0));
-  parts.push(tint(tube(V(mx, my, z0 + 1.18), V(mx, my, z0 + 1.22), R + 0.0015, R + 0.0015, 16, true), 0x6a4a2a, 0.5, 0));
-  // Launch hangers to the rail.
-  for (const hz of [z0 + 0.55, z0 + 1.35, z0 + 2.2]) parts.push(tint(box(0.05, 0.05, 0.08, V((mx + railX) / 2, my + 0.02, hz)), 0x55595c, 0.6, 0.2));
+  parts.push(tint(tube(V(0, 0, z0 + 0.62), V(0, 0, z0 + 0.66), R + 0.0015, R + 0.0015, 16, true), 0xd8b020, 0.5, 0));
+  parts.push(tint(tube(V(0, 0, z0 + 1.18), V(0, 0, z0 + 1.22), R + 0.0015, R + 0.0015, 16, true), 0x6a4a2a, 0.5, 0));
+  // Launch hangers toward the rail (inboard of the missile, slightly up).
+  const railDx = -side * (AIM9.x - (WING.tipX + 0.07));
+  for (const hz of [z0 + 0.55, z0 + 1.35, z0 + 2.2]) parts.push(tint(box(0.05, 0.05, 0.08, V(railDx / 2, 0.02, hz)), 0x55595c, 0.6, 0.2));
   // Fins: X configuration (45°), canards forward, wings aft.
   const finSet = (zc: number, span: number, rootChord: number, tipChord: number, thick: number) => {
     for (let k = 0; k < 4; k++) {
@@ -198,14 +209,14 @@ function buildTipStore(): THREE.BufferGeometry {
       g.translate(0, R - 0.005, -thick / 2);
       // Shape x → body +z (aft), shape y → radial; rotate about the missile axis.
       g.applyMatrix4(new THREE.Matrix4().makeBasis(V(0, 0, 1), V(1, 0, 0), V(0, 1, 0)).premultiply(new THREE.Matrix4().makeRotationZ(ang)));
-      g.translate(mx, my, zc);
+      g.translate(0, 0, zc);
       parts.push(tint(g, body, 0.45, 0.2));
     }
   };
   finSet(z0 + 0.3, AIM9.canardSpan, 0.22, 0.12, 0.012);
   finSet(z1 - 0.34, AIM9.finSpan, 0.3, 0.16, 0.012);
   // Nozzle.
-  parts.push(tint(tube(V(mx, my, z1 - 0.02), V(mx, my, z1 + 0.01), R * 0.7, R * 0.7, 12), 0x2a2a2a, 0.6, 0.6));
+  parts.push(tint(tube(V(0, 0, z1 - 0.03), V(0, 0, z1), R * 0.7, R * 0.7, 12), 0x2a2a2a, 0.6, 0.6));
   return merge(parts);
 }
 
