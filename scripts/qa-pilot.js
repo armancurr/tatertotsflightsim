@@ -117,7 +117,7 @@
       // column coming and a jumbo's pitch answers slowly — big duties make a pilot-induced oscillation.
       // Pulses are √-shaped (dutySqrt) so small corrections still move the column; steer on a 3 s average α.
       pitchKp: 0.04, pitchKd: 0.2, dutySqrt: true, rollKp: 0.05, rollKd: 0.03, yawKp: 0.05, yawKd: 0.02, flareKp: 0.06, flareKd: 0.1,
-      speedKp: 0.6, speedKi: 0.1, throttleIdle: 0, approachThrottle: 25, aoaSmoothS: 3, levelOffFt: 1000,
+      speedKp: 0.6, speedKi: 0.1, throttleIdle: 0, approachThrottle: 25, aoaSmoothS: 3, levelOffFt: 1000, aimM: 450,
       gearOffsetFt: 16.4,
     },
   };
@@ -271,7 +271,8 @@
    */
   function glidePathTargets(s, p, rw) {
     const c = lineCoords(s.position.x, s.position.z, rw.thrX, rw.thrZ, rw.courseDeg);
-    const distM = rw.aimM - c.along;
+    // Profile aimM: where this aircraft aims on the runway (an airliner's main wheels are metres below its CG).
+    const distM = (p.aimM ?? rw.aimM) - c.along;
     const gpFt = Math.max(0, distM * Math.tan(rw.gsDeg * D2R)) * M_FT;
     const heightFt = fin(s.altitude) - rw.fieldFt;
     const aboveFt = heightFt - gpFt;
