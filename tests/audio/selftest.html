@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Audio self-test</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <p>Audio self-test page (used by tests/audio/selftest.e2e.test.ts): <code>await runAudioSelfTest()</code></p>
+    <script type="module">
+      import { runAudioSelfTest } from '/src/audio/index.ts';
+      window.runAudioSelfTest = runAudioSelfTest;
+      window.__audioReady = true;
+    </script>
+  </body>
+</html>

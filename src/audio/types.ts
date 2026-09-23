@@ -1,4 +1,5 @@
 import type { CameraMode, SurfaceType } from '../types';
+import type { EngineSound } from '../fleet/types';
 
 /** Everything the sound engine needs each frame (see createAudioInputTracker for the adapter from AircraftState). */
 export interface AudioInputs {
@@ -30,6 +31,23 @@ export interface AudioInputs {
   crashSpeedKt?: number;
   /** Optional: the landing-gear warning horn is sounding (see src/ui/gearWarning.ts). Default false. */
   gearWarning?: boolean;
+  /** Optional (jets): afterburner 0..1. Default 0. */
+  afterburner?: number;
+  /** Optional (jets): the speed brake is travelling (hydraulic whine). Default false. */
+  speedBrakeMoving?: boolean;
+  /**
+   * Optional: cos(angle between the aircraft's tail direction and the camera) — +1 camera straight
+   * behind, −1 ahead of the nose (jet noise directivity in exterior views). Default 0.
+   */
+  aft?: number;
+}
+
+/** Output level meter (post-limiter), for QA. */
+export interface AudioMeter {
+  /** RMS of the last analysis window (linear, full scale = 1). */
+  rms: number;
+  /** Absolute peak of the last analysis window. */
+  peak: number;
 }
 
 export interface AudioSystem {
@@ -39,6 +57,17 @@ export interface AudioSystem {
   update(a: AudioInputs, dt: number): void;
   setMuted(m: boolean): void;
   readonly muted: boolean;
+  /** Which engine voice plays: the Cessna's O-360 + prop ('piston') or the F-16's F110 turbofan ('jet'). */
+  setEngine(kind: EngineSound): void;
+  readonly engine: EngineSound;
+  /** An explosion near the wreck (the crash effects' `sim:explosion`); size 0..1, distance from the camera, m. */
+  explosion(e: { size?: number; distanceM?: number }): void;
+  /** Debris or airframe hitting the ground (`sim:impact`); speed m/s, distance from the camera, m. */
+  impact(e: { speed?: number; speedMs?: number; distanceM?: number }): void;
+  /** Silence every crash sound (fire, debris, pending explosions) — the sim was reset. */
+  reset(): void;
+  /** Output meter (creates the analyser on first use); null before the context exists. */
+  meter(): AudioMeter | null;
   /** The AudioContext once created (null before resume() or when WebAudio is unavailable). */
   readonly context: BaseAudioContext | null;
   /** QA/debug: the last target of every channel (gains 0..1, Hz for filters/oscillators) + counters. */
@@ -76,4 +105,32 @@ export interface AudioLevels {
   lastTouchdown: number;
   /** Exceptions swallowed by the safety net (should stay 0). */
   errors: number;
+  // ── Jet (F110 turbofan); all 0 while the piston engine plays ──
+  /** 1 while the jet voice plays, 0 for the piston engine. */
+  jet: number;
+  corePct: number;
+  whineHz: number;
+  fanHz: number;
+  whine: number;
+  fan: number;
+  roar: number;
+  afterburner: number;
+  crackle: number;
+  intake: number;
+  ecs: number;
+  hydraulic: number;
+  aft: number;
+  /** Engine voices alive (the playing one + any still fading out after a switch). */
+  engineVoices: number;
+  // ── Crash ──
+  /** Crashes played since start. */
+  crashes: number;
+  /** Explosions played (secondary + `sim:explosion`). */
+  explosions: number;
+  /** `sim:impact` events played. */
+  impacts: number;
+  /** Secondary explosions still scheduled for the current crash. */
+  pendingExplosions: number;
+  /** Crash one-shot sources still playing. */
+  crashLive: number;
 }

@@ -873,7 +873,7 @@ export const CONFIG = {
   // ─── Audio (owned by src/audio) ─────────────────────────────────────────────
   audio: {
     masterVolume: 0.6,
-    engineVolume: 0.55,
+    engineVolume: 0.47,
     windVolume: 0.35,
     stallHornVolume: 0.4,
     /** Tyre rumble on the ground and brake scrub. */
@@ -886,7 +886,7 @@ export const CONFIG = {
     cylinders: 4,
     propBlades: 2,
     /** Engine exhaust loudness at idle power, relative to full power. */
-    idleLoudness: 0.32,
+    idleLoudness: 0.42,
     /** Below this rpm the running engine fades out (it is not firing yet). */
     firingMinRpm: 250,
     /** Low-pass cutoff of the "cabin" (cockpit view) and of the open exterior sound, Hz. */
@@ -931,6 +931,73 @@ export const CONFIG = {
     /** Gain/filter ramp time constants for setTargetAtTime, seconds (no clicks). */
     rampTau: 0.045,
     cameraRampTau: 0.12,
+    /** Gentle glue compressor on the master (above ~−10 dBFS only), then a fast limiter + a soft clipper → never > 0 dBFS. */
+    glueThresholdDb: -10,
+    glueRatio: 2.5,
+    limiterThresholdDb: -3,
+    /** The soft clipper is linear up to this level, then bends smoothly towards softClipCeiling. */
+    softClipKnee: 0.7,
+    softClipCeiling: 0.97,
+    /** Crash sound design (layered impact, metal tearing, debris, scraping, secondary explosions, fire). */
+    crash: {
+      /** Crash sounds keep full level within refDistanceM of the camera, then fall as (ref/d)^distanceExponent. */
+      refDistanceM: 40,
+      distanceExponent: 0.8,
+      /** Secondary explosions after the impact (unless the crash effects dispatch `sim:explosion` themselves). */
+      secondaryMin: 2,
+      secondaryMax: 6,
+      /** First one once the impact has died down; then random gaps (mean, minimum); none after secondaryLastS. */
+      secondaryFirstS: 1.1,
+      secondaryMeanGapS: 1.6,
+      secondaryMinGapS: 0.7,
+      secondaryLastS: 11,
+      /** Burning fire bed level and its fade time constant, s. */
+      fireLevel: 0.5,
+      fireFadeS: 35,
+      /** Rate limits for the window events `sim:explosion` / `sim:impact`, per second. */
+      maxExplosionsPerS: 6,
+      maxImpactsPerS: 12,
+      /** `sim:impact` speed (m/s) that plays at full intensity. */
+      impactFullMs: 45,
+    },
+    /**
+     * F-16C / GE F110-GE-129 turbofan (aircraft sound 'jet'). `state.engine.rpm` is the core speed N2 in %,
+     * `state.engine.power` the dry power 0..1 and `state.engine.afterburner` 0..1.
+     */
+    jet: {
+      /** HP (core) spool at 100 % N2 and LP (fan) spool at 100 % N1, rpm. */
+      coreMaxRpm: 14460,
+      fanMaxRpm: 7900,
+      /** Blades of the HP-compressor stage whose blade-pass tone is the turbine whine (100 % N2 ≈ 5 kHz). */
+      whineBlades: 21,
+      /** Ground idle N2, %. */
+      idleCorePct: 70,
+      /** Overall level of the jet relative to the Cessna's engine (a fighter is much louder), and in the cockpit (canopy + helmet). */
+      volume: 2.3,
+      cockpitGain: 0.42,
+      /** Channel levels before engineVolume × volume. */
+      whine: 0.09,
+      shaft: 0.04,
+      fan: 0.11,
+      roar: 0.75,
+      rumble: 0.5,
+      abRumble: 1.5,
+      abTear: 0.55,
+      crackle: 0.65,
+      /** Cockpit-only: intake howl (fan tone resonating in the inlet duct under the seat) and ECS air hiss. */
+      intake: 0.1,
+      ecs: 0.035,
+      /** Jet fuel starter whine while starting. */
+      starter: 0.08,
+      /** Afterburner light-off "whoomph" level. */
+      whoomph: 0.9,
+      /** Hydraulic whine (gear and speed brake), Hz, level, and how long the speed brake travels, s. */
+      hydraulicHz: 1180,
+      hydraulicVolume: 0.12,
+      speedBrakeTravelS: 2,
+      /** Exterior views: full level within this distance (a 15 m airframe, a much louder source than the Cessna). */
+      refDistanceM: 25,
+    },
   },
 
   // ─── HUD (owned by src/ui) ──────────────────────────────────────────────────

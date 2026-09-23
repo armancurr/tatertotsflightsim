@@ -77,9 +77,10 @@ export class MockNode {
   }
 }
 
-class MockScheduled extends MockNode {
+export class MockScheduled extends MockNode {
   started: number | null = null;
   stopped: number | null = null;
+  ended = false;
   onended: (() => void) | null = null;
   start(t = 0) {
     if (!Number.isFinite(t)) violations.push(`${this.kind}.start(${t})`);
@@ -147,6 +148,24 @@ export class MockCompressor extends MockNode {
   }
 }
 
+export class MockWaveShaper extends MockNode {
+  curve: Float32Array | null = null;
+  oversample = 'none';
+  constructor(ctx: MockAudioContext) {
+    super(ctx, 'waveShaper');
+  }
+}
+
+export class MockAnalyser extends MockNode {
+  fftSize = 2048;
+  constructor(ctx: MockAudioContext) {
+    super(ctx, 'analyser');
+  }
+  getFloatTimeDomainData(a: Float32Array) {
+    a.fill(0);
+  }
+}
+
 export class MockBuffer {
   private data: Float32Array[];
   constructor(readonly numberOfChannels: number, readonly length: number, readonly sampleRate: number) {
@@ -179,7 +198,7 @@ export class MockAudioContext {
     this.resumeCalls++;
     if (this.state !== 'closed') this.state = 'running';
   }
-  async suspend() {
+  async suspend(_t?: number) {
     this.state = 'suspended';
   }
   async close() {
@@ -200,6 +219,12 @@ export class MockAudioContext {
   createDynamicsCompressor() {
     return new MockCompressor(this);
   }
+  createWaveShaper() {
+    return new MockWaveShaper(this);
+  }
+  createAnalyser() {
+    return new MockAnalyser(this);
+  }
   createBuffer(ch: number, len: number, sr: number) {
     if (!(len > 0) || !(sr > 0)) violations.push(`createBuffer(${ch},${len},${sr})`);
     return new MockBuffer(ch, len, sr);
@@ -212,6 +237,18 @@ export class MockAudioContext {
   /** Test helper: advance the audio clock. */
   advance(dt: number) {
     this.currentTime += dt;
+  }
+  /** Test helper: fire `onended` of every source whose stop time has passed (like the browser does). */
+  endFinished() {
+    for (const n of this.nodes) {
+      if (!(n instanceof MockScheduled) || n.ended || n.stopped === null || n.stopped > this.currentTime) continue;
+      n.ended = true;
+      n.onended?.();
+    }
+  }
+  /** Nodes still connected into the graph (not disconnected), excluding the destination. */
+  liveNodes() {
+    return this.nodes.filter((n) => n !== this.destination && !n.disconnected).length;
   }
   count(kind: string) {
     return this.nodes.filter((n) => n.kind === kind).length;
@@ -226,4 +263,39 @@ export function allParams(ctx: MockAudioContext): MockParam[] {
   const out: MockParam[] = [];
   for (const n of ctx.nodes) for (const v of Object.values(n)) if (v instanceof MockParam) out.push(v);
   return out;
+}
+
+/**
+ * OfflineAudioContext stand-in: records suspend points and, in startRendering(), walks the clock
+ * through them (resolving each suspend and waiting for resume()), then returns a silent buffer.
+ * Lets node tests check the self-test's timeline logic (not the audio itself).
+ */
+export class MockOfflineContext extends MockAudioContext {
+  private points: { t: number; resolve: () => void }[] = [];
+  private resumed: (() => void) | null = null;
+  constructor(readonly numberOfChannels: number, readonly length: number, sampleRate: number) {
+    super();
+    this.sampleRate = sampleRate;
+    this.state = 'running';
+  }
+  suspend(t: number): Promise<void> {
+    if (this.points.some((p) => Math.abs(p.t - t) < 1e-9)) violations.push(`offline.suspend twice at ${t}`);
+    return new Promise((resolve) => this.points.push({ t, resolve }));
+  }
+  resume(): Promise<void> {
+    this.resumed?.();
+    return Promise.resolve();
+  }
+  async startRendering(): Promise<MockBuffer> {
+    this.points.sort((a, b) => a.t - b.t);
+    for (const p of this.points) {
+      this.currentTime = p.t;
+      await new Promise<void>((r) => {
+        this.resumed = r;
+        p.resolve();
+      });
+    }
+    this.currentTime = this.length / this.sampleRate;
+    return new MockBuffer(this.numberOfChannels, this.length, this.sampleRate);
+  }
 }
