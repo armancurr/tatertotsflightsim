@@ -718,7 +718,9 @@ export function drawWeaponsHud(ctx: CanvasRenderingContext2D, m: WeaponsHudModel
         ctx.lineTo(ld.x + c * (r + lw * 4.5), ld.y + sn * (r + lw * 4.5));
       }
       stroke();
-      if (ld.inRange) text('IN RNG', ld.x, ld.y + r + F * 1.3, F * 0.95);
+      // (the lock box right there already says IN RNG — don't stack two)
+      const nearBox = m.lock.show && Math.abs(m.lock.x - ld.x) < m.lock.half + F * 4 && Math.abs(m.lock.y - ld.y) < m.lock.half + F * 4;
+      if (ld.inRange && !nearBox) text('IN RNG', ld.x, ld.y + r + F * 1.3, F * 0.95);
     }
     ctx.globalAlpha = 1;
   }
