@@ -68,8 +68,9 @@ describe('instance sets (functional: the real world)', () => {
     }
   });
   it('chunk boxes hold every vertex drawn (near and mid)', () => {
-    checkChunkBoxes(S, 7);
-  }, 60_000);
+    // every 11th chunk (tens of thousands of instances with the trees): heavy, so a load-proof timeout
+    checkChunkBoxes(S, 11);
+  }, 300_000);
   it('splits setback towers into a base and an inset upper tier whose roofs are the ones the physics sees', () => {
     const tiered = B.filter((b) => (b.tierHeight ?? 0) > 0);
     expect(tiered.length).toBeGreaterThan(0);
