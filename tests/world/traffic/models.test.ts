@@ -255,14 +255,17 @@ describe('ship and harbour detail', () => {
     const q = m.quay;
     for (const lod of [0, 1]) {
       const v = verts(buildMarina(m, lod).build());
-      // the crane: a tall structure over the works, its boom luffed out over the basin
+      // the crane: a tall structure over the works, its boom luffed up and slewed along the quay over the yard
       const high = v.filter((p) => p.y > q.top + 25);
       expect(high.length, `crane ${lod}`).toBeGreaterThan(8);
       for (const p of high) {
         expect(p.x).toBeGreaterThan(HARBOUR_WORKS.u0 - 5);
         expect(p.x).toBeLessThan(HARBOUR_WORKS.u1 + 20);
+        expect(p.z).toBeGreaterThan(q.w0 - 5);
+        expect(p.z).toBeLessThan(q.w1 + 5);
       }
-      expect(Math.max(...high.map((p) => p.z))).toBeGreaterThan(q.w1 + 10);
+      expect(Math.max(...high.map((p) => p.y))).toBeGreaterThan(q.top + 45);
+      expect(HARBOUR_WORKS.crane.u - Math.min(...high.map((p) => p.x))).toBeGreaterThan(30);
       // everything 7–25 m up on the quay (stacked containers, the hoist, boats in its slings) lies inside the works
       // footprint (lower: quay lamps along the whole quay, the breakwater roots)
       const mid = v.filter((p) => p.y > q.top + 7.2 && p.y < q.top + 25 && p.z < q.w1 && p.z > q.w0);

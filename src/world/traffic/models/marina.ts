@@ -4,8 +4,9 @@
  * by the instance): rubble-mound breakwaters with a concrete crest path and
  * harbour-entrance beacons, the quay wall with bollards, floating pontoons with
  * fingers and piles, gangways, and the working harbour on the free east end
- * of the quay: a mobile harbour crane slewed out over the basin, a container
- * yard, and a boatyard (a travel-lift hoist carrying a yacht, boats on stands).
+ * of the quay: a mobile harbour crane working the container yard (its boom
+ * slewed along the quay, a box on the spreader), and a boatyard (a travel-lift
+ * hoist carrying a yacht, boats on stands).
  * Also the bay ferry terminals (trestle pier, transfer ramp, berthing
  * dolphins, terminal building).
  */
@@ -153,7 +154,7 @@ function buildBreakwater(b: MeshBuilder, bw: MarinaLayout['breakwaters'][number]
 }
 
 /** The working harbour's footprint on the quay (u range) and where its crane stands. */
-export const HARBOUR_WORKS = { u0: 228, u1: 348, crane: { u: 300, w: -9, pivotY: 27, boom: 44, slewDeg: 18, luffDeg: 34 } } as const;
+export const HARBOUR_WORKS = { u0: 228, u1: 348, crane: { u: 302, w: -14, pivotY: 27, boom: 44, slewDeg: -90, luffDeg: 36 } } as const;
 
 const CRANE_WHITE = mat(0xe8e8e2, 0.45, 0.2);
 const CRANE_YELLOW = mat(0xe0b21c, 0.45, 0.3);
@@ -205,9 +206,14 @@ function buildHarbourWorks(b: MeshBuilder, q: MarinaLayout['quay'], lod: number)
     const lr = (c.luffDeg * Math.PI) / 180;
     const tipY = 0.8 + Math.sin(lr) * (c.boom + 0.4);
     const tipZ = 2.5 + Math.cos(lr) * (c.boom + 0.4);
+    // a 40 ft box on the spreader, lifted clear of the stacks
+    const boxY = 11.5 - c.pivotY;
+    b.box(0, boxY, tipZ, 2.44, 2.59, 12.19, CONTAINER_COLS[3], { bottom: false });
     if (!lod) {
-      b.cylinder([0, tipY - 1, tipZ], [0, 6 - c.pivotY, tipZ], 0.06, 0.06, 3, mat(0x202224, 0.5, 0.6), false);
-      b.box(0, 5.5 - c.pivotY, tipZ, 1.2, 1.6, 1.2, CRANE_YELLOW);
+      b.cylinder([0, tipY - 1, tipZ], [0, boxY + 3.2, tipZ], 0.06, 0.06, 3, mat(0x202224, 0.5, 0.6), false);
+      b.box(0, boxY + 2.9, tipZ, 1.2, 1.2, 1.2, CRANE_YELLOW);
+      b.box(0, boxY + 1.45, tipZ, 2.3, 0.3, 12, CRANE_YELLOW);
+      for (const dz of [-5, 5]) b.cylinder([0, boxY + 2.4, tipZ], [0, boxY + 1.6, tipZ + dz], 0.03, 0.03, 3, mat(0x202224, 0.5, 0.6), false);
       // A-frame / luffing cylinder from the house to the boom
       b.cylinder([0, 1, 0.5], [0, 0.8 + Math.sin(lr) * 14, 2.5 + Math.cos(lr) * 14], 0.35, 0.3, 6, CRANE_GREY, false);
     }
