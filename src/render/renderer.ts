@@ -28,7 +28,11 @@
  * so app code keeps calling renderer.render; renders into explicit render
  * targets (PMREM, shadow maps, other passes) are untouched. `handle.render`
  * is the same thing, explicitly. Dynamic resolution (dynamicResolution.ts)
- * adjusts the pixel ratio from the measured frame interval.
+ * adjusts the pixel ratio from the measured frame interval, within the range of
+ * the quality preset (quality.ts, ?quality=auto|low|medium|high): 'auto' starts
+ * at a conservative resolution and climbs when there is headroom. A change of
+ * devicePixelRatio (window dragged to another monitor, browser zoom) re-plans
+ * the range.
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config';
@@ -37,6 +41,7 @@ import { createOutputPass, type OutputPass, type PostSettings } from './post';
 import { getAtmosphereFrameData } from './frameData';
 import { installFilmicNeutral } from './toneMapping';
 import { createGpuTimer, type GpuTimer } from './gpuTimer';
+import { planQuality, qualityFromQuery, type QualityLevel, type QualityPlan } from './quality';
 
 export type DepthMode = 'reversed' | 'logarithmic' | 'standard';
 
@@ -102,6 +107,8 @@ export interface RendererOptions {
   samples?: number;
   toneMapping?: string;
   dynamicResolution?: boolean;
+  /** Quality preset (default: ?quality=, else config.render.quality.default). */
+  quality?: QualityLevel;
 }
 
 export interface RendererHandle {
@@ -125,6 +132,8 @@ export interface RendererHandle {
   /** Pixel ratio is at the dynamic-resolution minimum (nothing left to lower). */
   readonly atMinQuality: boolean;
   readonly gpuTimer: GpuTimer;
+  /** The quality plan in force (re-planned when devicePixelRatio changes). */
+  readonly quality: QualityPlan;
 }
 
 export function createRenderer(container: HTMLElement, opts: RendererOptions = {}): RendererHandle {
@@ -149,13 +158,37 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   container.appendChild(renderer.domElement);
 
   const hdr = wantHdr && renderer.extensions.has('EXT_color_buffer_float');
-  const maxRatio = Math.min(typeof devicePixelRatio === 'number' ? devicePixelRatio : 1, rc.maxPixelRatio);
-  let pixelRatio = maxRatio;
-  const dyn: DynamicResolution = createDynamicResolution({
-    targetFps: rc.targetFps,
-    minPixelRatio: Math.min(rc.minPixelRatio, maxRatio),
-    maxPixelRatio: maxRatio,
-  });
+  const gl = renderer.getContext() as WebGL2RenderingContext;
+  let rendererString = '';
+  try {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    rendererString = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  } catch {
+    /* no debug info: assume reliable */
+  }
+  const qualityLevel = opts.quality ?? qualityFromQuery(typeof location !== 'undefined' ? location.search : '');
+  const currentDpr = () => (typeof devicePixelRatio === 'number' && devicePixelRatio > 0 ? devicePixelRatio : 1);
+  const makePlan = () =>
+    planQuality(qualityLevel, {
+      devicePixelRatio: currentDpr(),
+      cssWidth: container.clientWidth || (typeof innerWidth === 'number' ? innerWidth : 1440),
+      cssHeight: container.clientHeight || (typeof innerHeight === 'number' ? innerHeight : 900),
+      renderer: rendererString,
+    });
+  let plan = makePlan();
+  let maxRatio = plan.maxPixelRatio;
+  let minRatio = plan.minPixelRatio;
+  let pixelRatio = plan.initialPixelRatio;
+  const makeDyn = (initial: number): DynamicResolution =>
+    createDynamicResolution({
+      targetFps: rc.targetFps,
+      minPixelRatio: minRatio,
+      maxPixelRatio: maxRatio,
+      initialPixelRatio: initial,
+      rampUpDelay: plan.rampUpDelay,
+      warmup: plan.warmup,
+    });
+  let dyn: DynamicResolution = makeDyn(pixelRatio);
 
   let target: THREE.WebGLRenderTarget | null = null;
   let output: OutputPass | null = null;
@@ -165,7 +198,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     target = new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.HalfFloatType,
       format: THREE.RGBAFormat,
-      samples: opts.samples ?? rc.msaaSamples,
+      samples: opts.samples ?? plan.msaaSamples,
       depthBuffer: true,
       stencilBuffer: false,
       depthTexture,
@@ -201,25 +234,17 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   }
 
   function setQuality(pr: number) {
-    const next = Math.min(maxRatio, Math.max(Math.min(rc.minPixelRatio, maxRatio), pr));
+    const next = Math.min(maxRatio, Math.max(minRatio, pr));
     if (Math.abs(next - pixelRatio) < 1e-3) return;
     pixelRatio = next;
     resize();
   }
 
   const baseRender = renderer.render.bind(renderer);
-  const gl = renderer.getContext() as WebGL2RenderingContext;
   const timer = createGpuTimer(gl);
   // ?gpu=1: flush after every timed pass. ANGLE's Metal backend times whole command buffers, so
   // without a flush every pass in the same buffer reports roughly the whole frame (misleading).
   const exactTiming = typeof location !== 'undefined' && new URLSearchParams(location.search).get('gpu') === '1';
-  let rendererString = '';
-  try {
-    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-    rendererString = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
-  } catch {
-    /* no debug info: assume reliable */
-  }
   const perPassTiming = passTimingReliable(rendererString);
   const endPass = () => {
     timer.end();
@@ -241,9 +266,14 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
     post,
     gpuTimings: () => timer.snapshot(),
     get atMinQuality() {
-      return pixelRatio <= Math.min(rc.minPixelRatio, maxRatio) + 1e-3;
+      // The cloud budget's "resolution can't help any more" signal: below config.render.minPixelRatio
+      // (the old floor) the clouds may degrade too, while the resolution keeps dropping to the preset floor.
+      return pixelRatio <= Math.max(minRatio, Math.min(rc.minPixelRatio, maxRatio)) + 1e-3;
     },
     gpuTimer: timer,
+    get quality() {
+      return plan;
+    },
   };
 
   // Live profiling hooks (the game's window.sim has no handle on the renderer):
@@ -297,7 +327,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   };
   if (typeof window !== 'undefined') {
     const w = window as unknown as { __render?: Record<string, unknown> };
-    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, perPassTiming, pixelRatio: () => pixelRatio, benchClouds };
+    w.__render = { ...(w.__render ?? {}), gpu: () => timer.snapshot(), gpuAvailable: timer.available, perPassTiming, pixelRatio: () => pixelRatio, quality: () => ({ ...plan }), benchClouds };
   }
 
   function renderPipeline(scene: THREE.Scene, camera: THREE.Camera) {
@@ -355,7 +385,35 @@ export function createRenderer(container: HTMLElement, opts: RendererOptions = {
   ro?.observe(container);
   resize();
 
+  // devicePixelRatio changes (window moved to another monitor, browser zoom) fire no resize event
+  // everywhere: watch a resolution media query for the current ratio and re-plan the range.
+  let dprQuery: MediaQueryList | null = null;
+  const onDprChange = () => {
+    plan = makePlan();
+    maxRatio = plan.maxPixelRatio;
+    minRatio = plan.minPixelRatio;
+    const keep = Math.min(maxRatio, Math.max(minRatio, pixelRatio));
+    dyn = makeDyn(keep);
+    pixelRatio = -1; // force the resize below
+    setQuality(keep);
+    watchDpr();
+  };
+  const watchDpr = () => {
+    dprQuery?.removeEventListener?.('change', onDprChange);
+    dprQuery = null;
+    if (typeof matchMedia !== 'function') return;
+    try {
+      dprQuery = matchMedia(`(resolution: ${currentDpr()}dppx)`);
+      dprQuery.addEventListener?.('change', onDprChange);
+    } catch {
+      dprQuery = null;
+    }
+  };
+  watchDpr();
+
   function dispose() {
+    dprQuery?.removeEventListener?.('change', onDprChange);
+    dprQuery = null;
     ro?.disconnect();
     timer.dispose();
     renderer.render = baseRender;

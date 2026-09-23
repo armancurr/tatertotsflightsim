@@ -216,6 +216,9 @@ export function createSeekerView(cfg: Config = CONFIG): SeekerView {
   quad.frustumCulled = false;
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   let probeTarget: THREE.WebGLRenderTarget | null = null;
+  /** A small 8-bit target the IR quad can draw into (warm-up, probe) — never the picture it samples. */
+  const scratchTarget = () =>
+    (probeTarget ??= new THREE.WebGLRenderTarget(64, 48, { type: THREE.UnsignedByteType, depthBuffer: false, generateMipmaps: false }));
 
   let last = -Infinity;
   let hasPicture = false;
@@ -354,7 +357,10 @@ export function createSeekerView(cfg: Config = CONFIG): SeekerView {
     warmUp(renderer) {
       const prevTarget = renderer.getRenderTarget();
       try {
-        renderer.setRenderTarget(target);
+        // Into the scratch target, never `target`: the IR quad samples target.texture, and drawing
+        // with a texture attached to the bound framebuffer is a WebGL feedback loop (the draw is dropped
+        // with "GL_INVALID_OPERATION: Feedback loop formed between Framebuffer and active Texture").
+        renderer.setRenderTarget(scratchTarget());
         renderer.render(quad, quadCam);
       } catch {
         /* best effort */
@@ -365,15 +371,15 @@ export function createSeekerView(cfg: Config = CONFIG): SeekerView {
 
     probe(renderer) {
       try {
-        probeTarget ??= new THREE.WebGLRenderTarget(64, 48, { type: THREE.UnsignedByteType, depthBuffer: false, generateMipmaps: false });
+        const probe = scratchTarget();
         const prevTarget = renderer.getRenderTarget();
         const prevAutoClear = renderer.autoClear;
         const buf = new Uint8Array(64 * 48 * 4);
         try {
-          renderer.setRenderTarget(probeTarget);
+          renderer.setRenderTarget(probe);
           renderer.autoClear = true;
           renderer.render(quad, quadCam);
-          renderer.readRenderTargetPixels(probeTarget, 0, 0, 64, 48, buf);
+          renderer.readRenderTargetPixels(probe, 0, 0, 64, 48, buf);
         } finally {
           renderer.setRenderTarget(prevTarget);
           renderer.autoClear = prevAutoClear;

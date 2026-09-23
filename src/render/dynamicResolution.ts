@@ -36,6 +36,13 @@ export interface DynamicResolutionOptions {
   maxDt?: number;
   /** Time constant of the frame-time average, seconds (default 0.35). */
   smoothing?: number;
+  /**
+   * Seconds of headroom per raise during the first ramp up from a conservative start (default: none,
+   * i.e. upDelay). The ramp ends at the first failed probe, where the GPU's limit was found.
+   */
+  rampUpDelay?: number;
+  /** Seconds of frames after start/reset that are not judged (start-up streaming, shader compiles) (default 0). */
+  warmup?: number;
 }
 
 export interface DynamicResolution {
@@ -59,6 +66,8 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
   const settleTime = opts.settleTime ?? 0.6;
   const maxDt = opts.maxDt ?? 0.25;
   const tau = opts.smoothing ?? 0.35;
+  const rampUpDelay = opts.rampUpDelay !== undefined && opts.rampUpDelay > 0 ? opts.rampUpDelay : 0;
+  const warmupS = opts.warmup !== undefined && opts.warmup > 0 ? opts.warmup : 0;
 
   const clamp = (r: number) => Math.min(maxR, Math.max(minR, Math.round(r * 1000) / 1000));
 
@@ -69,6 +78,8 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
   let settle = 0;
   let upDelay = baseUpDelay;
   let sinceRaise = Infinity;
+  let ramping = rampUpDelay > 0;
+  let warm = warmupS;
 
   function reset(pixelRatio?: number) {
     ratio = clamp(pixelRatio ?? maxR);
@@ -78,12 +89,18 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
     settle = 0;
     upDelay = baseUpDelay;
     sinceRaise = Infinity;
+    ramping = rampUpDelay > 0;
+    warm = warmupS;
   }
 
   function update(dt: number): number | null {
     if (!(dt > 0) || dt > maxDt) return null;
     avgDt += (dt - avgDt) * (1 - Math.exp(-dt / tau));
     sinceRaise += dt;
+    if (warm > 0) {
+      warm -= dt;
+      return null;
+    }
     if (settle > 0) {
       settle -= dt;
       return null;
@@ -101,14 +118,17 @@ export function createDynamicResolution(opts: DynamicResolutionOptions): Dynamic
     }
 
     if (slowTime >= downDelay && ratio > minR) {
-      if (sinceRaise < probeWindow) upDelay = Math.min(maxUpDelay, upDelay * 2);
+      if (sinceRaise < probeWindow) {
+        upDelay = Math.min(maxUpDelay, upDelay * 2);
+        ramping = false;
+      }
       ratio = clamp(ratio * stepDown);
       slowTime = 0;
       fastTime = 0;
       settle = settleTime;
       return ratio;
     }
-    if (fastTime >= upDelay && ratio < maxR) {
+    if (fastTime >= (ramping ? Math.min(rampUpDelay, upDelay) : upDelay) && ratio < maxR) {
       ratio = clamp(ratio / stepDown);
       fastTime = 0;
       slowTime = 0;
