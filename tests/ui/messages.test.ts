@@ -35,7 +35,7 @@ describe('messages', () => {
   it('crash banner text', () => {
     const c = crashText({ time: 3, reason: 'Hit terrain', speedKt: 80, verticalSpeedFpm: -2000, position: { x: 0, y: 0, z: 0 } });
     expect(c.title).toBe('CRASHED — Hit terrain');
-    expect(c.hint).toBe('R reset · Shift+R approach');
+    expect(c.hint).toBe('R restart · Shift+R approach · Esc menu');
   });
 
   it('annunciations: stall, overspeed, flap and gear overspeed, engine', () => {
@@ -85,6 +85,8 @@ describe('messages', () => {
     const h = startHint();
     expect(h).toContain('W');
     expect(h).toContain('H');
+    expect(h).toContain('Esc menu');
+    expect(h).toContain(`${CONFIG.aircraft.limits.vrKt} kt`);
   });
 });
 

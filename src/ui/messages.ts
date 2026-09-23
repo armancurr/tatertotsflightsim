@@ -41,7 +41,7 @@ export function describeTouchdown(td: TouchdownRecord): { text: string; level: M
 }
 
 export function crashText(crash: CrashRecord): { title: string; hint: string } {
-  return { title: `CRASHED — ${crash.reason}`, hint: 'R reset · Shift+R approach' };
+  return { title: `CRASHED — ${crash.reason}`, hint: 'R restart · Shift+R approach · Esc menu' };
 }
 
 /** Every annunciator the HUD can show, most urgent first (static per config). */
@@ -128,5 +128,7 @@ export function keysOf(action: KeyAction, cfg: Config = CONFIG): string {
 /** One-line hint shown for the first seconds of a session. */
 export function startHint(cfg: Config = CONFIG): string {
   const k = (a: KeyAction) => keysOf(a, cfg);
-  return `${k('throttleUp')} throttle up · ${k('pitchUp')} pull up at 55 kt · ${k('gear')} gear · ${k('flapsDown')}/${k('flapsUp')} flaps · ${k('help')} help`;
+  const vr = Math.round(cfg.aircraft.limits.vrKt);
+  const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
+  return `${k('throttleUp')} throttle up · ${k('pitchUp')} pull up at ${vr} kt · ${k('gear')} gear · ${k('flapsDown')}/${k('flapsUp')} flaps · ${k('help')} controls · ${menu} menu`;
 }

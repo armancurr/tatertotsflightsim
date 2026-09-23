@@ -28,6 +28,42 @@ export interface HudReadings extends InstrumentReadings {
   gearSquat: boolean;
   /** Gear speed limit exceeded (VLE down, VLO in transit). */
   gearOverspeed: boolean;
+  /** Mach number (TAS over the ISA speed of sound at this altitude). */
+  mach: number;
+  /** 0..1 afterburner intensity (0 for piston engines). */
+  afterburner: number;
+  /** Speed brake extended (X; jets). */
+  speedBrake: boolean;
+  /** Sideslip, deg (+ air from the right: the flight path is right of the nose). */
+  betaDeg: number;
+  /** Flight-path angle, deg (+ climbing): where the jet HUD's flight-path marker sits against the horizon. */
+  flightPathDeg: number;
+}
+
+/** What the gauges can show for this aircraft: the steam gauges' stops, stretched for fast aircraft. */
+export interface InstrumentLimits {
+  maxAirspeedKt: number;
+  maxVsiFpm: number;
+  maxRpm: number;
+}
+
+/**
+ * Reading limits for an aircraft: the config's steam-gauge stops (the Cessna), raised to 1.25 × Vne
+ * for anything faster (the VSI range scales with it), so a jet's readings never peg at 250 kt.
+ */
+export function instrumentLimits(cfg: Config = CONFIG): InstrumentLimits {
+  const h = cfg.hud;
+  const vne = fin(cfg.aircraft.limits.vneKt, h.maxAirspeedKt);
+  const maxAirspeedKt = Math.max(h.maxAirspeedKt, vne * 1.25);
+  const maxRpm = Math.max(4000, fin(cfg.aircraft.engine.maxRpm, 0) * 1.2);
+  return { maxAirspeedKt, maxVsiFpm: h.maxVsiFpm * (maxAirspeedKt / h.maxAirspeedKt), maxRpm };
+}
+
+/** ISA speed of sound (m/s) at a geometric altitude (m): T falls 6.5 K/km to 216.65 K at 11 km, then holds. */
+export function isaSpeedOfSound(altitudeM: number): number {
+  const h = clamp(fin(altitudeM), -1000, 20000);
+  const T = h < 11000 ? 288.15 - 0.0065 * h : 216.65;
+  return Math.sqrt(1.4 * 287.053 * T);
 }
 
 /** Smoothing state of the needles. Create with createInstrumentModel(); mutated by updateInstruments(). */
@@ -149,13 +185,14 @@ export function updateInstruments(
   const d = state.derived;
   const lim = cfg.aircraft.limits;
 
-  const iasT = clamp(fin(d.ias) * MS_TO_KT, 0, h.maxAirspeedKt);
+  const L = instrumentLimits(cfg);
+  const iasT = clamp(fin(d.ias) * MS_TO_KT, 0, L.maxAirspeedKt);
   const altT = clamp(fin(state.position.y) * M_TO_FT, -2000, 99000);
   const hdgT = wrapHeading(fin(d.headingDeg, m.hdg));
-  const vsT = clamp(fin(d.verticalSpeed) * MS_TO_FPM, -h.maxVsiFpm, h.maxVsiFpm);
+  const vsT = clamp(fin(d.verticalSpeed) * MS_TO_FPM, -L.maxVsiFpm, L.maxVsiFpm);
   const turnT = rawTurnRate(state, cfg);
   const ballT = rawSlipBall(state, controls, cfg);
-  const rpmT = clamp(fin(state.engine.rpm), 0, 4000);
+  const rpmT = clamp(fin(state.engine.rpm), 0, L.maxRpm);
 
   const time = fin(state.time, m.lastTime);
   const snap = !m.initialized || time < m.lastTime - 1e-6;
@@ -195,6 +232,9 @@ export function updateInstruments(
   const throttlePct = clamp(fin(controls.throttle) * 100, 0, 100);
   const onGround = state.onGround === true;
   const gearHandleDown = controls.gearDown !== false;
+  const tas = clamp(fin(d.tas), 0, 2000);
+  const vsMs = clamp(fin(d.verticalSpeed), -2000, 2000);
+  const flightPathDeg = tas > 1 ? Math.asin(clamp(vsMs / tas, -1, 1)) * RAD_TO_DEG : 0;
   const gw = gearWarning(
     { onGround, crashed: state.phase === 'crashed', gear, handleDown: gearHandleDown, throttlePct, flapsDeg, iasKt: iasT },
     cfg,
@@ -232,5 +272,10 @@ export function updateInstruments(
     gearUnsafe: gw.gearUnsafe,
     gearSquat: gw.squatSwitch,
     gearOverspeed: gw.overspeed,
+    mach: tas / isaSpeedOfSound(fin(state.position.y)),
+    afterburner: clamp(fin(state.engine.afterburner ?? 0), 0, 1),
+    speedBrake: controls.speedBrake === true,
+    betaDeg: clamp(fin(d.beta) * RAD_TO_DEG, -90, 90),
+    flightPathDeg,
   };
 }

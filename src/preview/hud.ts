@@ -1,6 +1,8 @@
 /**
- * HUD preview: a gradient sky/ground stand-in for the 3D view plus the HUD,
- * fed synthetic readings from URL parameters, e.g.
+ * HUD preview: a gradient sky/ground stand-in for the 3D view plus the HUD and the app chrome
+ * (top bar, aircraft picker, pause menu), fed synthetic readings from URL parameters, e.g.
+ *   &jet=1 → the F-16 head-up display (&mach=0.85 &ab=1 &beta=2 &sb=1 speed brake, &g=6.5)
+ *   &menu=1 | &menu=controls → the pause menu open · &picker=1 → the aircraft picker open · &bar=0 → no top bar
  *   /preview/hud.html?ias=95&alt=3500&hdg=270&vs=500&pitch=4&roll=15
  *   &stall=1 &crash=1 &landing=smooth &cam=cockpit &help=1 &paused=1
  *   &flaps=20&flapsTarget=30 &gear=transit &thr=65 &rpm=2350 &trim=10
@@ -16,6 +18,12 @@ import type { AircraftState, CameraMode, EngineStatus, GearState, InstrumentRead
 import { createHud } from '../ui/hud';
 import { drawPanel } from '../ui/gauges';
 import { createInitialState, defaultControls } from '../physics';
+import { FLEET } from '../fleet';
+import { createAircraftPicker } from '../ui/picker';
+import { createMenu } from '../ui/menu';
+import { createTopBar } from '../ui/topBar';
+import { installUiStyle } from '../ui/uiStyle';
+import { topBarHeight } from '../ui/topBar';
 
 const q = new URLSearchParams(location.search);
 const num = (k: string, d: number) => {
@@ -26,7 +34,13 @@ const num = (k: string, d: number) => {
 const flag = (k: string) => q.get(k) === '1' || q.get(k) === 'true';
 
 const gear = (q.get('gear') as GearState | null) ?? 'down';
-const readings: InstrumentReadings & { gearHandleDown: boolean } = {
+const jet = flag('jet');
+const readings: InstrumentReadings & { gearHandleDown: boolean; betaDeg: number; flightPathDeg: number; speedBrake: boolean } = {
+  mach: num('mach', jet ? 0.62 : 0.15),
+  afterburner: num('ab', 0),
+  betaDeg: num('beta', 0),
+  flightPathDeg: 0,
+  speedBrake: flag('sb'),
   airspeedKt: num('ias', 95),
   altitudeFt: num('alt', 3500),
   altitudeAglFt: num('agl', num('alt', 3500) - 98),
@@ -107,7 +121,34 @@ if (flag('panel')) {
   const cameraMode = (q.get('cam') as CameraMode | null) ?? 'chase';
   const hud = createHud(document.getElementById('hud')!, {
     aircraft: { setPanelDrawer: () => undefined },
+    style: jet ? 'jet' : 'steam',
   });
+  if (q.get('bar') !== '0') {
+    // The app chrome with a stub host (nothing to reset or switch here).
+    installUiStyle(document);
+    const root = document.createElement('div');
+    root.className = 'tfs-root';
+    root.style.setProperty('--tfs-bar-h', `${topBarHeight(innerWidth)}px`);
+    const items = FLEET.map((d) => ({ id: d.id, name: d.name, shortName: d.shortName, description: d.description }));
+    let current = jet ? 'f16' : 'c172rg';
+    const picker = createAircraftPicker(document, { items, current, onSelect: (id) => picker.setCurrent((current = id)) });
+    let paused = true;
+    const menu = createMenu(document, {
+      reset: () => undefined, selectAircraft: (id) => picker.setCurrent((current = id)), setPaused: (p) => (paused = p), isPaused: () => paused,
+      setCamera: () => undefined, cameraMode: () => (q.get('cam') as CameraMode | null) ?? 'chase', setTimeOfDay: () => undefined, getTimeOfDay: () => 0,
+      timeOfDayNames: CONFIG.atmosphere.timeOfDay.map((t) => t.name), fleet: () => items, currentAircraft: () => current,
+      toggleSound: () => undefined, soundOn: () => true, toggleHud: () => hud.toggleVisible(), hudOn: () => hud.isVisible(),
+      onOpenChange: (open) => hud.setMenuOpen(open),
+    });
+    const bar = createTopBar(document, {
+      productName: CONFIG.menu.productName, fullName: CONFIG.menu.fullName, widgets: [picker.element], onMenu: () => (menu.isOpen() ? menu.close() : menu.open()),
+    });
+    root.append(bar.element, menu.element);
+    document.getElementById('hud')!.appendChild(root);
+    const m = q.get('menu');
+    if (m) menu.open(m === 'controls' ? 'controls' : 'main');
+    if (flag('picker')) picker.open();
+  }
   if (flag('help')) hud.toggleHelp();
   if (q.get('hud') === '0') hud.toggleVisible();
   const flashText = q.get('flash');

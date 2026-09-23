@@ -7,8 +7,23 @@
  *
  * `?veil=0` (or `?no=loading`) skips it.
  */
+import { CONFIG } from '../../config';
 import { createLoadingVeil, type LoadingVeil } from '../../ui/veil';
+import { loadAircraftChoice, safeLocalStorage } from '../../ui/picker';
+import { FLEET, getAircraftDef } from '../../fleet';
 import type { SystemModule } from './types';
+
+/** The aircraft the app is about to build: ?aircraft=, else the remembered choice, else the default. */
+function aircraftName(): string {
+  try {
+    const q = new URLSearchParams(location.search).get('aircraft');
+    const saved = loadAircraftChoice(safeLocalStorage(), CONFIG.menu.storageKey);
+    const id = q ?? (saved && FLEET.some((d) => d.id === saved) ? saved : null);
+    return getAircraftDef(id).name;
+  } catch {
+    return CONFIG.aircraft.name;
+  }
+}
 
 function wanted(): boolean {
   try {
@@ -24,7 +39,7 @@ function wanted(): boolean {
 
 let veil: LoadingVeil | null = null;
 if (wanted()) {
-  veil = createLoadingVeil(document);
+  veil = createLoadingVeil(document, CONFIG, { aircraftName: aircraftName() });
   // One painted frame before the app's synchronous start-up work (capped, in case rAF is paused in a background tab).
   await Promise.race([
     new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0))),

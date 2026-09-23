@@ -1,6 +1,7 @@
 /**
- * The start-up loading veil: a full-screen title card ("Flight Simulator", a
- * Cessna 172RG silhouette, a progress bar and what is being prepared) that
+ * The start-up loading veil: a full-screen title card (Tater the mascot flying
+ * over "Tater's Flight Sim", the aircraft and airfield, a progress bar and what
+ * is being prepared) that
  * hides the start-up hitch — the aircraft build, the first terrain tiles,
  * shader compiles — and then fades to the aircraft on the runway. It fades by
  * itself once frames run smoothly (+ config.hud.veil.autoDismissS), or at once
@@ -13,6 +14,7 @@
  *   veilActive() — whether a veil still covers the screen (the HUD's start hint waits).
  */
 import { CONFIG, type Config } from '../config';
+import { mascotSvg } from './mascot';
 
 export type VeilPhase = 'loading' | 'ready' | 'fading' | 'gone';
 
@@ -141,134 +143,58 @@ export function veilGesture(m: VeilModel): void {
   if (m.firstFrame) startFade(m);
 }
 
-// ─── Artwork ─────────────────────────────────────────────────────────────────
-
-type P = [number, number];
-
-/** Body-frame profile (z aft, y up, metres; wheel contact at y = −1.22) → SVG units. */
-const S = 44;
-const X0 = 398;
-const Y0 = 128;
-const sx = (z: number) => X0 - (z + 2.3) * S;
-const sy = (y: number) => Y0 - (y + 1.22) * S;
-const f1 = (v: number) => Math.round(v * 10) / 10;
-
-/** Closed Catmull-Rom spline through the points as cubic Béziers (a smooth outline). */
-function smooth(points: P[], closed = true, tension = 0.5): string {
-  const p = points.map(([z, y]) => [sx(z), sy(y)] as P);
-  const n = p.length;
-  const at = (i: number) => (closed ? p[(i + n) % n] : p[Math.max(0, Math.min(n - 1, i))]);
-  let d = `M${f1(p[0][0])} ${f1(p[0][1])}`;
-  const segs = closed ? n : n - 1;
-  for (let i = 0; i < segs; i++) {
-    const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
-    const c1: P = [p1[0] + ((p2[0] - p0[0]) * tension) / 3, p1[1] + ((p2[1] - p0[1]) * tension) / 3];
-    const c2: P = [p2[0] - ((p3[0] - p1[0]) * tension) / 3, p2[1] - ((p3[1] - p1[1]) * tension) / 3];
-    d += `C${f1(c1[0])} ${f1(c1[1])} ${f1(c2[0])} ${f1(c2[1])} ${f1(p2[0])} ${f1(p2[1])}`;
-  }
-  return closed ? `${d}Z` : d;
-}
-
-function poly(points: P[]): string {
-  return `M${points.map(([z, y]) => `${f1(sx(z))} ${f1(sy(y))}`).join('L')}Z`;
-}
-
-/** Side profile of the Cessna 172RG Cutlass on its wheels (nose right), as a self-contained SVG. */
-export function cessnaSilhouetteSvg(): string {
-  const fuselage = smooth([
-    [-2.3, 0.04], [-2.12, 0.2], [-1.98, 0.3], [-1.6, 0.41], [-1.2, 0.47], [-1.04, 0.52], [-0.8, 0.76], [-0.62, 0.98],
-    [0.4, 1.0], [1.1, 0.95], [1.7, 0.74], [2.6, 0.54], [3.6, 0.44], [4.5, 0.37], [5.4, 0.3], [6.28, 0.16], [6.3, 0.02],
-    [6.0, -0.07], [5.0, -0.1], [3.8, -0.2], [2.4, -0.36], [1.1, -0.52], [0.0, -0.58], [-0.9, -0.56], [-1.4, -0.48],
-    [-1.8, -0.36], [-2.02, -0.2], [-2.18, -0.08],
-  ]);
-  // Swept fin with the dorsal fillet, and the rudder.
-  const fin = smooth([[3.2, 0.44], [4.2, 0.5], [4.75, 0.62], [5.55, 1.44], [5.66, 1.5], [6.07, 1.5], [6.14, 1.42], [6.3, 0.2], [5.4, 0.3]], true, 0.25);
-  const hstab = smooth([[4.68, 0.06], [4.9, 0.15], [5.7, 0.15], [6.46, 0.1], [6.48, 0.05], [5.7, 0.0], [4.9, -0.02]], true, 0.4);
-  // The high wing seen end-on: the root airfoil sitting on the cabin roof.
-  const wing = smooth([[-0.7, 1.02], [-0.6, 1.13], [-0.2, 1.21], [0.4, 1.21], [1.14, 1.09], [1.2, 1.04], [0.6, 0.99], [-0.1, 0.96], [-0.6, 0.96]], true, 0.45);
-  const windows = [
-    poly([[-0.97, 0.55], [-0.62, 0.93], [0.28, 0.93], [0.3, 0.52], [-0.4, 0.46]]),
-    poly([[0.4, 0.93], [1.08, 0.91], [1.1, 0.56], [0.42, 0.52]]),
-    smooth([[1.2, 0.9], [1.62, 0.76], [2.1, 0.62], [1.9, 0.56], [1.25, 0.58]], true, 0.3),
-  ];
-  const stripe = smooth([[-1.95, 0.12], [-1.2, 0.2], [0.2, 0.24], [2.0, 0.22], [3.8, 0.2], [5.3, 0.18], [5.3, 0.1], [3.8, 0.1], [2.0, 0.1], [0.2, 0.1], [-1.2, 0.07], [-1.97, 0.02]], true, 0.3);
-  const strut = poly([[0.33, -0.4], [0.41, -0.38], [-0.08, 0.96], [-0.17, 0.96]]);
-  const noseLeg = poly([[-1.52, -0.44], [-1.38, -0.44], [-1.2, -1.0], [-1.32, -1.0]]);
-  const mainLeg = poly([[0.08, -0.5], [0.26, -0.53], [0.52, -0.98], [0.38, -1.0]]);
-  const wheel = (z: number, r: number) =>
-    `<circle cx="${f1(sx(z))}" cy="${f1(sy(-1.22 + r))}" r="${f1(r * S)}" fill="#141a23" stroke="#2a3340" stroke-width="0.8"/>` +
-    `<circle cx="${f1(sx(z))}" cy="${f1(sy(-1.22 + r))}" r="${f1(r * S * 0.45)}" fill="#a9b4c2"/>`;
-  const propX = f1(sx(-2.08));
-  const propY = f1(sy(0.05));
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 150" role="img" aria-label="Cessna 172RG Cutlass">` +
-    `<defs>` +
-    `<linearGradient id="fsvBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f7fb"/><stop offset="0.55" stop-color="#d9e1ea"/><stop offset="1" stop-color="#8e9aa9"/></linearGradient>` +
-    `<linearGradient id="fsvWing" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b9c4d1"/></linearGradient>` +
-    `<linearGradient id="fsvGlass" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b5572"/><stop offset="1" stop-color="#101a27"/></linearGradient>` +
-    `<radialGradient id="fsvShadow"><stop offset="0" stop-color="#000" stop-opacity="0.55"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>` +
-    `<linearGradient id="fsvProp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cfd8e3" stop-opacity="0"/><stop offset="0.5" stop-color="#cfd8e3" stop-opacity="0.55"/><stop offset="1" stop-color="#cfd8e3" stop-opacity="0"/></linearGradient>` +
-    `</defs>` +
-    `<ellipse cx="${f1(sx(1.8))}" cy="${Y0 + 1}" rx="200" ry="7" fill="url(#fsvShadow)"/>` +
-    `<path d="${noseLeg}" fill="#7d8896"/><path d="${mainLeg}" fill="#7d8896"/>` +
-    wheel(-1.26, 0.21) + wheel(0.45, 0.23) +
-    `<path d="${fin}" fill="url(#fsvBody)"/>` +
-    `<path d="${fuselage}" fill="url(#fsvBody)"/>` +
-    `<path d="${hstab}" fill="url(#fsvWing)" stroke="#7a8796" stroke-width="0.6"/>` +
-    `<path d="${stripe}" fill="#1f4f8f"/>` +
-    windows.map((w) => `<path d="${w}" fill="url(#fsvGlass)"/>`).join('') +
-    `<path d="${strut}" fill="#c4ceda"/>` +
-    `<path d="${wing}" fill="url(#fsvWing)" stroke="#6f7c8c" stroke-width="0.7"/>` +
-    `<ellipse class="fsv-prop" cx="${propX}" cy="${propY}" rx="2.4" ry="${f1(0.96 * S)}" fill="url(#fsvProp)"/>` +
-    `</svg>`
-  );
-}
-
 // ─── DOM ─────────────────────────────────────────────────────────────────────
 
 export const VEIL_STYLE_ID = 'fsv-style';
 
 const VEIL_CSS = `
 .fsv-veil {
-  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; overflow: hidden;
   background:
-    radial-gradient(120% 70% at 50% 108%, rgba(255,170,110,0.20) 0%, rgba(120,90,120,0.10) 30%, rgba(0,0,0,0) 60%),
-    radial-gradient(90% 60% at 50% 100%, #1d3552 0%, rgba(13,26,44,0) 70%),
-    linear-gradient(180deg, #03060c 0%, #07101d 45%, #0f213a 100%);
-  color: #eaf1fa; cursor: pointer; user-select: none; -webkit-user-select: none;
+    radial-gradient(90% 55% at 50% 112%, rgba(255,170,90,0.30) 0%, rgba(232,57,47,0.10) 35%, rgba(0,0,0,0) 65%),
+    radial-gradient(70% 50% at 50% 38%, rgba(64,110,170,0.22) 0%, rgba(0,0,0,0) 70%),
+    linear-gradient(180deg, #050912 0%, #0b1628 48%, #1a2640 78%, #3a2f3a 100%);
+  color: #f4f1ea; cursor: pointer; user-select: none; -webkit-user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   transition: opacity 0.12s linear;
 }
-.fsv-card { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; width: min(560px, calc(100vw - 32px)); }
-.fsv-plane { width: min(460px, 80vw); aspect-ratio: 420 / 150; margin-bottom: 26px; filter: drop-shadow(0 10px 24px rgba(0,0,0,0.45)); }
-.fsv-plane svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.fsv-prop { transform-box: fill-box; transform-origin: 50% 50%; animation: fsv-prop 0.09s steps(3) infinite; }
-@keyframes fsv-prop { 0% { transform: scaleY(1); opacity: 0.9; } 33% { transform: scaleY(0.55); opacity: 0.6; } 66% { transform: scaleY(0.85); opacity: 0.8; } 100% { transform: scaleY(1); opacity: 0.9; } }
-.fsv-title {
-  margin: 0; font-weight: 200; font-size: clamp(30px, 4.4vw, 50px); letter-spacing: 0.34em; text-indent: 0.34em;
-  text-transform: uppercase; line-height: 1.05; white-space: nowrap;
-  background: linear-gradient(180deg, #ffffff 30%, #9fb4cc 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+.fsv-veil::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.55;
+  background-image: radial-gradient(1px 1px at 12% 18%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 72% 12%, #fff 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 34% 30%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 88% 34%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 55% 8%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 22% 44%, #fff 50%, transparent 51%);
 }
-.fsv-sub { margin-top: 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(190,210,232,0.62); text-align: center; }
-.fsv-progress { margin-top: 40px; width: min(320px, 70vw); }
-.fsv-track { position: relative; height: 2px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.10); }
-.fsv-bar, .fsv-boot { position: absolute; inset: 0; transform-origin: 0 50%; border-radius: 2px;
-  background: linear-gradient(90deg, #5fa8ff, #bfe0ff); box-shadow: 0 0 10px rgba(120,190,255,0.8); }
+.fsv-card { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; width: min(620px, calc(100vw - 32px)); }
+.fsv-mascot { width: min(230px, 42vw); aspect-ratio: 64 / 48; margin-bottom: 14px; animation: fsv-bob 2.6s ease-in-out infinite; filter: drop-shadow(0 16px 24px rgba(0,0,0,0.5)); }
+.fsv-mascot svg { width: 100%; height: 100%; display: block; overflow: visible; }
+@keyframes fsv-bob { 0%, 100% { transform: translate(0, 0) rotate(0deg); } 50% { transform: translate(6px, -9px) rotate(-2deg); } }
+.fsv-title {
+  margin: 0; font-weight: 850; font-size: clamp(34px, 5.4vw, 60px); letter-spacing: 0.01em; line-height: 1.02; white-space: nowrap; color: #fff4e0;
+  text-shadow: 0 6px 30px rgba(0,0,0,0.45);
+}
+.fsv-title span { background: linear-gradient(180deg, #ffe09a, #ffc15c 45%, #f29a2e); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.fsv-full { margin-top: 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.34em; text-indent: 0.34em; text-transform: uppercase; color: rgba(255,210,140,0.72); }
+.fsv-sub { margin-top: 18px; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; color: rgba(214,226,240,0.66); text-align: center; }
+.fsv-progress { margin-top: 30px; width: min(340px, 70vw); }
+.fsv-track { position: relative; height: 3px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,0.10); }
+.fsv-bar, .fsv-boot { position: absolute; inset: 0; transform-origin: 0 50%; border-radius: 3px;
+  background: linear-gradient(90deg, #f29a2e, #ffc15c 60%, #ffe6b0); box-shadow: 0 0 12px rgba(255,180,80,0.8); }
 .fsv-bar { transform: scaleX(0); transition: transform 0.25s ease-out; }
 /* Runs on the compositor, so it keeps moving while the main thread builds the aircraft. */
 .fsv-boot { animation: fsv-boot 3.2s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
 @keyframes fsv-boot { from { transform: scaleX(0.02); } to { transform: scaleX(0.34); } }
-.fsv-row { display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(200,218,238,0.58); }
+.fsv-row { display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; font-weight: 650; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(214,226,240,0.58); }
 .fsv-start {
-  margin-top: 30px; font-size: 14px; font-weight: 500; letter-spacing: 0.14em; color: #f2f7fd;
+  margin-top: 28px; padding: 9px 20px; border-radius: 999px; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: #241503;
+  background: linear-gradient(180deg, #ffd27e, #ffc15c 50%, #f29a2e); box-shadow: 0 8px 24px rgba(242,154,46,0.35);
   opacity: 0; transform: translateY(6px); transition: opacity 0.5s ease, transform 0.5s ease;
 }
 .fsv-ready .fsv-start { opacity: 1; transform: none; animation: fsv-pulse 1.8s ease-in-out 0.5s infinite; }
-@keyframes fsv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes fsv-pulse { 0%, 100% { box-shadow: 0 8px 24px rgba(242,154,46,0.35); } 50% { box-shadow: 0 8px 34px rgba(255,193,92,0.7); } }
 .fsv-ready .fsv-row .fsv-status { color: rgba(170,230,190,0.85); }
-@media (max-height: 560px) { .fsv-plane { margin-bottom: 12px; } .fsv-progress { margin-top: 22px; } .fsv-start { margin-top: 16px; } }
-@media (prefers-reduced-motion: reduce) { .fsv-prop, .fsv-boot, .fsv-ready .fsv-start { animation: none; } }
+@media (max-height: 560px) { .fsv-mascot { width: 150px; margin-bottom: 6px; } .fsv-progress { margin-top: 18px; } .fsv-start { margin-top: 14px; } }
+@media (prefers-reduced-motion: reduce) { .fsv-mascot, .fsv-boot, .fsv-ready .fsv-start { animation: none; } }
 `;
 
 const instances = new Set<object>();
@@ -290,7 +216,12 @@ export interface LoadingVeil {
   dispose(): void;
 }
 
-export function createLoadingVeil(doc: Document, cfg: Config = CONFIG): LoadingVeil {
+export interface VeilOptions {
+  /** The aircraft about to be flown (default: the config's). */
+  aircraftName?: string;
+}
+
+export function createLoadingVeil(doc: Document, cfg: Config = CONFIG, opts: VeilOptions = {}): LoadingVeil {
   const win = doc.defaultView ?? (globalThis as unknown as Window);
   const model = createVeilModel();
   const token = {};
@@ -305,19 +236,27 @@ export function createLoadingVeil(doc: Document, cfg: Config = CONFIG): LoadingV
   const el = doc.createElement('div');
   el.className = 'fsv-veil';
   el.setAttribute('role', 'dialog');
-  el.setAttribute('aria-label', 'Flight Simulator is loading');
+  el.setAttribute('aria-label', `${cfg.menu.productName} is loading`);
   const card = doc.createElement('div');
   card.className = 'fsv-card';
-  const plane = doc.createElement('div');
-  plane.className = 'fsv-plane';
-  plane.innerHTML = cessnaSilhouetteSvg();
+  const mascot = doc.createElement('div');
+  mascot.className = 'fsv-mascot';
+  mascot.innerHTML = mascotSvg({ title: 'Tater, the flying potato' });
   const title = doc.createElement('h1');
   title.className = 'fsv-title';
-  title.textContent = 'Flight Simulator';
+  const name = cfg.menu.productName;
+  const sp = name.indexOf(' ');
+  const first = doc.createElement('span');
+  first.textContent = sp > 0 ? name.slice(0, sp) : name;
+  title.appendChild(first);
+  if (sp > 0) title.appendChild(doc.createTextNode(name.slice(sp)));
+  const full = doc.createElement('div');
+  full.className = 'fsv-full';
+  full.textContent = cfg.menu.fullName;
   const sub = doc.createElement('div');
   sub.className = 'fsv-sub';
   const ap = cfg.world.airport as { name?: string; icao?: string };
-  sub.textContent = `${cfg.aircraft.name} · ${ap.name ?? 'Tater Field'}${ap.icao ? ` (${ap.icao})` : ''} · Runway 36`;
+  sub.textContent = `${opts.aircraftName ?? cfg.aircraft.name} · ${ap.name ?? 'Tater Field'}${ap.icao ? ` (${ap.icao})` : ''} · Runway 36`;
   const progress = doc.createElement('div');
   progress.className = 'fsv-progress';
   const track = doc.createElement('div');
@@ -338,7 +277,7 @@ export function createLoadingVeil(doc: Document, cfg: Config = CONFIG): LoadingV
   const start = doc.createElement('div');
   start.className = 'fsv-start';
   start.textContent = 'Click or press any key to start';
-  card.append(plane, title, sub, progress, start);
+  card.append(mascot, title, full, sub, progress, start);
   el.appendChild(card);
   (doc.body ?? doc.documentElement).appendChild(el);
 
