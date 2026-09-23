@@ -1,14 +1,14 @@
 /**
  * The Controls page shared by the menu and the H help overlay: every binding in
- * config.controls.keys, grouped Flight · Engine & systems · Cameras · Sim, plus the mouse and the
- * jet notes. `controlGroups()` is pure (tested: nothing bound is ever missing — an unknown new
+ * config.controls.keys, grouped Flight · Engine & systems · Weapons · Cameras · Sim, plus the
+ * mouse and the jet / A-10 notes. `controlGroups()` is pure (tested: nothing bound is ever missing — an unknown new
  * binding lands in Sim); `buildControlsSheet()` renders it (system fonts, no network).
  */
 import { CONFIG, type Config } from '../config';
 import { keyLabel } from './messages';
 
 export type KeyAction = keyof Config['controls']['keys'];
-export type ControlGroupId = 'flight' | 'engine' | 'cameras' | 'sim';
+export type ControlGroupId = 'flight' | 'engine' | 'weapons' | 'cameras' | 'sim';
 
 export interface ControlRow {
   /** What it does. */
@@ -58,6 +58,19 @@ const LAYOUT: { id: ControlGroupId; title: string; rows: RowSpec[] }[] = [
       { action: 'Parking brake', parts: ['parkingBrake'] },
       { action: 'Speed brake (F-16)', parts: ['speedBrake'] },
       { action: 'Landing light', parts: ['landingLight'] },
+    ],
+  },
+  {
+    id: 'weapons',
+    title: 'Weapons',
+    rows: [
+      {
+        action: 'Fire the gun (hold)',
+        parts: ['fireGun'],
+        note: () => 'A-10: GAU-8/A 30 mm, 1,150 rounds · F-16: M61A1 20 mm',
+      },
+      { action: 'Lock target / next target (Maverick)', parts: ['lockTarget'] },
+      { action: 'Launch a Maverick (after LOCK)', parts: ['fireMissile'], note: () => 'A-10: four AGM-65D, fire-and-forget' },
     ],
   },
   {
@@ -120,6 +133,7 @@ export function controlNotes(cfg: Config = CONFIG): string[] {
   return [
     `F-16: push the throttle past ~${cfg.menu.afterburnerFromPct} % for afterburner; ${keyLabel(cfg.controls.keys.speedBrake[0])} opens and closes the speed brake.`,
     `Cessna: full throttle, rotate at about ${CONFIG.aircraft.limits.vrKt} kt, gear up once climbing. Esc opens this menu at any time.`,
+    `A-10: the tank range is north of the airport — follow the RANGE caret. ${keyLabel(cfg.controls.keys.lockTarget[0])} locks a Maverick on the vehicle nearest the nose, ${keyLabel(cfg.controls.keys.fireMissile[0])} launches it at LOCK; hold ${keyLabel(cfg.controls.keys.fireGun[0])} to fire the gun at the pipper (hit tanks from above or behind).`,
   ];
 }
 

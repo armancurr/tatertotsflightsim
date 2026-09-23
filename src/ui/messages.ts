@@ -2,7 +2,9 @@
  * Text of the HUD's messages — landing toast, crash banner, annunciators,
  * start hint and key labels. Pure (no DOM) so every wording is unit-tested.
  */
-import { CONFIG, type Config } from '../config';
+import { CONFIG, type Config, type WeaponsConfig } from '../config';
+import type { TargetKind, WeaponKind } from '../combat/types';
+import { gunShortName, missileLongName } from './weaponsHudMath';
 import type { CrashRecord, InstrumentReadings, TouchdownRecord } from '../types';
 import { gearFlags } from './gearWarning';
 
@@ -131,4 +133,14 @@ export function startHint(cfg: Config = CONFIG): string {
   const vr = Math.round(cfg.aircraft.limits.vrKt);
   const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
   return `${k('throttleUp')} throttle up · ${k('pitchUp')} pull up at ${vr} kt · ${k('gear')} gear · ${k('flapsDown')}/${k('flapsUp')} flaps · ${k('help')} controls · ${menu} menu`;
+}
+
+/** Kill toast: "T-72B destroyed — GAU-8" / "BMP-2 destroyed — AGM-65D" (the weapon named from what the aircraft carries). */
+export function killToastText(kind: TargetKind, weapon: WeaponKind, weapons: WeaponsConfig | null | undefined, cfg: Config = CONFIG): string {
+  const name = cfg.combat.targets[kind]?.name ?? String(kind);
+  let by: string;
+  if (weapon === 'gun') by = weapons?.gun ? gunShortName(weapons.gun.name) : 'gun';
+  else if (weapon === 'missile') by = weapons?.missiles ? missileLongName(weapons.missiles.name) : 'Maverick';
+  else by = String(weapon) || 'gun';
+  return `${name} destroyed — ${by}`;
 }

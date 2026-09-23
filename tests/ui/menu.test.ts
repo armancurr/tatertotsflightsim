@@ -177,7 +177,7 @@ describe('menu: Controls page', () => {
     expect(sheet).not.toBeNull();
     expect($('[data-view="controls"]').hidden).toBe(false);
     expect($('[data-view="main"]').hidden).toBe(true);
-    expect([...sheet.querySelectorAll('h3')].map((x) => x.textContent)).toEqual(['Flight', 'Engine & systems', 'Cameras', 'Sim']);
+    expect([...sheet.querySelectorAll('h3')].map((x) => x.textContent)).toEqual(['Flight', 'Engine & systems', 'Weapons', 'Cameras', 'Sim']);
     expect(sheet.textContent).toContain('Speed brake');
     btn('Back').click();
     expect($('[data-view="main"]').hidden).toBe(false);

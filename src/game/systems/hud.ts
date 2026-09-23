@@ -43,6 +43,7 @@ const mod: SystemModule = {
         hud.setMenuOpen(open);
       }),
       bus.on('showHelp', () => hud.toggleHelp()),
+      bus.on('toast', (t) => hud.flash(t.text, t.level ?? 'info', t.seconds)),
     ];
     return {
       readings(state, controls, dt) {
