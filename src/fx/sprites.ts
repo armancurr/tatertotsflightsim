@@ -1,7 +1,7 @@
 /**
  * PURE procedural particle sprites, packed in one RGBA8 atlas (4 × 2 tiles):
  *
- *   row 0 (v = 0..½): 4 billowy smoke puffs — A = density, RG = sprite-space normal (xy, 0.5
+ *   row 0 (v = 0..½): 4 ragged billowy smoke puffs — A = density (Beer-Lambert: wispy edges, thick core), RG = sprite-space normal (xy, 0.5
  *                     = flat), B = thickness (hotter core when the puff is fire)
  *   row 1 (v = ½..1): 4 flame tongues — A = density, B = heat core, RG neutral
  *
@@ -89,36 +89,57 @@ function writeTile(atlas: Atlas, tile: number, size: number, dens: Float32Array,
   }
 }
 
+/**
+ * A billowing smoke puff: a cauliflower cluster of soft gaussian blobs (a few big ones inside,
+ * many small lobes around the rim), domain-warped by fractal noise so the silhouette is ragged,
+ * modulated by internal turbulence, and turned into opacity with Beer-Lambert (1 − e^(−k·density))
+ * so only the thick core approaches opaque while the edges stay wispy.
+ */
 function smokeTile(size: number, seed: number) {
   const r = rng(seed);
   const n = size * size;
   const dens = new Float32Array(n);
   const height = new Float32Array(n);
-  // A cluster of overlapping blobs: the big central one plus 5 lobes.
-  const blobs: { x: number; y: number; r: number }[] = [{ x: 0, y: 0, r: 0.56 }];
+  const blobs: { x: number; y: number; r: number; w: number }[] = [];
+  // the cluster leans one way (puffs are never symmetric)
+  const lean = r() * Math.PI * 2;
+  const lx = Math.cos(lean) * 0.06, ly = Math.sin(lean) * 0.06;
   for (let b = 0; b < 5; b++) {
     const ang = r() * Math.PI * 2;
-    const dist = 0.22 + 0.16 * r();
-    blobs.push({ x: Math.cos(ang) * dist, y: Math.sin(ang) * dist, r: 0.3 + 0.16 * r() });
+    const dist = 0.24 * Math.sqrt(r());
+    blobs.push({ x: lx + Math.cos(ang) * dist, y: ly + Math.sin(ang) * dist, r: 0.26 + 0.14 * r(), w: 0.7 + 0.4 * r() });
+  }
+  const lobes = 6 + Math.floor(r() * 4);
+  for (let b = 0; b < lobes; b++) {
+    const ang = r() * Math.PI * 2;
+    const dist = 0.3 + 0.22 * r();
+    blobs.push({ x: lx + Math.cos(ang) * dist, y: ly + Math.sin(ang) * dist, r: 0.13 + 0.14 * r(), w: 0.35 + 0.6 * r() });
   }
   const ox = r() * 100;
   const oy = r() * 100;
+  // a lumpy outline: the silhouette radius wobbles with angle (random-phase harmonics)
+  const ph = [r(), r(), r(), r()].map((p) => p * Math.PI * 2);
+  const amp = [0.22, 0.16, 0.07, 0].map((a) => a * (0.75 + 0.5 * r()));
+  const outline = (th: number) => 1 + amp[0] * Math.sin(2 * th + ph[0]) + amp[1] * Math.sin(3 * th + ph[1]) + amp[2] * Math.sin(4 * th + ph[2]) + amp[3] * Math.sin(5 * th + ph[3]);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const u = ((x + 0.5) / size) * 2 - 1;
       const v = ((y + 0.5) / size) * 2 - 1;
-      let shape = 0;
-      for (const bl of blobs) {
-        const d2 = ((u - bl.x) ** 2 + (v - bl.y) ** 2) / (bl.r * bl.r);
-        shape = Math.max(shape, 1 - d2);
-      }
-      const nz = fbm(u * 2.6 + ox, v * 2.6 + oy, seed);
-      const detail = fbm(u * 7 + oy, v * 7 + ox, seed + 5, 3);
-      const d = shape * (0.6 + 0.8 * nz) - 0.1 + 0.08 * (detail - 0.5);
+      // domain warp → ragged, torn edges
+      const wu = u + 0.45 * (fbm(u * 1.5 + ox, v * 1.5 + oy, seed + 3, 4) - 0.5);
+      const wv = v + 0.45 * (fbm(u * 1.5 + oy, v * 1.5 - ox, seed + 7, 4) - 0.5);
+      let d = 0;
+      for (const bl of blobs) d += bl.w * Math.exp(-((wu - bl.x) ** 2 + (wv - bl.y) ** 2) / (bl.r * bl.r));
+      const turb = fbm(u * 3.2 + ox, v * 3.2 + oy, seed, 5);
+      const fine = fbm(u * 6.5 + oy, v * 6.5 + ox, seed + 5, 3);
+      d *= 0.55 + 0.8 * turb;
+      d -= 0.1 + 0.08 * (fine - 0.5);
+      d *= smooth(1.55, 0.4, Math.hypot(u - lx, v - ly) / (0.56 * outline(Math.atan2(v - ly, u - lx))));
       const rr = Math.hypot(u, v);
       const k = y * size + x;
-      dens[k] = smooth(0, 0.5, d) * smooth(0.9, 0.76, rr);
-      height[k] = Math.sqrt(Math.max(0, shape)) * 0.85 + 0.35 * nz + 0.08 * detail;
+      const win = smooth(0.93, 0.6, rr);
+      dens[k] = (1 - Math.exp(-1.1 * Math.max(0, d))) * win;
+      height[k] = 0.7 * Math.sqrt(Math.max(0, d)) + 0.45 * Math.max(0, 1 - rr * rr) + 0.06 * turb;
     }
   }
   const nx = new Float32Array(n);
@@ -137,12 +158,16 @@ function smokeTile(size: number, seed: number) {
       gy /= len;
       nx[k] = gx;
       ny[k] = gy;
-      core[k] = dens[k] > 0 ? Math.min(1, Math.max(0, height[k] * 0.9)) : 0;
+      core[k] = dens[k] > 0 ? Math.min(1, Math.max(0, height[k] * 0.8)) : 0;
     }
   }
   return { dens, nx, ny, core };
 }
 
+/**
+ * A flame lick: a soft gaussian cross-section (no hard outline) that narrows and leans upward,
+ * broken into several flickering tongues by vertically stretched noise; hottest low in the core.
+ */
 function flameTile(size: number, seed: number) {
   const r = rng(seed);
   const n = size * size;
@@ -156,16 +181,16 @@ function flameTile(size: number, seed: number) {
       const u = ((x + 0.5) / size) * 2 - 1;
       const v = ((y + 0.5) / size) * 2 - 1;
       const t = (v + 1) / 2; // 0 bottom → 1 top
-      const wob = (fbm(u * 1.4 + ox, v * 2.2 - ox, seed) - 0.5) * 0.55 * (0.25 + t);
+      const wob = (fbm(u * 1.4 + ox, v * 1.8 - ox, seed, 4) - 0.5) * 0.5 * (0.25 + t);
       const xw = u - wob - lean * t;
-      const width = 0.66 * Math.pow(Math.max(0, 1 - t), 0.85) * smooth(0.02, 0.2, t);
-      const c = width > 1e-4 ? 1 - Math.abs(xw) / width : 0;
-      const tongues = fbm(u * 3.2 + ox, v * 1.4 - ox * 0.5, seed + 9);
-      let d = smooth(0, 0.55, c) * smooth(0.2, 0.62, tongues + 0.45 * (1 - t));
-      d *= smooth(0.92, 0.78, Math.abs(u)) * smooth(0.92, 0.8, Math.abs(v));
+      const width = 0.48 * Math.pow(Math.max(0, 1 - t), 0.8) + 0.12;
+      const profile = Math.exp(-2.2 * (xw / width) ** 2) * smooth(0.0, 0.34, t);
+      const tongues = fbm(u * 2.4 + ox, v * 1.1 - ox * 0.5, seed + 9, 4);
+      let d = profile * smooth(0.15, 0.9, tongues + 0.5 * (1 - t));
+      d *= smooth(0.95, 0.75, Math.abs(u)) * smooth(0.95, 0.78, Math.abs(v));
       const k = y * size + x;
-      dens[k] = d;
-      core[k] = d * Math.max(0, c) * Math.pow(1 - t, 0.4);
+      dens[k] = 1 - Math.exp(-1.65 * d);
+      core[k] = d * profile * Math.pow(1 - t, 0.4);
     }
   }
   return { dens, nx: zero, ny: zero, core };

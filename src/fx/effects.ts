@@ -17,6 +17,8 @@ import { generateParticleAtlas } from './sprites';
 import { FIRE_GLSL } from './shading';
 
 const FX = CONFIG.fx;
+const FIRE_LIGHT = new THREE.Color(0xff8a3a);
+const FLASH_LIGHT = new THREE.Color(0xffd9a8);
 
 export interface EffectsOptions {
   /** Terrain/water height for debris bounce and ground fades (default: just below the event). */
@@ -39,7 +41,7 @@ export interface Effects {
   dispose(): void;
   readonly object: THREE.Group;
   readonly sim: FxSim;
-  stats(): { smoke: number; fire: number; debris: number; drawn: number; fireLevel: number };
+  stats(): { smoke: number; fire: number; debris: number; drawn: number; fireLevel: number; flashLevel: number; emitters: number };
 }
 
 const VERT = /* glsl */ `
@@ -386,10 +388,14 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
         if (debris.instanceColor) debris.instanceColor.needsUpdate = true;
       }
 
-      // Fire light.
+      // Fire light (and the white-hot flash of an explosion through the same light: no extra light, no recompiles).
       if (light) {
-        light.intensity = FX.fireLightIntensity * sim.fireLevel;
-        light.position.set(sim.firePos.x, sim.firePos.y, sim.firePos.z);
+        const fireI = FX.fireLightIntensity * sim.fireLevel;
+        const flashI = FX.flashLightIntensity * sim.flashLevel;
+        light.intensity = fireI + flashI;
+        const p = flashI > fireI ? sim.flashPos : sim.firePos;
+        light.position.set(p.x, p.y, p.z);
+        light.color.copy(FIRE_LIGHT).lerp(FLASH_LIGHT, flashI / Math.max(1e-6, fireI + flashI));
       }
     },
     setSun(direction, color, ambient) {
@@ -418,7 +424,7 @@ export function createEffects(scene: THREE.Scene, opts: EffectsOptions = {}): Ef
       light?.dispose();
     },
     stats() {
-      return { smoke: sim.smoke.count, fire: sim.fire.count, debris: sim.debris.count, drawn, fireLevel: sim.fireLevel };
+      return { smoke: sim.smoke.count, fire: sim.fire.count, debris: sim.debris.count, drawn, fireLevel: sim.fireLevel, flashLevel: sim.flashLevel, emitters: sim.activeEmitters() };
     },
   };
 }

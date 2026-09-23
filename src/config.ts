@@ -998,9 +998,11 @@ export const CONFIG = {
     /** Seed of the effects RNG (deterministic bursts for tests and screenshots). */
     seed: 1721,
     /** Preallocated pools: smoke/dust, fire/embers (one sorted draw call together) and solid debris chunks. */
-    smokeCapacity: 1400,
-    fireCapacity: 900,
-    debrisCapacity: 48,
+    smokeCapacity: 1800,
+    fireCapacity: 1100,
+    debrisCapacity: 64,
+    /** Continuous emitters (part fires, the smoke column, steam), preallocated. */
+    maxEmitters: 24,
     /** Particles fade out when the camera is closer than size × nearFade (no screen-filling sprites). */
     nearFade: 0.55,
     /** …and fade (with the square of the excess) once one sprite would cover more than this fraction of the screen height. */
@@ -1013,22 +1015,24 @@ export const CONFIG = {
     fireOcclusion: 0.55,
     /** A single point light flickers at the fire (lights the ground and the wreck). Always present (intensity 0 when idle) so no shader recompiles. */
     fireLight: true,
-    fireLightIntensity: 2400,
-    fireLightDistance: 220,
+    fireLightIntensity: 500,
+    fireLightDistance: 140,
+    /** The white-hot flash of an explosion lights the scene through the same point light (candela at flash level 1). */
+    flashLightIntensity: 1600,
     crash: {
       /** Below this impact speed there is no fireball (fuel tanks survive) — only dust, debris and a little smoke. */
       fireMinKt: 25,
       /** Fuel fireball: a short-lived rolling ball of flame (puffs grow to fireballSize m) that turns into a black mushroom. */
-      fireballCount: 60,
-      fireballLife: [0.9, 1.8] as [number, number],
-      fireballSize: [5, 11] as [number, number],
-      fireballSpeed: 12,
+      fireballCount: 80,
+      fireballLife: [1.2, 2.4] as [number, number],
+      fireballSize: [7, 16] as [number, number],
+      fireballSpeed: 14,
       /** Lingering smoke column: emitted for smokeDuration s (rate decays), each puff lives smokeLife s. */
       smokeDuration: 20,
       smokeRate: 18,
       smokeLife: [10, 16] as [number, number],
       smokeSize: [4, 26] as [number, number],
-      smokeRise: 8,
+      smokeRise: 9.5,
       smokeBuoyancy: 3.2,
       smokeBuoyancyTau: 8,
       /** Horizontal/vertical velocity relaxation toward the wind, 1/s. */
@@ -1040,6 +1044,9 @@ export const CONFIG = {
       /** Ground fire: many small, short flame licks and billows at the wreck (flames/s at full intensity). */
       groundFireDuration: 16,
       groundFireRate: 55,
+      /** Fires on burning parts: flame licks per second (× intensity, grows with the part's size) and smoke puffs per second. */
+      partFireRate: 26,
+      partSmokeRate: 9,
       debrisCount: 30,
       emberCount: 80,
     },
@@ -1080,6 +1087,78 @@ export const CONFIG = {
     },
     /** Subtle FOV widening with airspeed (degrees added to the camera FOV). */
     fov: { startKt: 55, fullKt: 170, maxDeg: 3.5 },
+  },
+  /**
+   * The crash director (src/crash + src/game/systems/crash.ts): the airframe breaks into rigid
+   * bodies that keep the aircraft's momentum, a multi-stage fireball, slow motion and a crash camera.
+   */
+  crash: {
+    /** Impact speed (kt) below which nothing breaks off, and at which the break-up/explosion is total. */
+    bumpKt: 22,
+    fullKt: 110,
+    /** Flight-path angle (deg below the horizon) from which an impact counts as nose-in rather than a skid. */
+    noseInDeg: 28,
+    debris: {
+      /** Rigid bodies (airframe parts), preallocated. */
+      capacity: 32,
+      gravity: 9.81,
+      /** Largest integration step, s (the sim sub-steps longer frames). */
+      subStep: 1 / 120,
+      /** Linear air drag (1/s), spin damping in the air and on the ground (1/s), ploughing drag while sliding (1/s). */
+      airDrag: 0.03,
+      spinDrag: 0.12,
+      groundSpinDrag: 1.4,
+      ploughDrag: 0.12,
+      /** Impacts slower than this (m/s) do not bounce (no jitter at rest). */
+      bounceMinSpeed: 2,
+      /** A body falls asleep after sleepTime s in contact below sleepSpeed m/s and sleepSpin rad/s; every body rests after maxAge s. */
+      sleepSpeed: 0.3,
+      sleepSpin: 0.4,
+      sleepTime: 0.5,
+      maxAge: 60,
+      maxSpeed: 250,
+      maxSpin: 30,
+      /** Trees/buildings: velocity damping (1/s) while a part is inside an obstacle's height. */
+      canopyDrag: 2.4,
+      /** Water: drag (1/s) when submerged, speed kept when slapping into the surface, depth (m) below which a part is gone. */
+      waterDrag: 2.2,
+      waterImpactKeep: 0.55,
+      sinkDepth: 2.5,
+    },
+    /** Explosion push: speed (m/s) for a refMass-kg part at full severity (∝ √(refMass/mass)), cap, random spin (rad/s). */
+    explosion: { speed: 9, refMass: 60, maxDv: 24, spin: 6 },
+    /** Slow motion: the debris and effects run at `scale` for `hold` s of real time, then ease back to real time over `ramp` s. */
+    slowMo: { scale: 0.3, hold: 0.9, ramp: 0.8 },
+    camera: {
+      /** Extra hand-held shake at impact (m, deg), decaying with shakeTau s. */
+      shakeM: 0.45,
+      shakeDeg: 1.6,
+      shakeTau: 0.45,
+      /** The crash camera takes over between blendStart and blendEnd s (real time) after the impact (cockpit: at once). */
+      blendStart: 0.5,
+      blendEnd: 3.2,
+      orbitDegPerSec: 3.5,
+      elevationDeg: 19,
+      /** Distance frames the debris field: clamp(spread × fitScale, minDistance, maxDistance) m. */
+      minDistance: 38,
+      maxDistance: 150,
+      fitScale: 2.6,
+      /** Smoothing of the framed point, s. */
+      focusTau: 0.7,
+    },
+    fire: {
+      /** Burning parts burn for this long (s); the smoke column rises for columnDuration s. */
+      partDuration: [20, 30] as [number, number],
+      columnDuration: 45,
+      /** Secondary fuel explosions (s after impact, sim time) along the debris trail. */
+      secondary: [0.28, 0.7] as [number, number],
+    },
+    scorch: {
+      /** Decal pool size, crater radius range (m) and furrow width (m). */
+      count: 6,
+      craterRadius: [4, 11] as [number, number],
+      furrowWidth: 2.6,
+    },
   },
 };
 
