@@ -160,8 +160,8 @@ function combinerFrame(): THREE.BufferGeometry[] {
   const M = combinerMatrix();
   const FR = 0x1d1f21;
   const parts: THREE.BufferGeometry[] = [];
-  const rail = 0.008;
-  const depth = 0.012;
+  const rail = 0.005;
+  const depth = 0.01;
   const z = -depth / 2 - 0.001;
   for (const s of [-1, 1]) parts.push(tint(box(rail, c.h + rail, depth, V(s * (c.w / 2 + rail / 2), 0, z)), FR, 0.45, 0.4));
   parts.push(tint(box(c.w + 2 * rail, rail * 1.4, depth * 1.3, V(0, c.h / 2 + rail * 0.7, z)), FR, 0.45, 0.4));

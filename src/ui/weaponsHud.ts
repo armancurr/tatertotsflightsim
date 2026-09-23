@@ -25,7 +25,7 @@ import { CONFIG, type Config, type TargetClassConfig, type WeaponsConfig } from 
 import type { CombatStats, GroundTarget, RangeInfo, TargetKind, WeaponsStatus } from '../combat/types';
 import { emptyWeaponsStatus } from '../combat/world';
 import type { Vec3 } from '../types';
-import { jetHeadingTape, jetHudOmitsGunCross } from './jetHud';
+import { jetHeadingTape, jetHudCompact, jetHudOmitsGunCross } from './jetHud';
 import { hudGlassToBox, type HudGlass } from './hudGlass';
 import {
   ammoLabel, bearingDeg, clampToRect, createScreenPt, formatKm, formatSlantRange, gunAmmoText, gunLineDir, lockBox, missileStoresText,
@@ -389,9 +389,10 @@ export function updateWeaponsHud(m: WeaponsHudModel, f: WeaponsHudFrame, cfg: Co
       }
       const rel = relativeBearingDeg(bearingDeg(ax, az, rg.x, rg.z), num(f.headingDeg));
       if (hb) {
-        const tape = jetHeadingTape(hb.w, hb.h, f.gearUp);
+        const compact = jetHudCompact(hb.w, hb.h, !!gl);
+        const tape = jetHeadingTape(hb.w, hb.h, f.gearUp, compact);
         rc.tapeShow = true;
-        rc.tapeUp = f.gearUp;
+        rc.tapeUp = f.gearUp && !compact;
         rc.tapeDir = rel > 20 ? 1 : rel < -20 ? -1 : 0;
         rc.tapeX = hb.x + hb.w / 2 + clamp(rel, -20, 20) * tape.ppd;
         rc.tapeY = hb.y + tape.y;
