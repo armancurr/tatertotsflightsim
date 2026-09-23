@@ -22,11 +22,12 @@ export interface ClassModel {
 
 export type Lod = 0 | 1 | 2;
 
-// Linear albedo (calibrated for the HDR pipeline, exposure ≈ 2.2): Russian 4BO green and friends.
+// Linear albedo (calibrated for the HDR pipeline, exposure ≈ 2.2): Russian 4BO green and friends —
+// a darker, browner olive than sunlit grass, so the vehicles read against the fields from the air.
 export const PAINT = {
-  green: [0.072, 0.09, 0.036],
-  greenDark: [0.052, 0.066, 0.028],
-  greenLight: [0.095, 0.11, 0.05],
+  green: [0.046, 0.052, 0.024],
+  greenDark: [0.033, 0.038, 0.018],
+  greenLight: [0.062, 0.068, 0.033],
   rubber: [0.022, 0.022, 0.02],
   track: [0.045, 0.04, 0.034],
   steel: [0.06, 0.058, 0.05],
