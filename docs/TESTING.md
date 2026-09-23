@@ -10,7 +10,8 @@ browser e2e tests. `npx tsc --noEmit -p .` typechecks the tests along with `src/
 | Unit | `tests/<module>/` (mirrors `src/`) | Each module's contract, written by the module's owner test-first | ms |
 | Fuzz / property | `tests/fuzz/*.fuzz.test.ts` | Invariants over thousands of random inputs (fast-check) | ~15 s total |
 | Functional | `tests/functional/*.test.ts` | Whole missions flown by a scripted pilot against the real `step()` | < 1 s |
-| End-to-end | `tests/e2e/*.e2e.test.ts` | The real page in headless Chrome (GPU), keyboard in, `window.sim` out | ~15 s |
+| End-to-end | `tests/e2e/*.e2e.test.ts` | The real page in headless Chromium (GPU where there is one), keyboard in, `window.sim` out | ~15 s with a GPU |
+| Repository | `tests/repo/*.test.ts` | Open-source readiness: package metadata, LICENSE, CI, a README that documents every key binding, no personal paths or secrets, the test-browser resolution order | < 1 s |
 
 Shared helpers live in `tests/support/`:
 
@@ -24,7 +25,9 @@ Shared helpers live in `tests/support/`:
   hostile numbers).
 - `invariants.ts`: `stateViolation()`, `controlsViolation()`, `firstNonFinite()`, `deepFreeze()`.
 - `e2e.ts`: a private Vite server (free port, 127.0.0.1, dependency cache in the OS temp dir),
-  Chrome launcher, `waitForSim()` polling, and a recorder for console, page and request errors.
+  the browser launcher (`launchChrome()`, `testBrowserPath()`; the choice itself lives in
+  `scripts/test-browser.mjs`, shared with `scripts/shot.mjs`), `detectGpu()`, `waitForSim()`
+  polling with a time scale for slow renderers, and a recorder for console, page and request errors.
 - `fc.ts`: `fcParams(numRuns)` applies the environment knobs below to every property.
 
 ### Fuzz coverage
@@ -50,7 +53,7 @@ water").
 title · no console, page or request errors during load and 5 s of running · types and initial
 values of `window.sim` · W throttle and acceleration · R reset · P pause/resume · 1 to 4 and C
 cameras · F/V flaps · Shift+R approach · G gear in the air · resize from 1440×900 to 1024×768 ·
-fps > 20. The e2e tests use only `window.sim`, the keyboard, the title and the size of the largest
+fps > 20 (on a GPU). The e2e tests use only `window.sim`, the keyboard, the title and the size of the largest
 canvas, so they keep working when the interim build is swapped for the full app.
 
 ## Running one layer
@@ -58,10 +61,42 @@ canvas, so they keep working when the interim build is swapped for the full app.
 ```sh
 npx vitest run tests/fuzz            # property tests
 npx vitest run tests/functional      # missions
-npx vitest run tests/e2e             # browser (needs Google Chrome; E2E_CHANNEL=chromium to switch)
+npx vitest run tests/e2e             # browser (run `npx playwright install chromium` once)
+npx vitest run tests/repo            # open-source readiness checks
 npx vitest run tests/physics         # one module's unit tests
 npx vitest run -t "stall"            # by test name
 ```
+
+## The test browser, GPUs and CPU-only machines
+
+The e2e tests and `scripts/shot.mjs` pick their browser in `scripts/test-browser.mjs`. They never
+use your everyday Google Chrome, because an automation instance of it takes over the Dock icon
+until it quits. The order is:
+
+1. `TEST_BROWSER=/path/to/chromium` if it is set. A path to Google Chrome itself is refused.
+2. On macOS, the newest *Google Chrome for Testing* in the Playwright cache
+   (`~/Library/Caches/ms-playwright`, or `PLAYWRIGHT_BROWSERS_PATH`). It runs WebGL on the Metal
+   GPU (`--use-angle=metal`).
+3. Otherwise, Playwright's own Chromium (`npx playwright install chromium`; on Linux add
+   `--with-deps` for the system libraries). It uses a GPU if there is one and SwiftShader (CPU
+   WebGL) if not.
+
+On a CPU-only machine, such as a GitHub Actions runner, SwiftShader draws this game at well under
+1 fps. The sim advances at most 1/12 s of flight per rendered frame, so it runs much slower than
+real time. The e2e suite detects a software renderer (`detectGpu()`) and adapts:
+
+- every `waitForSim` timeout is multiplied by 120;
+- the fps floor drops from 20 to "renders at all";
+- the take-off run only needs to gain 2 knots instead of 10.
+
+Every test still runs, but the e2e file takes minutes instead of seconds: about 13 minutes on an
+M2 Max forced to SwiftShader (`TEST_SOFTWARE_GL=1`), and longer on a 4-core CI runner.
+
+| Variable | Effect |
+| --- | --- |
+| `TEST_BROWSER` | Chromium binary to launch |
+| `TEST_SOFTWARE_GL=1` | Force SwiftShader on any machine, to reproduce a CI run locally |
+| `E2E_TIME_SCALE=<n>` | Multiply every `waitForSim` timeout by at least `n` (a very slow machine) |
 
 ## fast-check knobs and reproducing a failure
 

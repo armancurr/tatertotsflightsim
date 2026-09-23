@@ -1,15 +1,16 @@
-# Flight Simulator — build plan
+# Tater's Flight Sim — build plan
 
 > **Orchestrator prompt** (paste this to resume the build with Claude as AI orchestrator):
 >
-> You are the orchestrator for `/Users/jt/Code/Flight Simulator`, a browser 3D flight
-> simulator (Cessna 172RG, Three.js, TypeScript, Vite, Vitest). The spec is
-> `/Users/jt/Code/coeus/EX_PROMPT_7_FLIGHT_SIM.md`; this PLAN.md holds the architecture,
-> contracts and wave status, RECORD.md holds the build log. Read both, run `npm test`,
+> You are the orchestrator for this repository, Tater's Flight Sim: a browser 3D flight
+> simulator (Cessna 172RG and F-16C, Three.js, TypeScript, Vite, Vitest). The original spec was
+> kept outside the repository; this PLAN.md holds the architecture, contracts and wave status,
+> RECORD.md holds the build log. Read both, run `npm test`,
 > start `npm start` (port 8092) in the background, then continue with the first wave
 > that is not ✅ (start with RESUME.md — it has the current paste-in prompt). Work in waves of up to 10 Opus sub-agents (git worktrees) on file-disjoint tasks,
-> test-first; integrate, fly the sim in the on-screen Chrome window (Playwright MCP),
-> photograph every done line into `qa/screenshots/`, commit after each wave.
+> test-first; integrate, fly the sim headless (`scripts/shot.mjs`, `scripts/qa-pilot.js` —
+> never the owner's everyday Chrome), photograph every done line into `qa/screenshots/`,
+> commit after each wave.
 
 ## Stack
 
@@ -18,7 +19,8 @@
   (typecheck + test + build).
 - No runtime network assets: every texture, model and sound is generated procedurally in
   code (canvas / DataTexture / BufferGeometry / WebAudio). Nothing to 404.
-- `scripts/shot.mjs` — headless Chrome (real GPU via Metal) screenshot + console check:
+- `scripts/shot.mjs` — headless Chromium screenshot + console check (Chrome for Testing on the
+  Metal GPU on macOS, Playwright's Chromium elsewhere; browser choice in `scripts/test-browser.mjs`):
   `node scripts/shot.mjs http://127.0.0.1:8092/preview/x.html out.png --size 1440x900 --wait 4000`.
 
 ## Architecture

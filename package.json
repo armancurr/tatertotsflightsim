@@ -3,7 +3,32 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Tater's Flight Sim (Tater Tots Flight Simulator): a browser 3D flight simulator \u2014 fly a Cessna 172 or an F-16 over a procedural world. Three.js + TypeScript.",
+  "description": "Tater's Flight Sim (Tater Tots Flight Simulator): a browser 3D flight simulator — fly a Cessna 172RG or an F-16C over a procedural world with real flight physics. Three.js + TypeScript, no downloaded assets.",
+  "keywords": [
+    "flight-simulator",
+    "flight-sim",
+    "threejs",
+    "webgl2",
+    "typescript",
+    "vite",
+    "browser-game",
+    "procedural-generation",
+    "cessna",
+    "f-16"
+  ],
+  "license": "MIT",
+  "author": "Jared Tate",
+  "homepage": "https://github.com/<owner>/taters-flight-sim#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<owner>/taters-flight-sim.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<owner>/taters-flight-sim/issues"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "start": "vite --host 127.0.0.1 --port 8092 --strictPort",
     "dev": "vite --host 127.0.0.1 --port 8092 --strictPort",
