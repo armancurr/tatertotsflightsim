@@ -188,7 +188,7 @@ uniform sampler3D tDetail;
 uniform vec4 uWeather;   // 1/tile, baseMin, baseRange, maxThickness
 uniform vec4 uWind;      // offset x, offset z, 1/shapeTile, 1/detailTile
 uniform vec4 uErosion;   // shape, detail, sigma, max distance
-uniform vec4 uShape;     // edge sharpness, side warp (m), light-march sharpness, -
+uniform vec4 uShape;     // edge sharpness, side warp (m), light-march sharpness, sharpness LOD distance (m)
 float cSat( float x ) { return clamp( x, 0.0, 1.0 ); }
 float remap( float v, float lo, float hi, float nlo, float nhi ) { return nlo + ( v - lo ) * ( nhi - nlo ) / max( hi - lo, 1e-5 ); }
 // Shape noise at p: erodes the base shape and domain-warps the weather lookup.
@@ -369,7 +369,7 @@ void main() {
 			if ( !inCol ) continue;
 			float lod = detailLod( t );
 			// far away the pixel footprint is tens of metres: softer surfaces instead of sub-pixel sparkle
-			float sharp = mix( uShape.x, min( uShape.x, 2.0 ), smoothstep( 2000.0, 12000.0, t ) );
+			float sharp = mix( uShape.x, min( uShape.x, 2.0 ), smoothstep( uShape.w * 0.25, uShape.w, t ) );
 			float dens = erodeDensity( p, sn, b, hf, lod, sharp ) * ( 1.0 - smoothstep( fadeStart, uErosion.w, t ) );
 			if ( dens < 0.003 ) continue;
 			float sigma = dens * uErosion.z;
@@ -386,7 +386,8 @@ void main() {
 			vec3 amb = mix( uAmbBottom, uAmbTop, up ) * mix( 1.0, exp( - uLight.x * ( 1.0 - hf ) ), 0.5 );
 			// sunlight diffusing down through the cloud from its sunlit top: roughly linear in height in a
 			// conservative slab (bright in-cloud whiteout; the flat base keeps a fraction uLight.z of it)
-			float diffuse = uLight.y * cSat( uSunDir.y * 1.5 + 0.1 ) * mix( uLight.z, 1.0, cSat( hf ) );
+			// (only where the direct light is already attenuated: no double counting on sunlit surfaces)
+			float diffuse = uLight.y * cSat( uSunDir.y * 1.5 + 0.1 ) * mix( uLight.z, 1.0, cSat( hf ) ) * ( 1.0 - exp( - tau ) );
 			vec3 src = uSunCol * ( ms * powder * uLayer.z + diffuse ) + amb * uLayer.w;
 			float Ts = exp( - sigma * dt );
 			float op = T * ( 1.0 - Ts );
@@ -539,7 +540,7 @@ varying vec2 vUv;
 void main() {
 	float s = texture2D( tSrc, vUv ).r * 0.3;
 	s += ( texture2D( tSrc, vUv + uStep ).r + texture2D( tSrc, vUv - uStep ).r ) * 0.235;
-	s += ( texture2D( tSrc, vUv + 2.2 * uStep ).r + texture2D( tSrc, vUv - 2.2 * uStep ).r ) * 0.115;
+	s += ( texture2D( tSrc, vUv + 2.0 * uStep ).r + texture2D( tSrc, vUv - 2.0 * uStep ).r ) * 0.115;
 	gl_FragColor = vec4( s, s, s, 1.0 );
 }
 `;
@@ -640,7 +641,7 @@ export function createVolumetricClouds(o: VolumetricCloudsOptions): VolumetricCl
     uWeather: { value: new THREE.Vector4(1 / tile, o.baseMin, o.baseRange, o.maxThickness) },
     uWind: { value: new THREE.Vector4(0, 0, shapeScale, detailScale) },
     uErosion: { value: new THREE.Vector4(o.shapeErosion, o.detailErosion, o.sigma, o.maxDistance) },
-    uShape: { value: new THREE.Vector4(o.edgeSharpness, o.sideWarp, o.edgeSharpness, 0) },
+    uShape: { value: new THREE.Vector4(o.edgeSharpness, o.sideWarp, o.edgeSharpness, 16000) },
   };
   const ray = {
     tDepth: { value: null as THREE.Texture | null },

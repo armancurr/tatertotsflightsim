@@ -818,18 +818,18 @@ export const CONFIG = {
         detailPeriod: 180,
         /** The shape noise displaces the weather lookup by up to this (m): cloud sides wander instead of rising as vertical walls. */
         sideWarp: 150,
-        sunScale: 3,
+        sunScale: 2.5,
         ambientScale: 1,
         maxDistance: 50000,
         weatherSize: 2048,
         distanceSize: 1024,
-        detailDistance: 6000,
+        detailDistance: 10000,
         temporalAlpha: 0.3,
-        lighting: { forwardG: 0.8, backG: -0.3, backWeight: 0.3, powder: 0.6, ambientOcclusion: 2.5, diffusion: 0.2, diffusionBase: 0.12 },
+        lighting: { forwardG: 0.8, backG: -0.3, backWeight: 0.3, powder: 0.6, ambientOcclusion: 2.5, diffusion: 0.12, diffusionBase: 0.12 },
       },
     },
     /** Cloud shadows on every material (fog-chunk override): strength = 1 − brightness in full shadow; map texels per tile side. */
-    cloudShadows: { enabled: true, strength: 0.55, size: 1024 },
+    cloudShadows: { enabled: true, strength: 0.6, size: 2048 },
     /** High thin cirrus wisps drawn in the sky shader. */
     cirrus: { altitude: 9000, coverage: 0.45, opacity: 0.55, scale: 1 / 45000 },
     /** Apparent sun radius (the real sun is 0.2666°). */
