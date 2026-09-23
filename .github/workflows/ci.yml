@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node-version }} · typecheck, test, build
+    runs-on: ubuntu-latest
+    # GitHub's Linux runners have no GPU: the browser tests draw WebGL on the CPU (SwiftShader) at
+    # well under 1 fps, detect it and stretch their waits, so they take minutes rather than seconds.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the test browser (Playwright Chromium + system libraries)
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (unit, fuzz, functional, browser end-to-end)
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload the build
+        if: matrix.node-version == 24
+        uses: actions/upload-artifact@v4
+        with:
+          name: taters-flight-sim-dist
+          path: dist/
+          retention-days: 14

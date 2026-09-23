@@ -1,8 +1,16 @@
-node_modules/
+# Dependencies and build output
+node_modules
 dist/
-.DS_Store
-*.log
 .vite/
 coverage/
+*.tsbuildinfo
+
+# Logs, OS and editor clutter, local environment
+*.log
+.DS_Store
+.env
+.env.*
+
+# Scratch screenshots (qa/screenshots/ is committed) and agent worktrees
 qa/tmp/
 .worktrees/

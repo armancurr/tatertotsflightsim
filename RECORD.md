@@ -4,13 +4,12 @@ The log of what was built, decisions taken, failures met and their causes. Newes
 
 ## 2026-09-22 — Wave 0 (orchestrator)
 
-- Project lives at `/Users/jt/Code/Flight Simulator` (the spec's exact folder name, placed in
-  the Code folder per JT's instruction), a git repo on `main`.
+- Project folder `Flight Simulator` (the spec's exact folder name), a git repo on `main`.
 - Aircraft: **Cessna 172RG Cutlass RG** — the real 172 variant with retractable gear, so the
   spec's gear control is authentic rather than invented.
 - Stack: Three.js r186 + TypeScript + Vite 8 + Vitest 5. `npm start` → 127.0.0.1:8092.
-- npm's global cache (`~/.npm`) has root-owned files (EACCES); installs use
-  `npm_config_cache=<scratchpad>/npm-cache`. Cause: an old `sudo npm`. Not fixed (outside the project).
+- On the development machine npm's global cache had root-owned files (EACCES, from an old
+  `sudo npm`), so installs there used a private cache directory. A machine issue, not a project one.
 - Playwright's bundled headless shell for 1.63 isn't downloaded; `scripts/shot.mjs` uses the
   installed Google Chrome (`channel: 'chrome'`) instead, which also gives real Metal GPU WebGL
   (`ANGLE Metal Renderer: Apple M2 Max`).
@@ -94,7 +93,7 @@ Everything remaining is in RESUME.md.
   `window.sim.teleport/setTimeOfDay/debug/render`; URL `?spawn=x,z,aglFt,hdg,kt&cam=&tod=&pause=1&no=`;
   Vite watch-ignores anchored to the checkout root so worktree dev servers hot-reload.
 - Wave 3: 10 Opus agents in worktrees (aircraft, airport, buildings, roads+cars, traffic, terrain,
-  water, sky, trees, ux) — briefs in the session scratchpad `briefs/common3.md`.
+  water, sky, trees, ux) — each with a written brief (kept outside the repository).
 - **Play-test bug #2** (flying the real app in Chrome): a 1.5 s ↓ at Vr lifted off, the elevator
   snapped back to neutral in 0.3 s, the nose fell toward the 76-kt trim, the aircraft settled back
   on the runway; G pressed during that hop retracted the gear → "Gear-up landing" crash.

@@ -1,20 +1,26 @@
 /**
- * End-to-end harness: a private Vite dev server for this checkout (free port,
- * 127.0.0.1, own dependency cache) and headless Google Chrome on the real GPU
- * (Metal ANGLE), plus polling helpers around `window.sim`.
+ * End-to-end harness: a private Vite dev server for this checkout (free port, 127.0.0.1, own
+ * dependency cache) and a headless Chromium — never the user's own Google Chrome (browser choice:
+ * scripts/test-browser.mjs) — plus polling helpers around `window.sim`.
  *
- * E2E tests talk to the app ONLY through `window.sim` and the keyboard (plus the
- * page title, viewport and the full-screen canvas size), so they keep working
- * when the interim build is replaced by the full app.
+ * Runs on a real GPU where there is one (Metal on macOS) and on CPU-only machines such as CI
+ * runners (SwiftShader). `detectGpu()` tells the two apart; on a software renderer every
+ * `waitForSim` timeout is stretched (`setE2ETimeScale`) because the sim advances at most
+ * `maxSubSteps` physics steps per rendered frame, so it runs slower than real time at a few fps.
+ *
+ * E2E tests talk to the app ONLY through `window.sim` and the keyboard (plus the page title,
+ * viewport and the full-screen canvas size), so they keep working when the interim build is
+ * replaced by the full app.
  */
 import { createServer, type ViteDevServer } from 'vite';
 import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwright';
 import { createHash } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
-import { realpathSync, existsSync, readdirSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { realpathSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isSoftwareRenderer, launchOptions, resolveTestBrowser } from '../../scripts/test-browser.mjs';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -59,32 +65,47 @@ export async function startViteServer(root = ROOT): Promise<E2EServer> {
 }
 
 /**
- * The browser binary for automated tests: "Google Chrome for Testing" from the Playwright cache,
- * or TEST_BROWSER. NEVER the user's own /Applications/Google Chrome.app — an automation instance
- * of it hijacks the Dock icon so JT's normal profile won't open (see RECORD.md).
+ * The browser binary for automated tests: TEST_BROWSER → (macOS) the newest Chrome for Testing in
+ * the Playwright cache → undefined = Playwright's own bundled Chromium. NEVER the user's Google
+ * Chrome (an automation instance of it hijacks the Dock icon). Pass it as `executablePath`.
  */
-export function testBrowserPath(): string {
-  if (process.env.TEST_BROWSER) return process.env.TEST_BROWSER;
-  const cache = join(homedir(), 'Library/Caches/ms-playwright');
-  const dirs = existsSync(cache)
-    ? readdirSync(cache).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]))
-    : [];
-  for (const d of dirs) {
-    for (const rel of ['chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
-      const p = join(cache, d, rel);
-      if (existsSync(p)) return p;
-    }
-  }
-  throw new Error("No Chrome for Testing in ~/Library/Caches/ms-playwright — set TEST_BROWSER (never the user's Google Chrome).");
+export function testBrowserPath(): string | undefined {
+  return resolveTestBrowser().executablePath;
 }
 
-/** Headless Chrome for Testing with GPU WebGL (same flags as scripts/shot.mjs). */
+/** Headless Chromium with GPU WebGL where available (same resolver and flags as scripts/shot.mjs). */
 export function launchChrome(): Promise<Browser> {
-  return chromium.launch({
-    executablePath: testBrowserPath(),
-    headless: true,
-    args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'],
+  return chromium.launch(launchOptions());
+}
+
+export interface GpuInfo {
+  /** WebGL renderer string, e.g. "ANGLE Metal Renderer: Apple M2 Max" or "…SwiftShader…". */
+  renderer: string;
+  /** CPU rasteriser (SwiftShader, llvmpipe) or no WebGL2: expect single-digit fps. */
+  software: boolean;
+}
+
+/** Which WebGL2 renderer this page gets. */
+export async function detectGpu(page: Page): Promise<GpuInfo> {
+  const renderer = await page.evaluate(() => {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return 'no webgl2';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
   });
+  return { renderer, software: isSoftwareRenderer(renderer) };
+}
+
+let timeScale = Math.max(1, Number(process.env.E2E_TIME_SCALE) || 1);
+
+/** Multiplier on every `waitForSim` timeout (≥ 1). Starts at E2E_TIME_SCALE (default 1). */
+export function e2eTimeScale(): number {
+  return timeScale;
+}
+
+/** Stretch every later `waitForSim` timeout by this factor (e.g. on a software renderer). */
+export function setE2ETimeScale(scale: number): void {
+  timeScale = Math.max(1, Number.isFinite(scale) ? scale : 1);
 }
 
 export interface PageProblems {
@@ -126,10 +147,11 @@ export function readSim(page: Page): Promise<Sim | null> {
 
 /**
  * Poll window.sim until `pred` holds (checked in Node on a fresh copy each time); returns that copy.
- * Throws with the last seen snapshot on timeout.
+ * Throws with the last seen snapshot on timeout. The timeout is multiplied by `e2eTimeScale()`.
  */
 export async function waitForSim(page: Page, pred: (s: Sim) => boolean, what: string, timeoutMs = 10_000, everyMs = 50): Promise<Sim> {
   const t0 = Date.now();
+  timeoutMs *= timeScale;
   let last: Sim | null = null;
   for (;;) {
     last = await readSim(page);
