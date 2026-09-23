@@ -266,11 +266,37 @@ export function buildFlightDeck(): DeckBuild {
   }
   // Centre post between the windscreens.
   L.push(tint(tube(V(0, WINDSCREEN.y0, WINDSCREEN.z0 + 0.02), V(0, WINDSCREEN.y1, WINDSCREEN.z1 + 0.02), 0.05, 0.04, 8), C.frame, 0.6, 0.05));
-  // Sliding-window cranks and sun visors (stowed against the header).
+  // Sidewall trim on the cheek and side walls: the armrest ledge under the windows and the darker
+  // kick panel below it.
+  for (const pl of ROOM) {
+    if (!/^(cheek|side)/.test(pl.name)) continue;
+    const band = (y0: number, y1: number, inward: number, color: number) => {
+      let poly = [planePoint(pl, -6, -6), planePoint(pl, 6, -6), planePoint(pl, 6, 6), planePoint(pl, -6, 6)].map(v);
+      for (const q of ROOM) if (q !== pl) poly = clipPoly(poly, q.n, q.d);
+      poly = clipPoly(poly, { x: 0, y: 1, z: 0 }, y1);
+      poly = clipPoly(poly, { x: 0, y: -1, z: 0 }, -y0);
+      if (poly.length < 3) return;
+      const pts = poly.map((p) => p.addScaledVector(v(pl.n), -inward));
+      const g = new THREE.BufferGeometry().setFromPoints(pts);
+      const idx: number[] = [];
+      for (let i = 1; i < pts.length - 1; i++) idx.push(0, i + 1, i);
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      if ((g.getAttribute('normal') as THREE.BufferAttribute).getX(0) * pl.n.x + (g.getAttribute('normal') as THREE.BufferAttribute).getY(0) * pl.n.y + (g.getAttribute('normal') as THREE.BufferAttribute).getZ(0) * pl.n.z > 0) {
+        const r: number[] = [];
+        for (let i = 0; i < idx.length; i += 3) r.push(idx[i], idx[i + 2], idx[i + 1]);
+        g.setIndex(r);
+        g.computeVertexNormals();
+      }
+      L.push(tint(g, color, 0.8));
+    };
+    band(-0.62, -0.36, 0.006, 0x6d7176);
+    band(-0.36, -0.3, 0.035, 0x44484c);
+  }
+  // Sliding-window cranks.
   for (const s of [-1, 1]) {
-    L.push(tint(box(0.03, 0.14, 0.03, V(s * (SIDE_X - 0.07), -0.2, -0.38)), C.dark, 0.5, 0.3));
-    L.push(tint(box(0.08, 0.025, 0.025, V(s * (SIDE_X - 0.1), -0.15, -0.38)), C.knob, 0.5, 0.1));
-    L.push(tint(box(0.46, 0.012, 0.22, V(s * 0.4, 0.37, -0.44), -0.6, 0, 0), 0x3a3d40, 0.7, 0.05));
+    L.push(tint(box(0.03, 0.12, 0.03, V(s * (SIDE_X - 0.06), -0.22, -0.3)), C.dark, 0.5, 0.3));
+    L.push(tint(box(0.07, 0.022, 0.022, V(s * (SIDE_X - 0.08), -0.17, -0.3)), C.knob, 0.5, 0.1));
   }
 
   // ── Glareshield: anti-glare top, the MCP/EFIS face, underside ──

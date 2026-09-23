@@ -108,6 +108,10 @@ export function createB747FlightDeck(): B747FlightDeck {
     }
   }
 
+  // QA hook (DevTools / scripts): the live displays' redraw count and timings.
+  const stats = { redraws: 0, lastMs: 0, maxMs: 0 };
+  if (hasDom) (globalThis as { __b747Deck?: object }).__b747Deck = { cfg: DECK_DISPLAY_CFG, stats };
+
   // ── Materials ──
   const light = createDeckLight();
   const lining = light.apply(createPartsMaterial('b747-deck'), 'lining');
@@ -217,7 +221,6 @@ export function createB747FlightDeck(): B747FlightDeck {
   // ── Per-frame ──
   const pose = createDeckPose();
   const readings = createDeckReadings();
-  const stats = { redraws: 0, lastMs: 0, maxMs: 0 };
   const due = new Map<string, number>(DISPLAY_KEYS.map((k, i) => [k, i * 0.02]));
   const _m = new THREE.Matrix4();
   const _q = new THREE.Quaternion();
