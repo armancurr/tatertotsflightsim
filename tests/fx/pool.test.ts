@@ -81,6 +81,13 @@ describe('ParticlePool', () => {
     for (const arr of [pool.px, pool.py, pool.pz, pool.vx, pool.vy, pool.vz]) expect(Number.isFinite(arr[i])).toBe(true);
     expect(particleSize(pool, i)).toBeGreaterThanOrEqual(0);
   });
+  it('shape: aspect (width/height) defaults to 1 and is clamped to 0.1..10 (garbage → 1)', () => {
+    const pool = new ParticlePool(4);
+    expect(pool.aspect[pool.emit(init())]).toBe(1);
+    expect(pool.aspect[pool.emit(init({ aspect: 0.55 }))]).toBeCloseTo(0.55, 6);
+    expect(pool.aspect[pool.emit(init({ aspect: 0 }))]).toBeCloseTo(0.1, 6);
+    expect(pool.aspect[pool.emit(init({ aspect: Number.NaN }))]).toBe(1);
+  });
   it('clear() empties the pool', () => {
     const pool = new ParticlePool(5);
     for (let k = 0; k < 5; k++) pool.emit(init());
