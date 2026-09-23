@@ -355,6 +355,8 @@ export const CONFIG = {
       transitTime: 5,
       /** Max gear extended speed, knots. */
       vleKt: 140,
+      /** Max speed for operating the gear (in transit), knots. */
+      vloKt: 140,
       /** Seconds continuously airborne before the squat-switch interlock lets the gear retract. */
       retractDelay: 1.5,
       /** Squat switch: the gear will not retract while the aircraft sits on its wheels. */
@@ -1515,6 +1517,8 @@ function makeF16(): AircraftConfig {
       retractable: true,
       transitTime: 4,
       vleKt: 300,
+      /** Gear operating speed, knots. */
+      vloKt: 300,
       retractDelay: 1.5,
       squatSwitch: true,
     },

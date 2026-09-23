@@ -59,7 +59,9 @@ export function gearWarning(inp: GearWarningInput, cfg: Config = CONFIG): GearWa
   const gearUnsafe = !onGround && !downLocked && (lowPower || landingFlaps);
   const squatSwitch = onGround && !inp.handleDown;
   const ias = num(inp.iasKt, 0);
-  const overspeed = (downLocked && ias > cfg.aircraft.gear.vleKt) || (inp.gear === 'transit' && ias > gw.vloKt);
+  // Each aircraft's own gear limits (VLE extended, VLO operating); the HUD section's vloKt is a fallback.
+  const vlo = cfg.aircraft.gear.vloKt ?? gw.vloKt;
+  const overspeed = (downLocked && ias > cfg.aircraft.gear.vleKt) || (inp.gear === 'transit' && ias > vlo);
   return { horn: gearUnsafe || squatSwitch, gearUnsafe, squatSwitch, overspeed, lights };
 }
 

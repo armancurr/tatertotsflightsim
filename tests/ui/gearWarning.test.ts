@@ -167,3 +167,16 @@ describe('gear warning in the instrument readings and annunciators', () => {
     expect(ids).toContain('gearOverspeed');
   });
 });
+
+describe('gear speed limits are per aircraft (orchestrator: F-16 showed Cessna gear overspeeds)', () => {
+  it('the F-16 cycles its gear at 250 kt without a warning; the Cessna at 150 kt gets one', async () => {
+    const { getAircraftDef } = await import('../../src/fleet');
+    const f16 = getAircraftDef('f16').config;
+    const c172 = getAircraftDef('c172rg').config;
+    const base = { onGround: false, handleDown: false, throttlePct: 80, flapsDeg: 0, crashed: false } as const;
+    expect(gearWarning({ ...base, gear: 'transit', iasKt: 250 }, f16).overspeed).toBe(false);
+    expect(gearWarning({ ...base, gear: 'down', handleDown: true, iasKt: 280 }, f16).overspeed).toBe(false);
+    expect(gearWarning({ ...base, gear: 'transit', iasKt: 150 }, c172).overspeed).toBe(true);
+    expect(gearWarning({ ...base, gear: 'transit', iasKt: 330 }, f16).overspeed).toBe(true);
+  });
+});
