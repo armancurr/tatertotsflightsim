@@ -433,8 +433,8 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     // lanes: calm and rippled streaks drifting downstream — the current made visible
     float lane = wNoise( vec2( flowT / 42.0, acr / 6.0 + 17.0 ) ) * 0.7 + wNoise( vec2( flowT / 13.0 + 5.0, acr / 2.3 ) ) * 0.3;
     vec2 fp = vec2( flowS, acr );
-    d1 = wDetail( fp, vec4( 1.0, 0.0, uDetailL1.z, uDetailL1.w ), uDetailOff.xy, v1 );
-    d2 = wDetail( fp + vec2( 0.0, 0.37 ), vec4( 0.94, 0.34, uDetailL2.z, uDetailL2.w ), uDetailOff.zw, v2 );
+    d1 = wDetail( fp, vec4( 0.956, 0.292, uDetailL1.z, uDetailL1.w ), uDetailOff.xy, v1 );
+    d2 = wDetail( fp + vec2( 0.0, 0.37 ), vec4( 0.819, -0.574, uDetailL2.z, uDetailL2.w ), uDetailOff.zw, v2 );
     vec2 sl = d1.xy + d2.xy;
     float rip = ( 0.25 + 1.1 * smoothstep( 0.25, 0.75, lane ) ) * ( 1.0 + 1.4 * riffle ) * ( 1.0 + 2.2 * rapids );
     sd = ( T * sl.x + Nn * sl.y ) * rip;
@@ -511,7 +511,7 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     float streakN = mix( 0.45, wNoise( vec2( flowT / 7.0, acr / 1.1 ) ), fade1 );
     float rr = wSat( rapids );
     // a drop spans part of the channel (chutes between boulders), never a straight line bank to bank
-    float chute = smoothstep( 0.3, 0.65, wNoise( vec2( floor( flowS / stepL ) * 1.7, acr / max( 0.6 * hw, 3.0 ) ) ) );
+    float chute = smoothstep( 0.2, 0.55, wNoise( vec2( floor( flowS / stepL ) * 1.7, acr / max( 0.6 * hw, 3.0 ) ) ) );
     float drop = exp( - phase / ( 0.1 + 0.18 * rr ) ) * chute;
     float ww = drop * ( 0.3 + 0.7 * standing ) + streakN * 0.3 * rr;
     float thr = 0.72 - 0.25 * rr;
@@ -520,8 +520,8 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     white *= mix( 0.55, 1.0, mix( 0.6, foamTex, fade1 ) );
     foam = max( foam, white );
     // boulders breaking the surface, a pillow of foam just downstream of each
-    float rock = smoothstep( 0.84, 0.88, wNoise( vec2( flowS / 6.0, acr / 4.5 ) ) ) * smoothstep( 0.25, 0.6, rr );
-    float rockUp = smoothstep( 0.8, 0.86, wNoise( vec2( ( flowS - 3.5 ) / 6.0, acr / 4.5 ) ) ) * smoothstep( 0.25, 0.6, rr );
+    float rock = smoothstep( 0.85, 0.89, wNoise( vec2( flowS / 3.2, acr / 2.4 ) ) ) * smoothstep( 0.25, 0.6, rr );
+    float rockUp = smoothstep( 0.8, 0.87, wNoise( vec2( ( flowS - 2.0 ) / 3.2, acr / 2.4 ) ) ) * smoothstep( 0.25, 0.6, rr );
     foam = max( foam, rockUp * ( 1.0 - rock ) * mix( 0.6, 1.0, foamTex ) );
     float wRock = rock * fade1;
     // bubble lines trailing the rapids, drifting with the current

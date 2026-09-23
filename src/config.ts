@@ -1005,6 +1005,9 @@ export const CONFIG = {
       /** Lakes: 1 = mirror calm on windless mornings (morning/dawn presets), 0 = the full wind; later in the day (cat's paws between calm patches). */
       lakeMorningCalm: 0.85,
       lakeDayCalm: 0.45,
+      /** Reeds at the water's edge (slow lowland river reaches, lowland lakes): candidate spacing along a bank (m), drawn within reedFar (m). */
+      reedSpacing: 3,
+      reedFar: 1800,
       /** Detail normal tile (baked once from an ocean spectrum): texels per side. */
       detailTileSize: 256,
     },

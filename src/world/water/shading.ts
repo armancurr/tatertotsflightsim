@@ -209,11 +209,11 @@ export interface RiverOpticsOut {
 }
 
 export const RIVER_OPTICS = {
-  clearAbsorb: [0.42, 0.1, 0.13] as RGB,
+  clearAbsorb: [0.36, 0.16, 0.2] as RGB,
   turbidAbsorb: [1.6, 1.15, 1.3] as RGB,
-  clearDeep: [0.006, 0.026, 0.026] as RGB,
+  clearDeep: [0.01, 0.03, 0.028] as RGB,
   turbidDeep: [0.058, 0.06, 0.034] as RGB,
-  gravelBed: [0.3, 0.28, 0.22] as RGB,
+  gravelBed: [0.2, 0.19, 0.16] as RGB,
   mudBed: [0.16, 0.14, 0.1] as RGB,
   gravelBar: [0.25, 0.24, 0.21] as RGB,
   sandBar: [0.3, 0.26, 0.19] as RGB,
