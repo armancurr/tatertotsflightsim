@@ -275,20 +275,27 @@ function coreUv(d: V3): [number, number] {
 }
 const CORE_UV = coreUv([0, 0, 1]);
 
-/** A low-poly core (icosahedron) of opaque shadowed foliage filling a lobe's interior. */
-function core(b: Builder, c: V3, rx: number, ry: number, col: RGB, k: number): void {
+/**
+ * A low-poly core of opaque shadowed foliage filling a lobe's interior: an icosahedron, or an
+ * octahedron (`octa`) where the leaf cards around it hide its outline anyway.
+ */
+function core(b: Builder, c: V3, rx: number, ry: number, col: RGB, k: number, octa = false): void {
   const t = (1 + Math.sqrt(5)) / 2;
-  const v: V3[] = [
-    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
-    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
-    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
-  ].map((p) => norm(p as V3));
-  const f = [
-    [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-    [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-    [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-    [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
-  ];
+  const v: V3[] = octa
+    ? [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
+    : ([
+        [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+        [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+        [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1],
+      ] as V3[]).map((p) => norm(p));
+  const f = octa
+    ? [[2, 4, 0], [2, 1, 4], [2, 5, 1], [2, 0, 5], [3, 0, 4], [3, 4, 1], [3, 1, 5], [3, 5, 0]]
+    : [
+        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+      ];
   const ids = v.map((d) => {
     const [uu, vv] = coreUv(d);
     return b.vert(c[0] + d[0] * rx, c[1] + d[1] * ry, c[2] + d[2] * rx, d[0], d[1] + 0.3, d[2], col, k * (0.75 + 0.25 * (d[1] * 0.5 + 0.5)), uu, vv, 1);
@@ -569,8 +576,8 @@ function buildBroadleaf(seed: number): THREE.BufferGeometry {
     }
     limb(b, best, [c[0] * 0.85, c[1] - ry * 0.3, c[2] * 0.85], 0.007, 0.003, 3, bark, REGION.BARK, 0.6, 0.7);
     b.beginClump(c[0], c[1], c[2], rx, ry);
-    core(b, c, rx * 0.72, ry * 0.72, fol, 0.5);
-    lobe(b, rnd, c, rx, ry, 12, R0 * 0.4 * (0.9 + 0.2 * big), REGION.LEAF, fol, crown, { outward: [c[0], c[1] - yc + 0.08, c[2]], shell: 0.7 });
+    core(b, c, rx * 0.62, ry * 0.62, fol, 0.34, true); // deep shade inside the clump
+    lobe(b, rnd, c, rx, ry, 11, R0 * 0.42 * (0.9 + 0.2 * big), REGION.LEAF, fol, crown, { outward: [c[0], c[1] - yc + 0.08, c[2]], shell: 0.7 });
     b.endClump();
   }
   return b.build(R0, sp);

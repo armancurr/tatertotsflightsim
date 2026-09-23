@@ -11,8 +11,8 @@ import { buildSpeciesGeometry, triangleCount, SPECIES_R0 } from '../../../src/wo
 import { canopyProfile, SPECIES_COUNT, SPECIES_NAMES, SPRUCE, PINE, BROADLEAF, BIRCH, POPLAR, WILLOW, BUSH } from '../../../src/world/vegetation/placement';
 import { fcParams } from '../../support/fc';
 
-/** Triangle budget per species (the near meshes are drawn for up to ~1,500 trees at low level). */
-const BUDGET: Record<number, number> = { [SPRUCE]: 800, [PINE]: 520, [BROADLEAF]: 760, [BIRCH]: 520, [POPLAR]: 480, [WILLOW]: 540, [BUSH]: 320 };
+/** Triangle budget per species: the pre-wave counts + ~4 % (near meshes are drawn for up to ~1,500 trees at low level). */
+const BUDGET: Record<number, number> = { [SPRUCE]: 760, [PINE]: 440, [BROADLEAF]: 560, [BIRCH]: 310, [POPLAR]: 430, [WILLOW]: 430, [BUSH]: 260 };
 /** Minimum number of separate foliage clumps (the unit the shader varies per tree). */
 const MIN_CLUMPS: Record<number, number> = { [SPRUCE]: 40, [PINE]: 6, [BROADLEAF]: 10, [BIRCH]: 7, [POPLAR]: 7, [WILLOW]: 6, [BUSH]: 4 };
 
