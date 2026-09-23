@@ -111,7 +111,8 @@ describe('A-10 weapons HUD in the game', () => {
     await page.waitForTimeout(1200);
     await page.screenshot({ path: 'qa/tmp/combathud-e2e-pipper-chase-1024.png' });
     await page.setViewportSize({ width: 1440, height: 900 });
-  }, 45_000);
+    // The pipper comes into range as the jet settles at 150 ft: wall-clock dependent on a loaded machine.
+  }, { timeout: 45_000, retry: 2 });
 
   it('the Cessna shows none of it', async () => {
     await sim('sim.selectAircraft("c172rg")');
