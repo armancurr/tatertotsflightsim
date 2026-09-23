@@ -152,13 +152,14 @@ FC_SEED=2110012652 FC_PATH="46:0:12:2:…" npx vitest run tests/fuzz/physics.fuz
 - `FC_SEED` replays the same random stream. `FC_PATH` jumps straight to the shrunk case.
   `FC_VERBOSE=1` prints each shrink step.
 - `FC_RUNS_SCALE=10` runs every property 10 times as often, for a soak run. Add `--testTimeout=0`,
-  because the default 5 s timeout of the cheap properties is sized for scale 1.
+  because the default timeout (20 s, set in `vite.config.ts`) is sized for scale 1.
 - Put the counterexample into a plain `it()` as a regression test once the owner fixes the bug.
 
 ## Rules
 
 - No `.skip`, `.only` or `todo` (`allowOnly: false`). Every committed test passes.
-- Heavy tests (building a whole town, minutes of traffic, a long flight) set an explicit timeout.
+- The default test timeout is 20 s (`vite.config.ts`); heavier tests (building every town,
+  minutes of traffic, a long flight) set their own. Speed budgets are asserted inside the tests.
   Timing-sensitive tests can still flake on a very busy machine: re-run a failure on its own
   before investigating, and run the final suite on an idle machine.
 - A bug-finding test that fails because of someone else's module is not committed. Its minimal

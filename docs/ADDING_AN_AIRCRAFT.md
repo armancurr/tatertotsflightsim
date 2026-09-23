@@ -318,7 +318,8 @@ From there, grow it into a real aircraft the way the others were built:
   perspective and cloud shadows through `fog: true`, which is their default). A custom
   `ShaderMaterial` must call `ensureAtmosphericFogUniforms` from `src/render/fog.ts`. Calibrate
   colours under the HDR lighting (exposure ≈ 2.2) by looking at screenshots.
-- **Budget.** The jets stay within 60 draw calls; merge static parts and share materials.
+- **Budget.** The F-16 stays within 60 draw calls and the A-10, with its detailed cockpit, within
+  75 (their functional tests hold them to it). Merge static parts and share materials.
 
 To look at the model on its own, copy a preview page: `preview/f16.html` loads
 `src/preview/f16.ts`, which has orbit controls, control-surface sliders in the URL and

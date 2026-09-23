@@ -250,7 +250,11 @@ before you start:
   `UPDATE_PROTECTED_SNAPSHOT=1 npx vitest run tests/world/protected.test.ts`. It also adds roads,
   which re-rolls the seeded traffic everywhere, and some statistical tests (the farm-field mix,
   the car traffic soak) sample the whole map. Run `npx vitest run tests/world` and look at every
-  failure; they're usually real.
+  failure; they're usually real. When this guide was written, adding Brookmere as above broke
+  the protected snapshot (expected), both car-traffic soaks (cars meeting at a Taterville junction
+  under the new random sequence), the farm-field crop mix, a garage-and-pool check and a
+  road-ribbon normal on a steep stretch of the new lane. Each needs a real fix or a
+  deliberate re-baseline, not a looser test.
 
 The towns tests check every building stays clear of roads, water, the airport and other
 buildings, on the ground and facing its street (`tests/world/towns/placement.test.ts`, with a
