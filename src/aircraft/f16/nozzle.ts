@@ -334,8 +334,11 @@ export function buildPlume(name: string): PlumeBuild {
         float flick = 0.86 + 0.14 * sin(uTime * 53.0 + vZ * 4.0) * sin(uTime * 37.0 + 1.7);
         // Shock diamonds: bright compression nodes every ~0.62 m, fading downstream.
         float d = 0.5 + 0.5 * cos(vZ * 6.2831 / ${DIAMOND.toFixed(3)});
-        float diamonds = pow(d, 6.0) * smoothstep(0.03, 0.08, vAxial) * (1.0 - smoothstep(0.15, 0.5, vAxial));
-        float soft = pow(vFacing, 1.5);
+        float diamonds = pow(max(d, 0.0), 6.0) * smoothstep(0.03, 0.08, vAxial) * (1.0 - smoothstep(0.15, 0.5, vAxial));
+        // max(): with MSAA an edge pixel shades at its centre, outside the triangle, and the
+        // extrapolated vFacing dips below 0 — pow() of a negative is NaN (Apple GPUs), which
+        // additive blending writes into the HDR target.
+        float soft = pow(max(vFacing, 0.0), 1.5);
         vec3 col;
         float a;
         if (vLayer < 0.5) {

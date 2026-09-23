@@ -93,6 +93,23 @@ async function settle(p: Page, simSeconds: number) {
   await waitForSim(p, (s) => (s.time as number) > (s0.time as number) + simSeconds, `sim time +${simSeconds} s`, 20_000);
 }
 
+/**
+ * The GPU inventory once it has stopped moving: deferred aircraft disposal and the living world's
+ * streaming finish a little later on a loaded machine, so read until three samples 0.5 s apart
+ * agree (max 15 s) — a real leak still grows with every round.
+ */
+async function stableGpuMem(p: Page) {
+  let last = await gpuMem(p);
+  let same = 0;
+  for (let i = 0; i < 30 && same < 2; i++) {
+    await p.waitForTimeout(500);
+    const m = await gpuMem(p);
+    same = m.textures === last.textures && m.geometries === last.geometries ? same + 1 : 0;
+    last = m;
+  }
+  return last;
+}
+
 async function openPage(query: string, opts: { width?: number; height?: number; dpr?: number; counters?: boolean } = {}) {
   const ctx = await browser.newContext({ viewport: { width: opts.width ?? 1440, height: opts.height ?? 900 }, deviceScaleFactor: opts.dpr ?? 1 });
   const page = await ctx.newPage();
@@ -153,10 +170,10 @@ describe('production build (GitHub Pages sub-path) in Chrome', () => {
     try {
       // One-time allocations (each aircraft's first appearance, the first resets: missile renderers,
       // the Maverick picture target…) are not leaks, so compare like with like: the inventory after
-      // k and after k + n identical rounds (switch through all three aircraft, then reset) must be the
+      // k and after k + n identical rounds (switch through all four aircraft, then reset) must be the
       // same — a leak grows with every round (the A-10 leaked one texture per build before the deferred
       // disposal: +5 here). A little slack for the living world (air traffic, ships) allocating on its own.
-      const ids = ['a10', 'f16', 'c172rg'];
+      const ids = ['a10', 'f16', 'b747', 'c172rg'];
       const round = async () => {
         for (const id of ids) {
           await page.evaluate((a) => (window as unknown as { sim: { selectAircraft(id: string): void } }).sim.selectAircraft(a), id);
@@ -171,10 +188,10 @@ describe('production build (GitHub Pages sub-path) in Chrome', () => {
       const rounds = software ? 1 : 5;
       await round();
       await round();
-      const gpu0 = await gpuMem(page);
+      const gpu0 = await stableGpuMem(page);
       const c0 = await counts(page);
       for (let i = 0; i < rounds; i++) await round();
-      const gpu1 = await gpuMem(page);
+      const gpu1 = await stableGpuMem(page);
       const c1 = await counts(page);
       expect(gpu1.textures, `textures ${gpu0.textures} → ${gpu1.textures} over ${rounds} rounds`).toBeLessThanOrEqual(gpu0.textures + 2);
       expect(gpu1.geometries, `geometries ${gpu0.geometries} → ${gpu1.geometries}`).toBeLessThanOrEqual(gpu0.geometries + 8);

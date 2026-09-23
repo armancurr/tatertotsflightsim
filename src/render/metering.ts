@@ -15,6 +15,7 @@
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config';
+import { HDR_SAFE_GLSL } from './hdrSafe';
 
 export type MeteringConfig = typeof CONFIG.render.metering;
 
@@ -55,13 +56,14 @@ uniform sampler2D tCloudA;
 uniform float uCloudOn;
 uniform vec2 uStep; // uv offset of the 4 taps inside a meter texel
 varying vec2 vUv;
+${HDR_SAFE_GLSL}
 float lumAt( vec2 uv ) {
 	vec3 c = textureLod( tSrc, uv, 0.0 ).rgb;
 	if ( uCloudOn > 0.5 ) {
 		vec4 cl = textureLod( tCloudA, uv, 0.0 );
 		c = c * cl.a + cl.rgb;
 	}
-	return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+	return dot( hdrSafe( c ), vec3( 0.2126, 0.7152, 0.0722 ) );
 }
 void main() {
 	float l = 0.25 * ( lumAt( vUv + uStep * vec2( - 1.0, - 1.0 ) ) + lumAt( vUv + uStep * vec2( 1.0, - 1.0 ) )
@@ -82,13 +84,18 @@ uniform vec3 uTime;  // dt, tauDarken, tauBrighten
 uniform float uLogExposure;
 uniform float uReset;
 varying vec2 vUv;
+${HDR_SAFE_GLSL}
 void main() {
 	vec2 m = textureLod( tMeter, vec2( 0.5 ), uLevel ).rg;
 	float avg = m.x / max( m.y, 1e-6 );
 	float target = clamp( uCfg.y * ( uCfg.x - ( avg + uLogExposure ) ), uCfg.z, uCfg.w );
+	if ( hdrBad( target ) ) target = 0.0;
 	float prev = textureLod( tPrev, vec2( 0.5 ), 0.0 ).r;
+	// a feedback loop: a NaN here would stay forever (and black out the frame) — restart from the target
+	if ( hdrBad( prev ) ) prev = target;
 	float tau = target < prev ? uTime.y : uTime.z;
 	float a = uReset > 0.5 ? target : prev + ( target - prev ) * ( 1.0 - exp( - uTime.x / max( tau, 1e-3 ) ) );
+	if ( hdrBad( a ) ) a = target;
 	gl_FragColor = vec4( a, avg, target, 1.0 );
 }
 `;

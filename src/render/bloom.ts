@@ -16,6 +16,7 @@
  * Reflector), so the renderer's pipeline (renderer.ts) needs no extra hook.
  */
 import * as THREE from 'three';
+import { HDR_SAFE_GLSL } from './hdrSafe';
 
 export interface BloomSettings {
   /** Added fraction of the blurred highlights (0 = off). */
@@ -108,6 +109,7 @@ uniform float uKaris;
 uniform sampler2D tAdapt; // eye adaptation (metering.ts): R = log2 exposure trim
 uniform float uAdaptOn;
 varying vec2 vUv;
+${HDR_SAFE_GLSL}
 float adaptGain() {
 	return uAdaptOn > 0.5 ? exp2( textureLod( tAdapt, vec2( 0.5 ), 0.0 ).r ) : 1.0;
 }
@@ -117,6 +119,8 @@ vec3 fetchScene( sampler2D t, vec2 uv ) {
 		vec4 cl = textureLod( tCloudA, uv, 0.0 );
 		c = c * cl.a + cl.rgb;
 	}
+	// a NaN/Inf texel (hdrSafe.ts) must not enter the blurs: they would spread it into black blocks
+	c = hdrSafe( c );
 	// clamp per tap (keeps the sun disc and single hot texels from flooding the frame)
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
 	return c * min( 1.0, uKnee.z / ( adaptGain() * max( l, 1e-6 ) ) );
