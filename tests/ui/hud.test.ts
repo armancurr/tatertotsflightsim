@@ -125,7 +125,7 @@ describe('HUD: messages', () => {
     const banner = $('.fsh-banner');
     expect(shown(banner)).toBe(true);
     expect(banner!.textContent).toContain('CRASHED — Hit terrain');
-    expect(banner!.textContent).toContain('R reset · Shift+R approach');
+    expect(banner!.textContent).toContain('R restart · Shift+R approach');
     hud.update(makeReadings(), info({ state: makeState({ time: 0 }) }), 1 / 60);
     expect(shown($('.fsh-banner'))).toBe(false);
   });

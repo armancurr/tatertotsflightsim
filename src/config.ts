@@ -991,6 +991,34 @@ export const CONFIG = {
      * `?veil=0` skips it. Whatever happens (the app failed to start…) it lifts after maxTotalS.
      */
     veil: { autoDismissS: 1.5, fadeS: 0.8, smoothFrameMs: 34, smoothFrames: 24, maxWarmupS: 6, maxTotalS: 40 },
+    /**
+     * F-16 head-up display (src/ui/jetHud.ts), shown instead of the six-pack when the aircraft's
+     * `hud` is 'jet'. Phosphor green with a faint dark halo so it reads against bright sky. Its box
+     * is a fraction of the viewport (clamped in px); `degPerHeight` = pitch degrees across its height.
+     */
+    jet: {
+      color: '#6bff95',
+      halo: 'rgba(0,26,8,0.42)',
+      widthFrac: 0.4,
+      heightFrac: 0.6,
+      minW: 330,
+      maxW: 600,
+      degPerHeight: 38,
+      /** Boresight (gun cross) height as a fraction of the HUD box. */
+      boresightY: 0.34,
+    },
+    /** Slim branding top bar (logo, name, aircraft picker, menu button): its height in CSS px at 1024 and 1440 px wide. */
+    topBar: { height1024: 36, height1440: 40 },
+  },
+
+  // ─── Menu, aircraft picker and branding (owned by src/ui: menu.ts, picker.ts, topBar.ts) ───────
+  menu: {
+    productName: "Tater's Flight Sim",
+    fullName: 'Tater Tots Flight Simulator',
+    /** localStorage key that remembers the chosen aircraft (restored when the URL has no ?aircraft=). */
+    storageKey: 'tfs.aircraft',
+    /** Throttle position (%) above which the F-16's afterburner lights (shown in the controls notes). */
+    afterburnerFromPct: 90,
   },
 
   // ─── Effects: particles, camera shake, speed FOV (owned by src/fx) ─────────

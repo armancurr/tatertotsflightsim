@@ -19,6 +19,9 @@ import {
 import { annunciationActive, annunciationList, crashText, describeTouchdown, startHint, type AnnunciationId, type MessageLevel } from './messages';
 import { createHelpOverlay } from './help';
 import { installHudStyle, removeHudStyle } from './hudStyle';
+import { topBarHeight } from './topBar';
+import { drawJetHud, createJetHudState, trackJetHud, type JetReadings } from './jetHud';
+import type { HudStyle } from '../fleet/types';
 
 export interface Rect {
   x: number;
@@ -46,6 +49,12 @@ export interface HudLayout {
   strip: Rect;
   stripRows: 1 | 2;
   compass: Rect;
+  /** False for the jet (its HUD has its own heading tape). */
+  compassVisible: boolean;
+  /** The jet head-up display's box (centre of the view), or null for steam gauges. */
+  jet: Rect | null;
+  /** Height of the branding top bar the HUD sits below. */
+  topInset: number;
   chip: { x: number; y: number; h: number; maxW: number };
   /** Top of the annunciator row, of the PAUSED pill and of the crash banner. */
   annunciatorY: number;
@@ -57,8 +66,11 @@ export interface HudLayout {
 
 const clamp = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > hi ? hi : x);
 
-/** Pure HUD layout for a viewport (CSS px). */
-export function computeHudLayout(width: number, height: number, cfg: Config = CONFIG, mode: HudMode = 'normal'): HudLayout {
+/**
+ * Pure HUD layout for a viewport (CSS px). `style` 'jet' drops the six-pack and the compass tape and
+ * adds the head-up display box in the centre; everything sits below the branding top bar.
+ */
+export function computeHudLayout(width: number, height: number, cfg: Config = CONFIG, mode: HudMode = 'normal', style: HudStyle = 'steam'): HudLayout {
   const w = Number.isFinite(width) && width > 0 ? width : 1024;
   const h = Number.isFinite(height) && height > 0 ? height : 768;
   const hc = cfg.hud;
@@ -67,7 +79,8 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   g0 = Math.min(clamp(g0, hc.gaugeMin, hc.gaugeMax), h * hc.gaugeMaxHeightFraction);
   g0 = Math.max(24, Math.round(g0));
   const g = mode === 'cockpitCompact' ? Math.round(g0 * 0.72) : g0;
-  const clustersVisible = mode !== 'cockpitHidden';
+  const jetStyle = style === 'jet';
+  const clustersVisible = mode !== 'cockpitHidden' && !jetStyle;
   const margin = Math.round(clamp(w * 0.012, 10, 20));
   const pad = Math.max(4, Math.round(g * 0.07));
   const gap = Math.max(4, Math.round(g * 0.08));
@@ -106,15 +119,27 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     }
   }
 
+  const topInset = cfg.hud.topBar ? topBarHeight(w, cfg) : 0;
+  const top = topInset + Math.round(margin * 0.6);
   const compassW = Math.round(clamp(w * 0.3, 240, 460));
   const compassH = Math.round(clamp(g0 * 0.44, 40, 56));
-  const compass: Rect = { x: Math.round((w - compassW) / 2), y: margin, w: compassW, h: compassH };
-  const chip = { x: margin, y: margin, h: 24, maxW: Math.max(0, Math.min(300, compass.x - 2 * margin)) };
+  const compass: Rect = { x: Math.round((w - compassW) / 2), y: top, w: compassW, h: compassH };
+  const chip = { x: margin, y: top, h: 24, maxW: Math.max(0, Math.min(300, compass.x - 2 * margin)) };
   const fontSize = Math.round(clamp(g0 * 0.105, 11, 15));
-  const annunciatorY = compass.y + compass.h + 10;
+  const annunciatorY = jetStyle ? top + 2 : compass.y + compass.h + 10;
   const pausedY = annunciatorY + Math.round(fontSize * 3.2);
   const bannerY = Math.round(Math.min(Math.max(h * 0.2, pausedY + fontSize * 4.4), h / 3 - fontSize * 7));
   const bottomTop = clustersVisible ? Math.min(left.y, strip.y) : strip.y;
+  let jet: Rect | null = null;
+  if (jetStyle) {
+    const j = cfg.hud.jet;
+    const minTop = annunciatorY + Math.round(fontSize * 2.8);
+    const maxBottom = strip.y - gap;
+    const jh = Math.max(120, Math.min(Math.round(h * j.heightFrac), maxBottom - minTop));
+    const jw = Math.max(120, Math.round(Math.min(clamp(w * j.widthFrac, j.minW, j.maxW), jh * 1.05, w - 2 * margin)));
+    const jy = Math.round(clamp(h * 0.47 - jh / 2, minTop, Math.max(minTop, maxBottom - jh)));
+    jet = { x: Math.round((w - jw) / 2), y: jy, w: jw, h: Math.min(jh, Math.max(0, h - jy)) };
+  }
   return {
     width: w,
     height: h,
@@ -129,6 +154,9 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     strip,
     stripRows,
     compass,
+    compassVisible: !jetStyle,
+    jet,
+    topInset,
     chip,
     annunciatorY,
     pausedY,
@@ -158,14 +186,23 @@ export type PanelDrawerFn = (ctx: CanvasRenderingContext2D, w: number, h: number
 export interface HudOptions {
   /** The aircraft model; receives drawPanel for its cockpit panel texture. */
   aircraft?: { setPanelDrawer(fn: PanelDrawerFn): void };
-  /** Config override (tests); defaults to CONFIG. */
+  /** Config override (tests, or the aircraft's own config); defaults to CONFIG. */
   config?: Config;
+  /** 'steam' (six-pack, the Cessna) or 'jet' (F-16 head-up display). */
+  style?: HudStyle;
 }
 
 export interface Hud {
   update(r: InstrumentReadings, info: HudInfo, dt: number): void;
   toggleHelp(): void;
   toggleVisible(): void;
+  /** The instruments are shown (I toggles). */
+  isVisible(): boolean;
+  /** The pause menu is up: the PAUSED pill makes way for it. */
+  setMenuOpen(open: boolean): void;
+  /** A restart: forget the jet HUD's max g. */
+  onReset(): void;
+  readonly style: HudStyle;
   flash(text: string, level?: MessageLevel, seconds?: number): void;
   resize(): void;
   dispose(): void;
@@ -195,6 +232,7 @@ const CAMERA_NAME: Record<CameraMode, string> = { cockpit: 'Cockpit', chase: 'Ch
 
 export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   const cfg = opts.config ?? CONFIG;
+  const style: HudStyle = opts.style ?? 'steam';
   const doc = root.ownerDocument;
   const win = (doc.defaultView ?? (globalThis as unknown as Window));
   installHudStyle(doc);
@@ -254,6 +292,14 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   ];
   const stripSlot = slot(stripEl);
   const compassSlot = slot(compassEl);
+  const jetEl = div('fsh-jet', instruments);
+  jetEl.hidden = style !== 'jet';
+  const jetSlot = slot(jetEl);
+  jetSlot.el.setAttribute('data-hud', 'jet');
+  const jetState = createJetHudState();
+  const jetKey = new Float64Array(18).fill(NaN);
+  let jetDirty = true;
+  let menuOpen = false;
 
   // Message layer.
   const messages = div('fsh-messages', el);
@@ -336,11 +382,17 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     const vw = win.innerWidth || doc.documentElement.clientWidth || 1024;
     const vh = win.innerHeight || doc.documentElement.clientHeight || 768;
     const dpr = Math.min(cfg.hud.maxPixelRatio, Math.max(1, Number(win.devicePixelRatio) || 1));
-    layout = computeHudLayout(vw, vh, cfg, mode);
+    layout = computeHudLayout(vw, vh, cfg, mode, style);
     const L = layout;
     el.style.setProperty('--fsh-fs', `${L.fontSize}px`);
     leftEl.hidden = !L.clustersVisible;
     rightEl.hidden = !L.clustersVisible;
+    compassEl.hidden = !L.compassVisible;
+    if (L.jet) {
+      place(jetEl, L.jet);
+      sizeSlot(jetSlot, 0, 0, L.jet.w, L.jet.h, dpr);
+      jetDirty = true;
+    }
     place(leftEl, L.left);
     place(rightEl, L.right);
     const b = 1; // glass border
@@ -412,10 +464,33 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       const c = begin(stripSlot);
       if (c) drawSystemsStrip(c, 0, 0, stripSlot.w, stripSlot.h, r, layout.stripRows);
     }
-    if (changed(compassSlot, Math.round(r.headingDeg * 10), 0, 0, 0)) {
+    if (layout.compassVisible && changed(compassSlot, Math.round(r.headingDeg * 10), 0, 0, 0)) {
       const c = begin(compassSlot);
       if (c) drawCompassTape(c, 0, 0, compassSlot.w, compassSlot.h, r.headingDeg);
     }
+    if (layout.jet) drawJet(r as JetReadings);
+  };
+
+  /** The jet HUD redraws only when something it shows has changed (quantised to what is visible). */
+  const drawJet = (r: JetReadings) => {
+    trackJetHud(jetState, r);
+    const k = jetKey;
+    const vals = [
+      Math.round(r.pitchDeg * 20), Math.round(r.rollDeg * 20), Math.round(r.headingDeg * 10), Math.round(r.airspeedKt),
+      Math.round(r.altitudeFt / 10), Math.round(r.aoaDeg * 10), Math.round(r.gLoad * 10), Math.round((r.mach ?? 0) * 100),
+      Math.round(r.throttlePct), Math.round((r.afterburner ?? 0) * 20), r.gear === 'down' ? 0 : r.gear === 'up' ? 1 : 2,
+      r.speedBrake ? 1 : 0, Math.round(r.verticalSpeedFpm / 10), Math.round(r.altitudeAglFt / 10), Math.round((r.betaDeg ?? 0) * 10),
+      Math.round(jetState.maxG * 10), r.engineStatus === 'RUNNING' ? 0 : 1, 0,
+    ];
+    let same = !jetDirty;
+    for (let i = 0; i < vals.length; i++) {
+      if (k[i] !== vals[i]) same = false;
+      k[i] = vals[i];
+    }
+    if (same) return;
+    jetDirty = false;
+    const c = begin(jetSlot);
+    if (c) drawJetHud(c, jetSlot.w, jetSlot.h, r, jetState, cfg);
   };
 
   const updateChip = (info: HudInfo) => {
@@ -482,9 +557,10 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       }
     }
 
-    if (info.paused !== pausedShown) {
-      pausedShown = info.paused;
-      pausedEl.hidden = !info.paused;
+    const showPaused = info.paused && !menuOpen;
+    if (showPaused !== pausedShown) {
+      pausedShown = showPaused;
+      pausedEl.hidden = !showPaused;
     }
 
     // Crash banner.
@@ -548,9 +624,19 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
         for (const g of gauges) g.slot.dirty = true;
         stripSlot.dirty = true;
         compassSlot.dirty = true;
+        jetDirty = true;
         chipTimer = Infinity;
       }
     },
+    isVisible: () => visible,
+    setMenuOpen(open: boolean) {
+      menuOpen = open;
+    },
+    onReset() {
+      jetState.maxG = 1;
+      jetDirty = true;
+    },
+    style,
     resize: applyLayout,
     dispose() {
       if (disposed) return;
