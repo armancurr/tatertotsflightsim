@@ -71,6 +71,30 @@ describe('grass placement', () => {
     for (let i = 0; i < mown.count; i++) hm += mown.data[i * G_STRIDE + G_H];
     expect(hm / mown.count).toBeLessThan(hw / meadow.count);
   });
+  it('leaves an uncut strip of taller tufts along the pavement edge (reads from the chase camera)', () => {
+    // cells straddling the paved strip's edge at x = 15 (the mown airfield)
+    let edgeH = 0;
+    let edgeN = 0;
+    let midH = 0;
+    let midN = 0;
+    for (let cz = 0; cz < 4; cz++)
+      for (const cx of [0, 1, 2]) {
+        const c = generateGrassCell(cx, cz, world, 11, P);
+        for (let i = 0; i < c.count; i++) {
+          const x = c.data[i * G_STRIDE + G_X];
+          const h = c.data[i * G_STRIDE + G_H];
+          expect(Number.isFinite(h)).toBe(true);
+          expect(h).toBeGreaterThan(0);
+          expect(h).toBeLessThan(0.8);
+          if (x > 15 && x < 17) (edgeH += h), edgeN++;
+          else if (x > 25) (midH += h), midN++;
+        }
+      }
+    expect(edgeN).toBeGreaterThan(50);
+    expect(midN).toBeGreaterThan(200);
+    expect(edgeH / edgeN).toBeGreaterThan(1.8 * (midH / midN));
+    expect(midH / midN).toBeGreaterThan(0.1); // mown, but tall enough to show up close
+  });
 });
 
 describe('grass renderer (functional)', () => {

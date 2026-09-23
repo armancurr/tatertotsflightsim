@@ -178,8 +178,14 @@ export function generateGrassCell(cx: number, cz: number, world: VegWorld, seed:
       const hK = hash2i(gx, gz, seedI ^ 0x5a4b3c2d);
       let h: number;
       let kind = 0;
-      if (mown) h = 0.09 + 0.08 * hS;
-      else {
+      if (mown) {
+        // mown to ~12 cm, with clover/weed clumps a little longer; the mower can't get close to the
+        // edge lights and signs, so a 2 m strip along the pavement edge stays long and tufty
+        h = 0.1 + 0.08 * hS;
+        if (patch > 0.78) h *= 1.5;
+        const pv = world.paved;
+        if (pv && (pv(x + 2, z) || pv(x - 2, z) || pv(x, z + 2) || pv(x, z - 2))) h = 0.26 + 0.24 * hS;
+      } else {
         h = (0.22 + 0.34 * hS) * (0.7 + 0.5 * patch) * (water < 12 ? 1.35 : 1);
         // wildflowers in clustered patches of meadow
         const fl = noise(x / 14 + 300, z / 14);

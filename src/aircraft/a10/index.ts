@@ -7,11 +7,12 @@
  *   hog.setVisualState(v, dt);      // every frame
  *
  * Body frame = three.js object frame (+X right, +Y up, −Z nose, origin = CG). Wheels, wingtips, fin
- * tops, engine pods, the pilot's eye, the GAU-8/A muzzle (`a10.gunMuzzle`) and the four Maverick
- * stations (`a10.store.<i>`, A10_WEAPONS.missiles.stations order) sit on the config geometry (tests
- * hold them to 3 cm). Moving parts: elevators, twin rudders, split decelerons (ailerons + speed
- * brakes), slotted flaps, slats, gear (+ nose doors, steering, compression, spin), fans, the
- * seven-barrel cluster.
+ * tops, engine pods, the pilot's eye, the GAU-8/A muzzle (`a10.gunMuzzle`), the four Maverick
+ * stations (`a10.store.<i>`, A10_WEAPONS.missiles.stations order) and the two Sidewinders on the
+ * LAU-105 (`a10.airStore.<i>`, A10_WEAPONS.airMissiles.stations order) sit on the config geometry
+ * (tests hold them to 3 cm). Moving parts: elevators, twin rudders, split decelerons (ailerons +
+ * speed brakes), slotted flaps, slats, gear (+ nose doors, steering, compression, spin), fans, the
+ * seven-barrel cluster, and in the cockpit the stick, the throttles and the live instruments.
  */
 import * as THREE from 'three';
 import { tint, merge } from '../materials';
@@ -19,7 +20,8 @@ import type { AircraftVisualState } from '../types';
 import type { AircraftModelHandle, BreakupPart } from '../../fleet/types';
 import { A10_AIRCRAFT, A10_WEAPONS } from '../../config';
 import { createA10Anim, stepA10Anim, A10_LIMITS } from './animate';
-import { buildCockpit, drawScreens, HUD, SCREEN_ATLAS } from './cockpit';
+import { buildCockpit, HUD, STICK, THROTTLE, stickAngles, throttleAngle } from './cockpit';
+import { PANEL_CANVAS, SCREEN_CANVAS, a10Gauges, a10Lamps, drawConsoles, drawDash, drawDashBackground, drawScreens, type LampStates, type ScreenState } from './panel';
 import { buildEngine } from './engines';
 import { buildFuselage } from './fuselage';
 import { buildGear } from './gear';
@@ -84,10 +86,20 @@ export const A10_PART = {
   gunMuzzle: 'a10.gunMuzzle',
   hudCombiner: 'a10.cockpit.hud',
   store: (i: number) => `a10.store.${i}`,
+  airStore: (i: number) => `a10.airStore.${i}`,
+  stick: 'a10.cockpit.stick',
+  throttle: 'a10.cockpit.throttle',
   landingLight: 'a10.landingLight',
 } as const;
 
 const DEG = Math.PI / 180;
+/** Live panel redraw rate in the cockpit view (Hz); the MFCD pages refresh slower. */
+const PANEL_HZ = 12;
+const SCREENS_HZ = 2;
+/** The right MFCD shows the stores page for this long after a store leaves the jet (s). */
+const DSMS_HOLD_S = 6;
+/** Cockpit bounce light: fraction of the sun's irradiance reaching shaded cockpit surfaces (big bubble canopy). */
+const CABIN_FILL = 0.22;
 
 function group(name: string, parent?: THREE.Object3D): THREE.Group {
   const g = new THREE.Group();
@@ -147,19 +159,42 @@ export function createA10Model(): AircraftModelHandle {
   const gunB = buildGun();
   const stores = buildStores();
 
-  // ── Textures (browser only): livery atlas, roughness, panel-line bump, cockpit screens ──
+  // ── Textures (browser only): livery atlas, roughness, panel-line bump, cockpit panel + screens ──
   let textures: A10Textures | null = null;
+  let panelCtx: CanvasRenderingContext2D | null = null;
+  let screenCtx: CanvasRenderingContext2D | null = null;
+  let dashBg: HTMLCanvasElement | null = null;
+  const lampsNow: LampStates = a10Lamps(null);
+  const screenState: ScreenState = { headingDeg: 0, rightPage: 'TGP', stores: [], airStores: [], lamps: lampsNow, time: 0 };
   if (hasDom) {
     const liv = paintLivery(fuse.stations);
-    const sc = document.createElement('canvas');
-    sc.width = SCREEN_ATLAS.width;
-    sc.height = SCREEN_ATLAS.height;
+    const canvas = (w: number, h: number) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      return c;
+    };
+    const sc = canvas(SCREEN_CANVAS.width, SCREEN_CANVAS.height);
+    const pc = canvas(PANEL_CANVAS.width, PANEL_CANVAS.height);
+    const bg = canvas(PANEL_CANVAS.width, PANEL_CANVAS.height / 2);
     const sctx = sc.getContext('2d');
-    if (liv && sctx) {
-      drawScreens(sctx, sc.width, sc.height);
+    const pctx = pc.getContext('2d');
+    const bctx = bg.getContext('2d');
+    if (liv && sctx && pctx && bctx) {
+      drawDashBackground(bctx);
+      dashBg = bg;
+      drawConsoles(pctx);
+      drawDash(pctx, a10Gauges(null), dashBg);
+      drawScreens(sctx, screenState);
       const screens = new THREE.CanvasTexture(sc);
       screens.colorSpace = THREE.SRGBColorSpace;
-      textures = { ...liv, screens };
+      screens.anisotropy = 4;
+      const panel = new THREE.CanvasTexture(pc);
+      panel.colorSpace = THREE.SRGBColorSpace;
+      panel.anisotropy = 8;
+      textures = { ...liv, screens, panel };
+      panelCtx = pctx;
+      screenCtx = sctx;
     }
   }
   const mats = createA10Materials(textures);
@@ -196,7 +231,31 @@ export function createA10Model(): AircraftModelHandle {
   forward.add(muzzle);
 
   const cockpit = group(A10_PART.cockpit, forward);
-  mesh(pit.interior, mats.interior, 'a10.cockpit.interior', cockpit, false);
+  const interior = mesh(pit.interior, mats.interior, 'a10.cockpit.interior', cockpit, false);
+  // Moving controls: the stick about its floor pivot, the throttles about the quadrant pivot.
+  const stickPivot = group(`${A10_PART.stick}.pivot`, cockpit);
+  stickPivot.position.set(STICK.pivot.x, STICK.pivot.y, STICK.pivot.z);
+  stickPivot.rotation.order = 'ZXY';
+  mesh(pit.stick, mats.interior, A10_PART.stick, stickPivot, false);
+  const throttlePivot = group(`${A10_PART.throttle}.pivot`, cockpit);
+  throttlePivot.position.set(THROTTLE.pivot.x, THROTTLE.pivot.y, THROTTLE.pivot.z);
+  throttlePivot.rotation.x = throttleAngle(0);
+  mesh(pit.throttle, mats.interior, A10_PART.throttle, throttlePivot, false);
+  // Cockpit bounce light, following the scene's sun (found once per scene, updated every frame).
+  let fillScene: THREE.Object3D | null = null;
+  let fillSun: THREE.DirectionalLight | null = null;
+  interior.onBeforeRender = (_r, scene) => {
+    if (scene !== fillScene) {
+      fillScene = scene;
+      fillSun = null;
+      scene.traverse((o) => {
+        if (!fillSun && (o as THREE.DirectionalLight).isDirectionalLight) fillSun = o as THREE.DirectionalLight;
+      });
+    }
+    const sun = fillSun as THREE.DirectionalLight | null;
+    if (sun) mats.cabinFill.value.copy(sun.color).multiplyScalar(sun.intensity * CABIN_FILL);
+    else mats.cabinFill.value.setRGB(0, 0, 0);
+  };
   mesh(pit.pilotBody, mats.parts, A10_PART.pilotBody, cockpit, false);
   const head = mesh(pit.pilotHead, mats.parts, A10_PART.pilotHead, cockpit, false);
   mesh(pit.screens, mats.screens, 'a10.cockpit.screens', cockpit, false);
@@ -211,7 +270,8 @@ export function createA10Model(): AircraftModelHandle {
   const canopy = group(A10_PART.canopy, root);
   const glass = mesh(pit.canopyGlass, mats.canopy, A10_PART.canopyGlass, canopy, false);
   glass.renderOrder = 3;
-  mesh(pit.canopyFrame, mats.parts, 'a10.canopy.frame', canopy, false);
+  // The frame shares the cockpit's bounce light (it is mostly seen from inside, against the sky).
+  mesh(pit.canopyFrame, mats.interior, 'a10.canopy.frame', canopy, false);
 
   // ── Outer wing panels (with their flaps, decelerons, tips and stores) ──
   const wingGroup = (name: string, w: typeof outerR, side: 'left' | 'right') => {
@@ -231,6 +291,17 @@ export function createA10Model(): AircraftModelHandle {
   const missiles = stations.map((st, i) => {
     const m = new THREE.Mesh(stores.maverick, mats.parts);
     m.name = A10_PART.store(i);
+    m.position.set(st.x, st.y, st.z);
+    m.castShadow = false;
+    m.receiveShadow = true;
+    (st.x < 0 ? wl.g : wr.g).add(m);
+    return m;
+  });
+  // Sidewinders: one geometry, a mesh per LAU-105 rail (hidden as they are fired).
+  const airStations = A10_WEAPONS.airMissiles?.stations ?? [];
+  const sidewinders = airStations.map((st, i) => {
+    const m = new THREE.Mesh(stores.aim9m, mats.parts);
+    m.name = A10_PART.airStore(i);
     m.position.set(st.x, st.y, st.z);
     m.castShadow = false;
     m.receiveShadow = true;
@@ -379,9 +450,63 @@ export function createA10Model(): AircraftModelHandle {
   const gi = glowIntensity.array as Float32Array;
   let wrecked = false;
   const SLAT_OUT = V(0, -0.05, -0.16);
+  // Cockpit panel/screens refresh.
+  let time = 0;
+  let panelClock = Infinity;
+  let screensClock = Infinity;
+  let lampClock = Infinity;
+  let screensDirty = true;
+  let storesSeen = false;
+  let dsmsUntil = -Infinity;
+  const storeFlags: boolean[] = missiles.map(() => true);
+  const airFlags: boolean[] = sidewinders.map(() => true);
+  screenState.stores = storeFlags;
+  screenState.airStores = airFlags;
+  const stickOut = { pitch: 0, roll: 0 };
+  const panelTex = textures?.panel ?? null;
+  const screensTex = textures?.screens ?? null;
+
+  function refreshCockpit(v: AircraftVisualState, step: number, inCockpit: boolean) {
+    const r = v.instruments;
+    panelClock += step;
+    screensClock += step;
+    if (panelCtx && panelTex && inCockpit && panelClock >= 1 / PANEL_HZ) {
+      panelClock = 0;
+      drawDash(panelCtx, a10Gauges(r, time), dashBg);
+      panelTex.needsUpdate = true;
+    }
+    if (!screenCtx || !screensTex) return;
+    // Lamps follow the readings (checked 5 × a second), MFCD pages at SCREENS_HZ in the cockpit.
+    lampClock += step;
+    if (lampClock >= 0.2) {
+      lampClock = 0;
+      const l = a10Lamps(r);
+      for (const k of Object.keys(l) as (keyof LampStates)[]) {
+        if (l[k] !== lampsNow[k]) {
+          lampsNow[k] = l[k];
+          screensDirty = true;
+        }
+      }
+    }
+    const page = time < dsmsUntil ? 'DSMS' : 'TGP';
+    if (page !== screenState.rightPage) screensDirty = true;
+    if (screensDirty || (inCockpit && screensClock >= 1 / SCREENS_HZ)) {
+      screensClock = 0;
+      screensDirty = false;
+      screenState.rightPage = page;
+      screenState.headingDeg = r?.headingDeg ?? 0;
+      screenState.time = time;
+      for (let i = 0; i < storeFlags.length; i++) storeFlags[i] = v.stores?.[i] !== false;
+      for (let i = 0; i < airFlags.length; i++) airFlags[i] = v.airStores?.[i] !== false;
+      drawScreens(screenCtx, screenState);
+      screensTex.needsUpdate = true;
+    }
+  }
 
   function setVisualState(v: AircraftVisualState, dt: number) {
     stepA10Anim(v, anim, dt);
+    const step = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 1) : 0;
+    time += step;
     const crashed = v.crashed === true;
     mats.char.value = crashed ? Math.min(1, Math.max(0, Number(v.crashAge ?? 0)) / 6) : 0;
     if (crashed !== wrecked) {
@@ -421,7 +546,22 @@ export function createA10Model(): AircraftModelHandle {
     mats.gunBlur.opacity = 0.85 * anim.gunBlur;
 
     // Stores: a missile hangs on each station until it is fired.
-    for (let i = 0; i < missiles.length; i++) missiles[i].visible = v.stores?.[i] !== false;
+    let changed = false;
+    for (let i = 0; i < missiles.length; i++) {
+      const on = v.stores?.[i] !== false;
+      if (missiles[i].visible !== on) changed = true;
+      missiles[i].visible = on;
+    }
+    for (let i = 0; i < sidewinders.length; i++) {
+      const on = v.airStores?.[i] !== false;
+      if (sidewinders[i].visible !== on) changed = true;
+      sidewinders[i].visible = on;
+    }
+    if (changed) {
+      if (storesSeen) dsmsUntil = time + DSMS_HOLD_S;
+      screensDirty = true;
+    }
+    storesSeen = true;
 
     // Lights.
     for (const n of navMeshes) n.visible = anim.nav > 0;
@@ -436,16 +576,29 @@ export function createA10Model(): AircraftModelHandle {
     landingLight.visible = lampLevel > 0;
     if (landingLight.visible) landingLight.intensity = LL.intensity * (anim.landing > 0 ? 1 : 0.45);
 
+    // Cockpit: stick, throttles, live instruments and displays.
+    const inCockpitView = v.cameraMode === 'cockpit';
+    const sa = stickAngles(v.elevator, v.aileron, stickOut);
+    stickPivot.rotation.x = sa.pitch;
+    stickPivot.rotation.z = sa.roll;
+    throttlePivot.rotation.x = throttleAngle(v.instruments?.throttlePct ?? 0);
+    refreshCockpit(v, step, inCockpitView);
+
     // Cockpit presentation.
     if (v.cameraMode !== lastMode) {
       lastMode = v.cameraMode;
       const inCockpit = v.cameraMode === 'cockpit';
       head.visible = !inCockpit;
+      // The stick and throttles (with the gloves) only matter from the seat: two draw calls saved outside.
+      stickPivot.visible = inCockpit;
+      throttlePivot.visible = inCockpit;
       // From inside, the bubble is seen at grazing angles all round: keep its reflections faint.
       mats.canopy.opacity = inCockpit ? 0.06 : 0.26;
       mats.canopy.envMapIntensity = inCockpit ? 0.06 : 1.2;
       mats.canopy.specularIntensity = inCockpit ? 0.25 : 1;
-      mats.interior.color.setScalar(inCockpit ? 1.25 : 0.75);
+      mats.interior.color.setScalar(inCockpit ? 1.0 : 0.75);
+      panelClock = Infinity;
+      screensDirty = true;
       mats.hud.opacity = inCockpit ? 0.2 : 0.16;
     }
   }

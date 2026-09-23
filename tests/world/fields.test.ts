@@ -163,6 +163,35 @@ describe('farm field model', () => {
     expect((kinds.get('stubble') ?? 0) / total).toBeLessThan(0.08);
   });
 
+  it('fuzz: every field is valid anywhere (finite distances, unit row direction, hashes in [0, 1], a known crop)', () => {
+    const f = newFieldInfo();
+    fc.assert(
+      fc.property(fc.double({ min: -60000, max: 60000, noNaN: true }), fc.double({ min: -60000, max: 60000, noNaN: true }), (x, z) => {
+        fieldAt(x, z, f);
+        expect(FIELD_KINDS).toContain(f.kind);
+        for (const v of [f.kindHash, f.shade, f.arable]) {
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(1);
+        }
+        for (const v of [f.dEdge, f.dBlock, f.dDistrict, f.dEnds]) {
+          expect(Number.isFinite(v)).toBe(true);
+          expect(v).toBeGreaterThanOrEqual(-1e-9);
+        }
+        expect(f.dEdge).toBeLessThanOrEqual(f.dBlock + 1e-9);
+        expect(Math.hypot(f.rowDirX, f.rowDirZ)).toBeCloseTo(1, 9);
+        expect(Number.isFinite(f.across) && Number.isFinite(f.along)).toBe(true);
+        // the tiling-break noise stays in range
+        const n = valueNoise(x * 0.0045, z * 0.0045);
+        expect(n).toBeGreaterThanOrEqual(0);
+        expect(n).toBeLessThanOrEqual(1);
+      }),
+      { numRuns: 4000 },
+    );
+  });
+  it('the GLSL twin exposes the row frame the shader uses for bales and machine passes', () => {
+    expect(FIELD_GLSL).toContain('F.rowDir =');
+    expect(FIELD_GLSL).toContain('F.acrossDir =');
+  });
   it('has a GLSL twin that mirrors the constants', () => {
     expect(FIELD_GLSL).toContain('Field fieldAt(');
     expect(FIELD_GLSL).toContain(String(WOODLOT_CHANCE));
