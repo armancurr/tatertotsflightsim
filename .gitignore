@@ -14,3 +14,4 @@ coverage/
 # Scratch screenshots (qa/screenshots/ is committed) and agent worktrees
 qa/tmp/
 .worktrees/
+.oc
