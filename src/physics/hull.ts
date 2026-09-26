@@ -501,6 +501,7 @@ function baseVesselState(wc: WatercraftConfig, seaTime: number, mooring: VesselS
     resistance: 0,
     depthUnderKeel: Infinity,
     aground: false,
+    touching: false,
     capsizeTime: 0,
     surfaceY: 0,
   };
@@ -1106,6 +1107,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   // ── Contacts: sea bed / shore, structures ──
   const ct = wc.contact;
   let aground = false;
+  let touching = false;
   let crashReason: string | null = null;
   let depthUnderKeel = Infinity;
   const ptW: Vec3[] = [];
@@ -1160,7 +1162,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
           if (env.obstacleTop!(P.x - nx * s, P.z - nz * s) <= P.y) break;
         }
         const vn = vP.x * nx + vP.z * nz; // + = moving further into it
-        aground = true;
+        touching = true;
         if (vn > ct.crashSpeedMs) crashReason = 'Collision — hull holed';
         const fn = Math.max(0, ct.stiffness * pen + ct.damping * vn);
         const vt = { x: vP.x - vn * nx, y: vP.y, z: vP.z - vn * nz };
@@ -1222,6 +1224,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     resistance,
     depthUnderKeel,
     aground,
+    touching,
     capsizeTime,
     surfaceY,
   };

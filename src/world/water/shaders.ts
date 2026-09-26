@@ -110,7 +110,11 @@ export const WATER_BEGIN_VERTEX = /* glsl */ `
         float wedge = clamp( min( we.x, we.y ) / 0.06, 0.0, 1.0 );
         // only where the grid (spacing ≈ 0.045 × distance) resolves the wake's short waves; beyond, the normal carries them
         float wres = 1.0 - smoothstep( 25.0, 60.0, length( wp0.xz - cameraPosition.xz ) );
-        if ( wedge > 0.0 && wres > 0.0 ) transformed.y += textureLod( uWakeMap, wu, 0.0 ).r * wedge * wedge * ( 3.0 - 2.0 * wedge ) * near * wres;
+        if ( wedge > 0.0 && wres > 0.0 ) {
+          vec4 wm = textureLod( uWakeMap, wu, 0.0 );
+          // half the height (the normals carry the look), none in the churned wash behind the transom
+          transformed.y += wm.r * 0.5 * ( 1.0 - 0.85 * clamp( wm.b, 0.0, 1.0 ) ) * wedge * wedge * ( 3.0 - 2.0 * wedge ) * near * wres;
+        }
       }
     }
   #endif
@@ -423,13 +427,14 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
       if ( wedge > 0.0 ) {
         wedge = wedge * wedge * ( 3.0 - 2.0 * wedge );
         vec4 wc0 = textureLod( uWakeMap, wu, 0.0 );
-        float tx = uWakeTexel.y;
+        // slopes over a 4-texel span (~2 m): the wake's swells stay soft, never a creased fold
+        float tx = 2.0 * uWakeTexel.y;
         float hx1 = textureLod( uWakeMap, wu + vec2( tx, 0.0 ), 0.0 ).r;
         float hx0 = textureLod( uWakeMap, wu - vec2( tx, 0.0 ), 0.0 ).r;
         float hz1 = textureLod( uWakeMap, wu + vec2( 0.0, tx ), 0.0 ).r;
         float hz0 = textureLod( uWakeMap, wu - vec2( 0.0, tx ), 0.0 ).r;
-        vec2 grad = vec2( hx1 - hx0, hz1 - hz0 ) / ( 2.0 * uWakeTexel.x );
-        grad = clamp( grad, vec2( -1.5 ), vec2( 1.5 ) );
+        vec2 grad = vec2( hx1 - hx0, hz1 - hz0 ) / ( 4.0 * uWakeTexel.x );
+        grad = clamp( grad, vec2( -0.8 ), vec2( 0.8 ) );
         // slopes the pixel can resolve go into the normal, the rest into roughness
         float wres = 1.0 - smoothstep( 2.0 * uWakeTexel.x, 8.0 * uWakeTexel.x, fw );
         ng.x -= grad.x * wedge * wres;
@@ -438,6 +443,25 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
         wkFoam = wSat( wc0.g ) * wedge;
         wkChurn = wSat( wc0.b ) * wedge;
         wkSlick = wSat( wc0.a ) * wedge;
+        // the propeller wash boils: churned water is covered in short, steep, restless ripples (two
+        // layers of noise slopes drifting against each other, so it seethes rather than scrolls).
+        // The smooth swell underneath never reads as a bent sheet. Resolved slopes go into the
+        // normal; far away, where a pixel spans many ripples, they become roughness.
+        float tb = max( wkChurn, 0.8 * wkFoam );
+        if ( tb > 0.01 ) {
+          float tres = 1.0 - smoothstep( 0.12, 0.7, fw );
+          vec2 q1 = pw * 1.35 + vec2( uTime * 0.55, - uTime * 0.35 );
+          vec2 q2 = pw * 3.1 - vec2( uTime * 0.8, uTime * 0.6 );
+          const float e = 0.35;
+          float n1 = wNoise( q1 );
+          float n2 = wNoise( q2 );
+          vec2 g1 = vec2( wNoise( q1 + vec2( e, 0.0 ) ) - n1, wNoise( q1 + vec2( 0.0, e ) ) - n1 ) / e;
+          vec2 g2 = vec2( wNoise( q2 + vec2( e, 0.0 ) ) - n2, wNoise( q2 + vec2( 0.0, e ) ) - n2 ) / e;
+          vec2 tg = ( g1 * 0.55 + g2 * 0.45 ) * 0.42 * tb;
+          ng.x -= tg.x * tres;
+          ng.z -= tg.y * tres;
+          lost += ( 0.06 + 0.5 * dot( tg, tg ) * ( 1.0 - tres ) ) * tb;
+        }
       }
     }
   #endif

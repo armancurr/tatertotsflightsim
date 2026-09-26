@@ -296,8 +296,10 @@ export interface VesselState {
   resistance: number;
   /** Water depth under the keel (m; Infinity over deep water / no bottom in reach). */
   depthUnderKeel: number;
-  /** Touching the bottom, the shore or a structure this step. */
+  /** On the bottom or the shore this step (the sea bed under the hull). */
   aground: boolean;
+  /** Against a structure this step — a pontoon, a quay, a moored boat (alongside, not aground). */
+  touching: boolean;
   /** Seconds heeled past the capsize angle. */
   capsizeTime: number;
   /** The surface level under the CG (sea level + the waves), m MSL. */

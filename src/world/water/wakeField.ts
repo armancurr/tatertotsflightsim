@@ -181,7 +181,7 @@ export function wakeField(i: WakeFieldInput, out: WakeFieldOut = { height: 0, fo
   const inHull = (1 - smoothstep(0.85 * L, 1.0 * L, x)) * (1 - smoothstep(0.4 * B, 0.55 * B, Math.abs(y)));
   h = h > 0 ? h * (1 - inHull) : h;
   const behind = smoothstep(0.92 * L, 1.02 * L, x);
-  const fI = smoothstep(2, 9, U) * (0.4 + 0.6 * Math.min(1, Math.max(0, planing)));
+  const fI = smoothstep(1.5, 6, U) * (0.7 + 0.3 * Math.min(1, Math.max(0, planing)));
   const wf = trailHalfWidth(age, B);
   const ay = Math.abs(y);
   const prof = 1 - smoothstep(0.7 * wf, 1.15 * wf, ay);
@@ -451,7 +451,7 @@ vec4 wakeField( float x, float y, float s, float U, float age, float planing, fl
   h *= 1.0 - wkSmooth( 0.8 * W, W, abs( y ) );
   float behind = wkSmooth( 0.92 * L, 1.02 * L, x );
   float pl = clamp( planing, 0.0, 1.0 );
-  float fI = wkSmooth( 2.0, 9.0, U ) * ( 0.4 + 0.6 * pl );
+  float fI = wkSmooth( 1.5, 6.0, U ) * ( 0.7 + 0.3 * pl );
   float wf = 0.5 * B * ( 0.75 + 0.9 * sqrt( age / 10.0 ) );
   float ay = abs( y );
   // ragged trail edges

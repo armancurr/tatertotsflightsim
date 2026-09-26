@@ -28,7 +28,7 @@ function prop(patch: Partial<PropulsorState> = {}): PropulsorState {
 function vessel(patch: Partial<VesselState> = {}, props: Partial<PropulsorState>[] = [{}, {}]): VesselState {
   return {
     seaTime: 0, propulsors: props.map(prop), tabs: 0, mooring: null, speedMs: 0, leewayDeg: 0, trimDeg: 0, planing: 0,
-    wettedLength: 0, wettedArea: 0, displacedVolume: 0, resistance: 0, depthUnderKeel: Infinity, aground: false, capsizeTime: 0, surfaceY: 0,
+    wettedLength: 0, wettedArea: 0, displacedVolume: 0, resistance: 0, depthUnderKeel: Infinity, aground: false, touching: false, capsizeTime: 0, surfaceY: 0,
     ...patch,
   };
 }

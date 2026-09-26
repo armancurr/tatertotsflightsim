@@ -297,3 +297,12 @@ yet); a berth start, marina collision and an open-sea start.
   carry them beyond). Spray: soft droplet clusters in a low sheet along the chines instead of 1-px
   dots. Cost: the map pass ≈ 0.12 ms GPU. (`?waterGpu=1` itself logs WebGL query errors, with or
   without a boat — a pre-existing clash with another timer query; left for later.)
+- **"Water bending like paper" (owner's play test, leaving the berth at ~11 kt).** Right behind the
+  transom the wake was a large, perfectly smooth swell and hollow, lifted into the mesh — a creased
+  sheet with nothing on it. Real water there is the most turbulent part of the wake. Fixes: the
+  wake's slopes are taken over a ~2 m span (soft swells, no creases) and clamped; the vertex lift is
+  halved and removed where the water is churned; the churned and foaming water now **boils** — two
+  layers of noise slopes drifting against each other, as normal detail near the camera and roughness
+  beyond (the propeller-wash technique of Triton / Crest-style wakes); the wash foams from lower
+  speeds. Also: touching a pontoon was reported as "Aground!" — structure contact is now
+  `vessel.touching`, separate from `aground` (the sea bed).

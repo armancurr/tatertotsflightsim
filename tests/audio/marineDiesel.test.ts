@@ -332,7 +332,7 @@ function propulsor(p: Partial<PropulsorState> = {}): PropulsorState {
 function vesselState(p: Partial<VesselState> = {}): VesselState {
   return {
     seaTime: 5, propulsors: [propulsor(), propulsor({ rpm: 3010 })], tabs: 0, mooring: null, speedMs: 14.4, leewayDeg: 0, trimDeg: 4,
-    planing: 0.9, wettedLength: 9, wettedArea: 30, displacedVolume: 12, resistance: 26000, depthUnderKeel: Infinity, aground: false,
+    planing: 0.9, wettedLength: 9, wettedArea: 30, displacedVolume: 12, resistance: 26000, depthUnderKeel: Infinity, aground: false, touching: false,
     capsizeTime: 0, surfaceY: 0, ...p,
   };
 }

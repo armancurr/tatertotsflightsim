@@ -34,7 +34,7 @@ describe('the fleet: vessels', () => {
       let touched = false;
       for (let i = 0; i < 120 * 20; i++) {
         s = step(s, { ...defaultControls(), throttle: 0 }, 1 / 120, env, d.config);
-        touched ||= s.vessel!.aground;
+        touched ||= s.vessel!.aground || s.vessel!.touching;
       }
       expect(s.phase, d.id).toBe('afloat');
       expect(touched, `${d.id} touched the pontoon or the bottom at its berth`).toBe(false);

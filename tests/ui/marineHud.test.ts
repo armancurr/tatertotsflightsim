@@ -47,6 +47,7 @@ function vesselState(over: Partial<VesselState> = {}): VesselState {
     resistance: 30000,
     depthUnderKeel: 12.4,
     aground: false,
+    touching: false,
     capsizeTime: 0,
     surfaceY: 0,
     ...over,

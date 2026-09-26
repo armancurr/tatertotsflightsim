@@ -232,7 +232,8 @@ describe('Princess V50 hull: the berth, the shore and structures', () => {
     const env = pontoonEnv(-40);
     let touched = false;
     const s = drive(atRest(env), 60, () => ({ throttle: 0.12 }), env, V50_CALM, (_t, st) => {
-      touched ||= st.vessel!.aground;
+      touched ||= st.vessel!.touching;
+      expect(st.vessel!.aground).toBe(false); // alongside a pontoon is not aground
     });
     expect(touched).toBe(true);
     expect(s.phase).toBe('afloat');

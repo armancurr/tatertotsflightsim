@@ -16,7 +16,7 @@ function vessel(props: Partial<PropulsorState>[] = [{}, {}], tabs = 0): VesselSt
     seaTime: 0,
     propulsors: props.map((p) => ({ rpm: 0, n: 0, gear: 'neutral', thrust: 0, steerDeg: 0, load: 0, boost: 0, ...p })),
     tabs, mooring: null, speedMs: 0, leewayDeg: 0, trimDeg: 0, planing: 0, wettedLength: 0, wettedArea: 0,
-    displacedVolume: 0, resistance: 0, depthUnderKeel: Infinity, aground: false, capsizeTime: 0, surfaceY: 0,
+    displacedVolume: 0, resistance: 0, depthUnderKeel: Infinity, aground: false, touching: false, capsizeTime: 0, surfaceY: 0,
   };
 }
 function state(patch: Partial<AircraftVisualState> = {}): AircraftVisualState {
