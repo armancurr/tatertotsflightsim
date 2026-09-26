@@ -368,6 +368,8 @@ export function drawJetHud(ctx: CanvasRenderingContext2D, w: number, h: number, 
   const low = tapeY + span + big * 1.2;
   if (!compact) text(`M ${Math.max(0, fin(r.mach)).toFixed(2)}`, W * 0.03, low, big, 'left', 700);
   if (!compact) text(`AOA ${fin(r.aoaDeg).toFixed(1)}`, W * 0.03, low + big * 1.3, small, 'left');
+  // Ground speed: the tape is indicated airspeed, about half the true speed at 40,000 ft.
+  if (!compact) text(`GS ${Math.round(Math.max(0, fin(r.groundSpeedKt)))}`, W * 0.03, low + big * 2.4, small, 'left');
   const thr = clamp(fin(r.throttlePct), 0, 100);
   if (!compact) text(`THR ${Math.round(thr)}%`, W * 0.97, topY, big, 'right', 700);
   const ab = clamp(fin(r.afterburner), 0, 1);

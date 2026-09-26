@@ -270,7 +270,7 @@ describe('F-16 departure resistance', () => {
 });
 
 describe('F-16 structural limits', () => {
-  it('the airframe fails past 13.5 g (only reachable with the fly-by-wire switched off) and past ~865 KIAS', () => {
+  it('the airframe fails past 13.5 g (only reachable with the fly-by-wire switched off) and past ~970 KIAS', () => {
     const noFbw = { ...F16_CFG, aircraft: { ...F16_CFG.aircraft, fbw: null } };
     const t = trimmed({ altitudeM: 1500, iasKt: 600, gearDown: false }, noFbw);
     const yank = fly(t.state, { ...t.controls, gearDown: false, elevator: 1 }, 5, { cfg: noFbw, until: (x) => x.phase === 'crashed' });
@@ -279,11 +279,11 @@ describe('F-16 structural limits', () => {
     const f = trimmed({ altitudeM: 1500, iasKt: 600, gearDown: false }, F16_CFG);
     const pull = flyF(f.state, { ...f.controls, gearDown: false, elevator: 1 }, 2);
     expect(pull.crash).toBeNull();
-    // Full afterburner in a 30° dive from 700 KIAS: past the placard the airframe fails.
-    const d = trimmed({ altitudeM: 4000, iasKt: 700, gearDown: false, flightPathDeg: -30 }, F16_CFG);
+    // Full afterburner in a 60° dive from 800 KIAS: past Vne × 1.08 the airframe fails.
+    const d = trimmed({ altitudeM: 8000, iasKt: 800, gearDown: false, flightPathDeg: -60 }, F16_CFG);
     const dive = flyF(d.state, (x) => ({ ...d.controls, gearDown: false, throttle: 1, elevator: 0 }), 60);
     expect(dive.crash?.reason).toContain('overspeed');
-    expect(dive.crash!.speedKt).toBeGreaterThan(800);
+    expect(dive.crash!.speedKt).toBeGreaterThan(900);
   });
 });
 

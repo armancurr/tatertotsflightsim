@@ -126,11 +126,12 @@ export function jetHudKeepOut(out: Float64Array, s: JetHudSpace, cfg: Config = C
     put(Math.min(xa - 3, bxA - 1), y0, Math.max(bxA + bwA, xa + H * 0.03 + textWidth(6, lab)) + 2, y1);
   }
 
-  // Under the columns: Mach / AOA (left), radar altitude / VS (right), then GEAR / SPD BRK.
+  // Under the columns: Mach / AOA / GS (left), radar altitude / VS (right), then GEAR / SPD BRK.
   const low = tapeY + span + big * 1.2;
   if (!compact) {
     line(W * 0.03, low, 6, big, 'left'); // M 0.85
     line(W * 0.03, low + big * 1.3, 9, small, 'left'); // AOA -12.5
+    line(W * 0.03, low + big * 2.4, 7, small, 'left'); // GS 1720
     line(W * 0.97, low, 7, big, 'right'); // R 4,990
     line(W * 0.97, low + big * 1.3, 10, small, 'right'); // VS +12,340
   }

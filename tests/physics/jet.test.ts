@@ -49,10 +49,22 @@ describe('F110 thrust', () => {
     const s0 = jetThrust(1, 0, RHO0, 0, F16_CFG);
     expect(jetThrust(1, 0, RHO0, 0.3, F16_CFG)).toBeLessThan(s0);
     expect(jetThrust(1, 0, RHO0, 0.3, F16_CFG)).toBeGreaterThan(0.85 * s0);
-    expect(jetThrust(1, 1, rho10k, 2, F16_CFG)).toBeGreaterThan(jetThrust(1, 1, rho10k, 1, F16_CFG));
+    expect(jetThrust(1, 1, rho10k, 1.6, F16_CFG)).toBeGreaterThan(jetThrust(1, 1, rho10k, 1, F16_CFG));
+    // Max AB at M 0.9, sea level: ~1.1 × static (ram), as for a real F110.
+    expect(jetThrust(1, 1, RHO0, 0.9, F16_CFG) / jetThrust(1, 1, RHO0, 0, F16_CFG)).toBeGreaterThan(1.03);
     const abGain = jetThrust(1, 1, rho10k, 1.8, F16_CFG) / jetThrust(1, 1, rho10k, 0, F16_CFG);
     const dryGain = jetThrust(1, 0, rho10k, 1.8, F16_CFG) / jetThrust(1, 0, rho10k, 0, F16_CFG);
     expect(abGain).toBeGreaterThan(dryGain);
+  });
+
+  it('speed limits roll thrust off: dynamic pressure low down (past ~M 1.3), ram temperature up high (past ~M 3.1)', () => {
+    const rho40k = airDensity(12192);
+    expect(jetThrust(1, 1, RHO0, 1.6, F16_CFG)).toBeLessThan(0.1 * jetThrust(1, 1, RHO0, 1.1, F16_CFG));
+    expect(jetThrust(1, 1, rho40k, 3, F16_CFG)).toBeGreaterThan(jetThrust(1, 1, rho40k, 2, F16_CFG));
+    expect(jetThrust(1, 1, rho40k, 3.4, F16_CFG)).toBeLessThan(0.1 * jetThrust(1, 1, rho40k, 3, F16_CFG));
+    // Aircraft without the limits configured are untouched (the A-10's subsonic fans).
+    const noLimits = { ...F16_CFG, aircraft: { ...F16_AIRCRAFT, engine: { ...F16_AIRCRAFT.engine, jet: { ...J, ramTempLimitK: undefined, dynamicPressureLimitPa: undefined } } } };
+    expect(jetThrust(1, 1, RHO0, 1.5, noLimits)).toBeGreaterThan(jetThrust(1, 1, RHO0, 1.5, F16_CFG));
   });
 
   it('throttle mapping: idle → military below the detent, afterburner above it', () => {

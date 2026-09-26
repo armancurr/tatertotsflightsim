@@ -6,20 +6,19 @@
  * (AB 487 m / MIL 775 m, rotate 155 KIAS). Set F16_DEBUG=1 to print the numbers.
  *
  *   Quantity                                  Sim           Real (published)                  Band here
- *   Max speed, max AB, 40,000 ft              M 2.00        M 2.0 (limit M 2.05)              M 1.9–2.1
- *   Max speed, max AB, sea level              774 KIAS      ~M 1.2, 800 KCAS placard          700–800 KIAS
+ *   Max speed, max AB, 40,000 ft              M 3.00        M 2.0 (limit M 2.05)              M 2.9–3.15  (game tuning)
+ *   Max speed, max AB, sea level              827 KIAS      ~M 1.2, 800 KCAS placard          750–880 KIAS (game tuning)
  *   Max g (FBW), full aft at 480 KIAS         ~9 g          9 g                               8.5–9.3 g
  *   AoA limiter, full aft slowing             25° (26.5 pk) 25°                               parks 23.5–26°, pk < 27°
  *   Max roll rate (FBW), 350 KIAS             ~300 °/s      ~300 °/s                          270–320 °/s
  *   Instantaneous turn (9 g at the AoA limit) 23 °/s        ~26 °/s (lighter, combat fuel)    22–28 °/s
- *   Sustained turn, M 0.8, sea level, max AB  17.3 °/s      18–20 °/s                         16–20 °/s  ⚠ low
- *   Peak climb (Ps), sea level, max AB        ~40,000 fpm   50,000–60,000 fpm                 38,000–60,000  ⚠ low
+ *   Sustained turn, M 0.8, sea level, max AB  18.5 °/s      18–20 °/s                         16–20 °/s
+ *   Peak climb (Ps), sea level, max AB        ~51,700 fpm   50,000–60,000 fpm                 38,000–60,000
  *   Approach at 13° AoA (gear, flaperons)     ~145 KIAS     135–150 KIAS                      135–150 KIAS
  *
- * ⚠ The two low numbers share one cause: the quadratic ram model of src/physics/jet.ts under-predicts
- * afterburner thrust at M 0.8–0.9 (~0.9 × static vs ~1.1–1.15 × for a real F110), but more subsonic ram
- * also overshoots supersonic (no inlet total-pressure loss of the F-16's fixed normal-shock inlet). The
- * fix is a normal-shock inlet-recovery factor in jet.ts plus more AB ram — follow-up work.
+ * Thrust (src/physics/jet.ts): ram recovery gives ~1.08 × static max AB at M 0.9 (real F110 ~1.1). Top speed is
+ * GAME TUNING past the real jet: a dynamic-pressure limit holds it near 830 KIAS low down (M 1.25 at sea level)
+ * and the ram-temperature limit lets it reach M 3.0 at 40,000 ft (real: M 2.05); the airframe fails at ~970 KIAS.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { CONFIG, F16_AIRCRAFT, FT_TO_M, KT_TO_MS, MS_TO_KT, RAD_TO_DEG } from '../../src/config';
@@ -52,7 +51,7 @@ function atLoad(n: number, V: number, h: number) {
 /** Highest Mach with max-AB thrust ≥ drag in level flight at altitude h (m). */
 function topMach(h: number): number {
   let best = 0;
-  for (let M = 0.6; M < 2.6; M += 0.005) {
+  for (let M = 0.6; M < 3.6; M += 0.005) {
     const r = atLoad(1, M * speedOfSound(h), h);
     if (r.thrust >= r.drag) best = M;
   }
@@ -70,19 +69,19 @@ function fly(s0: AircraftState, c: Controls | ((s: AircraftState) => Controls), 
 }
 
 describe('F-16C accuracy: speed', () => {
-  it('max AB top speed ≈ M 2.0 at 40,000 ft (M 2.05 limit), 700–800 KIAS at sea level (800 KCAS placard)', () => {
+  it('max AB top speed ≈ M 3.0 at 40,000 ft (game tuning; real M 2.05), ~830 KIAS at sea level, short of the failure speed', () => {
     const hi = topMach(40000 * FT_TO_M);
     const sl = topMach(0);
     const slKias = sl * speedOfSound(0) * MS_TO_KT;
     log(`top speed: 40,000 ft M ${hi.toFixed(2)}; sea level M ${sl.toFixed(2)} = ${slKias.toFixed(0)} KIAS`);
-    expect(hi).toBeGreaterThan(1.9);
-    expect(hi).toBeLessThan(2.1);
-    expect(slKias).toBeGreaterThan(700);
-    expect(slKias).toBeLessThan(800);
+    expect(hi).toBeGreaterThan(2.9);
+    expect(hi).toBeLessThan(3.15);
+    expect(slKias).toBeGreaterThan(750);
+    expect(slKias).toBeLessThan(880);
     expect(slKias).toBeLessThan(F16_AIRCRAFT.limits.vneKt * F16_AIRCRAFT.limits.overspeedFailureFactor);
   });
 
-  it('peak sea-level climb (specific excess power, max AB): ≥ 38,000 fpm (real 50,000–60,000 — see the header ⚠)', () => {
+  it('peak sea-level climb (specific excess power, max AB): ≥ 38,000 fpm (real 50,000–60,000)', () => {
     let best = 0;
     for (let M = 0.4; M <= 1.2; M += 0.02) {
       const V = M * speedOfSound(0);
@@ -96,7 +95,7 @@ describe('F-16C accuracy: speed', () => {
 });
 
 describe('F-16C accuracy: turning and the flight-control limits', () => {
-  it('sustained turn at M 0.8, sea level, max AB: 16–20 °/s (real 18–20; sim slightly low — see the header ⚠)', () => {
+  it('sustained turn at M 0.8, sea level, max AB: 16–20 °/s (real 18–20)', () => {
     const V = 0.8 * speedOfSound(0);
     let nS = 1;
     for (let n = 1; n <= 12; n += 0.01) {

@@ -24,6 +24,18 @@ export function airDensity(altitudeM: number): number {
 /** ρ/ρ₀. */
 export const densityRatio = (density: number): number => density / CONFIG.sim.seaLevelDensity;
 
+/** ISA temperature (K) for an ISA density: T₀·σ^(1/4.256) in the troposphere, 216.65 K above it. */
+export function temperatureFromDensity(density: number): number {
+  const sigma = density / CONFIG.sim.seaLevelDensity;
+  if (!(sigma > 0)) return T11;
+  return Math.max(T11, T0 * Math.pow(sigma, 1 / EXPONENT));
+}
+
+/** ISA static pressure (Pa) for an ISA density: p = ρ·R·T. */
+export function pressureFromDensity(density: number): number {
+  return Math.max(0, density) * R_AIR * temperatureFromDensity(density);
+}
+
 const GAMMA_AIR = 1.4;
 
 /** ISA temperature (K) at a geometric altitude MSL: −6.5 K/km to the tropopause, then 216.65 K. */

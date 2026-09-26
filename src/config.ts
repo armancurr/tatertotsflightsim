@@ -48,6 +48,16 @@ export interface JetEngineConfig {
   lowSpeedLapse: number;
   ramDry: number;
   ramAb: number;
+  /**
+   * Speed limits on thrust: past the ram total temperature T·(1 + 0.2·M²) `ramTempLimitK` or the dynamic
+   * pressure q = 0.7·p·M² `dynamicPressureLimitPa`, the engine control pulls thrust back, smoothly to zero
+   * one span above. q bounds the jet low down (~M 1.2 at sea level, ≈ IAS), temperature in the thin cold
+   * air up high. Absent = no limit (subsonic jets never reach them).
+   */
+  ramTempLimitK?: number;
+  ramTempSpanK?: number;
+  dynamicPressureLimitPa?: number;
+  dynamicPressureSpanPa?: number;
   /** Where the thrust acts (body frame, m): on the body axis → no pitching moment. */
   thrustPoint: { x: number; y: number; z: number };
 }
@@ -2336,10 +2346,19 @@ function makeF16(): AircraftConfig {
         spoolUpTauIdle: 3.2,
         spoolUpTauMil: 0.6,
         spoolDownTau: 1.1,
-        densityExponent: 0.8,
+        densityExponent: 0.7,
+        /** Max AB ≈ 1.08 × static at M 0.9 at sea level (real F110: ~1.1), rising with ram until a limit bites. */
         lowSpeedLapse: 0.45,
-        ramDry: 0.3,
-        ramAb: 0.4,
+        ramDry: 0.45,
+        ramAb: 0.8,
+        /**
+         * Game tuning, beyond the real jet (M 2.05): q limit ≈ 830 KIAS low down (M 1.25 at sea level), ram
+         * temperature ≈ M 3.1 up high — full afterburner reaches M 3.0 at 40,000 ft.
+         */
+        ramTempLimitK: 620,
+        ramTempSpanK: 15,
+        dynamicPressureLimitPa: 100000,
+        dynamicPressureSpanPa: 40000,
         /** Nozzle centre, slightly below the CG (≈ 1.45 m above the runway). */
         thrustPoint: { x: 0, y: -0.3, z: 7.0 },
       },
@@ -2499,14 +2518,14 @@ function makeF16(): AircraftConfig {
       vyKt: 350,
       vaKt: 350,
       vnoKt: 600,
-      /** 800 KCAS placard. */
-      vneKt: 800,
+      /** Game tuning (real placard: 800 KCAS) — clears the M 3 dash at 40,000 ft (~855 KIAS). */
+      vneKt: 900,
       gLimitPos: 9,
       gLimitNeg: -3,
       /** Ultimate load ≈ 1.5 × 9 g. */
       structuralFailureG: 13.5,
       structuralFailureNegG: -6,
-      /** IAS beyond 800 × 1.08 ≈ 865 KIAS fails the airframe. */
+      /** IAS beyond 900 × 1.08 ≈ 970 KIAS fails the airframe. */
       overspeedFailureFactor: 1.08,
       maxAngularRate: 8,
     },

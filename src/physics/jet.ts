@@ -8,12 +8,14 @@
  * lights only once the core is near military and ramps at a fixed rate (~1 s to full).
  *
  * Thrust = [idle + (mil − idle)·core]·σ^k·(1 − l·M + ramDry·M²) + ab·(max − mil)·σ^k·(1 − l·M + ramAb·M²),
- * σ = ρ/ρ₀, l = lowSpeedLapse (momentum drag), ram·M² = ram recovery. `rpm` reports core speed in %
+ * σ = ρ/ρ₀, l = lowSpeedLapse (momentum drag), ram·M² = ram recovery; the whole is rolled off past the
+ * ram-temperature and dynamic-pressure limits (`ramTempLimitK`, `dynamicPressureLimitPa`). `rpm` reports core speed in %
  * (idle ≈ 70, military 100).
  */
 import { CONFIG, type Config, type JetEngineConfig } from '../config';
 import type { Controls, EngineState } from '../types';
 import { clamp, expApproach, moveToward } from '../math/vec3';
+import { pressureFromDensity, temperatureFromDensity } from './atmosphere';
 
 function jetOf(cfg: Config): JetEngineConfig {
   const j = cfg.aircraft.engine.jet;
@@ -32,7 +34,23 @@ export function jetThrust(core: number, ab: number, density: number, mach: numbe
   const lo = 1 - j.lowSpeedLapse * m;
   const dry = (j.idleThrustN + (j.milThrustN - j.idleThrustN) * c) * lapse * (lo + j.ramDry * m * m);
   const wet = a * (j.maxThrustN - j.milThrustN) * lapse * (lo + j.ramAb * m * m);
-  return dry + wet;
+  return (dry + wet) * ramLimitFactor(density, m, j);
+}
+
+/** Thrust factor for the ram-temperature and dynamic-pressure limits (1 inside both). */
+function ramLimitFactor(density: number, mach: number, j: JetEngineConfig): number {
+  const r = 1 + 0.2 * mach * mach;
+  return (
+    rollOff(temperatureFromDensity(density) * r, j.ramTempLimitK, j.ramTempSpanK) *
+    rollOff(0.7 * pressureFromDensity(density) * mach * mach, j.dynamicPressureLimitPa, j.dynamicPressureSpanPa)
+  );
+}
+
+/** 1 up to `limit`, smoothstep down to 0 at limit + span; 1 when there is no limit. */
+function rollOff(value: number, limit: number | undefined, span: number | undefined): number {
+  if (limit === undefined || !(span !== undefined && span > 0)) return 1;
+  const x = clamp((value - limit) / span, 0, 1);
+  return 1 - x * x * (3 - 2 * x);
 }
 
 /** Core target (0 idle … 1 military) for a throttle lever position. */

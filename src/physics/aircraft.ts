@@ -47,19 +47,20 @@
  *   CLα, CLmax                                 3.5 / rad; 1.63 @ 32° α (vortex lift) ~3.5; ~1.6 @ 30–35°
  *   CD0 subsonic → transonic peak → M 2        0.0185 → 0.044 @ M 1.1 → 0.037        roughly doubles M 0.95–1.1
  *   Max L/D (clean)                            10.9 @ 250 KIAS                       ~10–11
- *   Top speed, max AB: sea level / 40,000 ft   M 1.17 (774 KIAS) / M 2.00 (steady)   M 1.2 / M 2.0  (wave drag ×2.2 at M 2; was ×2.0 → M 2.38)
- *   Peak climb (Ps), SL, max AB / sustained    ~40,000 fpm / 17.3 °/s at M 0.8, 8.4 g   50–60,000 fpm / 18–20 °/s  ⚠ low: jet.ts ram model
- *     turn                                     (needs a normal-shock inlet-recovery term + more AB ram; f16-accuracy.test.ts)
+ *   Top speed, max AB: sea level / 40,000 ft   M 1.25 (830 KIAS) / M 3.00 (steady)   M 1.2 / M 2.0  GAME TUNING: q / ram-temp limits in jet.ts
+ *   Level AB acceleration, 40,000 ft           M 1.56 → M 3.07 in 90 s (844 KIAS)
+ *   Peak climb (Ps), SL, max AB / sustained    ~51,700 fpm / 18.5 °/s at M 0.8       50–60,000 fpm / 18–20 °/s
+ *     turn
  *   Instantaneous turn, 5,000 ft               23 °/s at 392 KIAS (9 g at the 25° limit)  ~26 °/s (lighter)
  *   Top speed, military power: SL / 40,000 ft  M 0.98 / M 1.05                       ~M 1.0 (no supercruise)
- *   AB take-off (12 t): rotate / lift-off      155 KIAS / ~183 KIAS, 487 m           rotate 150–160 kt, 450–700 m
+ *   AB take-off (12 t): rotate / lift-off      155 KIAS / ~184 KIAS, 483 m           rotate 150–160 kt, 450–700 m
  *   Held full aft stick on the take-off roll   rotation-rate limited, pitch ≤ 12° on the wheels (tail-strike protection)
  *   Mil take-off                               ~175 KIAS, 775 m                      ~900 m
- *   Climb at 350 KIAS from 2,000 ft            17,000 fpm mil / 31,000 fpm max AB
- *   AB climb → level at 10,000 ft              580 KIAS within 60 s of lift-off      > 500 kt
+ *   Climb at 350 KIAS from 2,000 ft            18,000 fpm mil / 34,000 fpm max AB
+ *   AB climb → level at 10,000 ft              680 KIAS within 60 s of lift-off      > 500 kt
  *   FBW pitch: full aft / forward, 480 KIAS    8.9 g (8.5 g after 0.6 s, no overshoot) / −3.05 g    +9 / −3 g
  *   FBW AoA limiter (full aft, slowing)        parks at 25.0° (gear down: 16°), never 'stalled', no departure
- *   9 g turn, 10,000 ft, 480 KIAS, max AB      7.4 s ≥ 8.5 g, heading +164° in 8 s, 480 → 414 KIAS
+ *   9 g turn, 10,000 ft, 480 KIAS, max AB      7.4 s ≥ 8.5 g, heading +160° in 8 s, 480 → 435 KIAS
  *   FBW roll, full stick, 350 KIAS             300 °/s within 0.6 s, |β| < 2.5°      ≈ 300 °/s
  *   Aileron-only roll-in (350 / 180 KIAS)      no wrong-way yaw (< 0.2°), heading follows within 0.5 s
  *   Full roll at the AoA limit, 200 KIAS       |β| < 10°, α ≤ 27° (roll cut by α and β: no roll-coupling departure)
@@ -67,7 +68,7 @@
  *   Speed brake at 300 KIAS, idle              +3.3 kt/s deceleration (≈ 0.17 g)
  *   Approach, 3° glide, gear + flaperons       150 KIAS at α 11.9°, pitch 8.9°       ~140–150 kt at 11–13° α
  *   Landing (flare, idle)                      ~144 KIAS, −374 fpm, 12.7° pitch, rollout 1,050 m (brakes + speed brake)   800–1,200 m
- *   Structural limits                          > 13.5 g / < −6 g, > 865 KIAS (800 × 1.08) = failure
+ *   Structural limits                          > 13.5 g / < −6 g, > 972 KIAS (Vne 900 × 1.08) = failure  (game tuning; real 800 KCAS)
  *
  * ─── Calibration: A-10C (16,000 kg combat weight: 4 × AGM-65D + pods; 2 × TF34-GE-100A; ISA) ───
  * Checked by tests/physics/a10.test.ts, a10-flight.test.ts, a10-keyboard.test.ts, a10-fuzz.test.ts, recoil.test.ts.
