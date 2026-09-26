@@ -14,7 +14,7 @@ An aircraft is one `AircraftDef` in the fleet registry. It carries four things:
   all read their numbers from it;
 - a **3D model** factory that returns an `AircraftModelHandle`;
 - a **HUD style** (`'steam'` gauges or a `'jet'` head-up display);
-- an **engine sound** (`'piston'`, `'jet'` or `'turbofan'`).
+- an **engine sound** (`'piston'`, `'jet'`, `'turbofan'` or `'turboshaft'`, the helicopter's).
 
 Nothing else needs wiring. The aircraft picker, `?aircraft=<id>`, `window.sim.selectAircraft(id)`,
 the reset/teleport code and every system (HUD, audio, weapons, crash) pick it up from the registry.
@@ -177,6 +177,29 @@ describe('PA-28 accuracy', () => {
 If the aircraft really needs new physics (a new engine type, a tailwheel), add it to
 `src/physics/` behind a new, optional config field, so the existing aircraft are untouched and
 their tests stay green. The physics must stay **pure**: no three.js, no DOM, no clock.
+
+### Helicopters
+
+A helicopter is an aircraft whose config sets `rotorcraft` (a `RotorcraftConfig`: `rotor`,
+`tailRotor`, `engine`, `airframe`, `skids`, `sas`). `step()` then flies it with
+`src/physics/rotor.ts` instead of the wing and the piston/jet engine, and everything else (ground
+contacts, flight phases, crashes, the HUD, the sound, the fleet) switches on from that field — never
+from the id. `makeB206()` in `src/config.ts` (the Bell 206B-3 JetRanger) is the worked example:
+
+- Start from the real rotor: radius, blade count and chord, twist, rpm, the mast tilt and hub
+  position, the rotation `direction` (+1 counter-clockwise from above), the blade Lock number and
+  the collective range; then the tail rotor's size, position, thrust `axis` and gear ratio.
+- `engine` is a governed free-turbine turboshaft (`thermoPowerW`, `transmissionLimitW`, the
+  governor gains). `Controls.throttle` is the collective lever.
+- `skids.points` are the four skid contacts; the legacy `geometry.noseWheel`/`leftMainWheel`/
+  `rightMainWheel` should sit on them too (other code asks for three wheels). Put the rotor tips and
+  the tail rotor in `structuralPoints` (`rotorTip…`, `tailRotorTip`) so striking them is a crash.
+- `solveRotorTrim` balances all six forces and moments; check the hover and cruise trims against the
+  flight manual (power, attitude, pedal), then fly the dynamic cases. `tests/physics/b206.test.ts`
+  holds the JetRanger to its numbers (hover power and ceiling, the power bucket, top speed,
+  autorotation, vortex ring state, roll-over) and `tests/physics/b206-fuzz.test.ts` fuzzes it.
+- The stability assist (`sas`) is a control law between the pilot and the blades; tune its gains
+  last, with the raw machine already right (K switches it off in the game).
 
 ## Step 3: weapons (optional)
 
@@ -365,7 +388,8 @@ The id must be unique and stable, because players' saved choices and URLs use it
   g) and, for an armed aircraft, the weapons symbology. For the cockpit view, give the model a
   `hudCombiner` mesh, or the HUD has no glass to sit on.
 - **`sound`** picks the engine voice in `src/audio`: `'piston'` (an O-360 and propeller, pitched
-  by RPM), `'jet'` (the F-16's afterburning F110) or `'turbofan'` (the A-10's high-bypass TF34s,
+  by RPM), `'jet'` (the F-16's afterburning F110), `'turboshaft'` (the JetRanger's Allison 250 with
+  its main- and tail-rotor sound, `src/audio/turboshaft.ts`) or `'turbofan'` (the A-10's high-bypass TF34s,
   also used by the 747). A new voice means a new synthesiser next to `src/audio/piston.ts`,
   `src/audio/jet.ts` and `src/audio/turbofan.ts`, a new `EngineSound` member in
   `src/fleet/types.ts`, and a case in `makeVoice` in `src/audio/audio.ts`.

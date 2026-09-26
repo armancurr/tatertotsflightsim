@@ -11,7 +11,15 @@ import { flapPlacardKt } from '../physics/placards';
 
 export type MessageLevel = 'info' | 'warn' | 'good';
 
-export type AnnunciationId = 'stall' | 'gearUnsafe' | 'overspeed' | 'flapOverspeed' | 'gearOverspeed' | 'gearSquat' | 'engineFailed' | 'engineOff';
+export type AnnunciationId =
+  | 'stall' | 'gearUnsafe' | 'overspeed' | 'flapOverspeed' | 'gearOverspeed' | 'gearSquat' | 'engineFailed' | 'engineOff'
+  // Helicopters (InstrumentReadings.rotor):
+  | 'lowRotor' | 'overTorque' | 'vortexRing' | 'bladeStall';
+
+/** Vortex-ring-state intensity above which the VORTEX RING caution lights. */
+export const VRS_CAUTION = 0.5;
+/** Retreating-blade-stall intensity above which RETREATING BLADE STALL lights. */
+export const BLADE_STALL_CAUTION = 0.3;
 
 export interface Annunciation {
   id: AnnunciationId;
@@ -53,10 +61,14 @@ export function annunciationList(cfg: Config = CONFIG): Annunciation[] {
     { id: 'stall', text: 'STALL', level: 'warning' },
     { id: 'gearUnsafe', text: 'GEAR', level: 'warning' },
     { id: 'overspeed', text: 'OVERSPEED', level: 'warning' },
+    { id: 'lowRotor', text: 'LOW ROTOR RPM', level: 'warning' },
     { id: 'engineFailed', text: 'ENGINE FAILURE', level: 'warning' },
     { id: 'flapOverspeed', text: 'FLAP OVERSPEED', level: 'caution' },
     { id: 'gearOverspeed', text: 'GEAR OVERSPEED', level: 'caution' },
     { id: 'gearSquat', text: 'GEAR — SQUAT SWITCH', level: 'caution' },
+    { id: 'overTorque', text: 'OVERTORQUE', level: 'caution' },
+    { id: 'vortexRing', text: 'VORTEX RING', level: 'caution' },
+    { id: 'bladeStall', text: 'RETREATING BLADE STALL', level: 'caution' },
     { id: 'engineOff', text: `ENGINE OFF · ${keysOf('engine', cfg)} to start`, level: 'caution' },
   ];
 }
@@ -69,11 +81,15 @@ export function annunciationActive(id: AnnunciationId, r: InstrumentReadings, cf
     case 'stall': return r.stallWarning;
     case 'overspeed': return r.overspeed;
     case 'engineFailed': return r.engineStatus === 'FAILED';
-    case 'flapOverspeed': return ias > flapPlacardKt(r.flapsDeg, cfg);
+    case 'flapOverspeed': return !r.rotor && ias > flapPlacardKt(r.flapsDeg, cfg);
     case 'gearUnsafe': return gearFlags(r, cfg).gearUnsafe;
     case 'gearOverspeed': return gearFlags(r, cfg).overspeed;
     case 'gearSquat': return gearFlags(r, cfg).squatSwitch;
     case 'engineOff': return r.engineStatus === 'OFF';
+    case 'lowRotor': return r.rotor?.lowRotorRpm === true;
+    case 'overTorque': return r.rotor?.overTorque === true;
+    case 'vortexRing': return (r.rotor?.vrs ?? 0) > VRS_CAUTION;
+    case 'bladeStall': return (r.rotor?.bladeStall ?? 0) > BLADE_STALL_CAUTION;
   }
 }
 
@@ -128,9 +144,13 @@ export function keysOf(action: KeyAction, cfg: Config = CONFIG): string {
   return codes && codes.length ? keyLabel(codes[0]) : '?';
 }
 
-/** One-line hint shown for the first seconds of a session. */
+/** One-line hint shown for the first seconds of a session (a helicopter gets its own). */
 export function startHint(cfg: Config = CONFIG): string {
   const k = (a: KeyAction) => keysOf(a, cfg);
+  if (cfg.aircraft.rotorcraft) {
+    const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
+    return `${k('engine')} engine · ${k('throttleUp')}/${k('throttleDown')} collective · arrows cyclic · ${k('yawLeft')}/${k('yawRight')} pedals · ${k('stabilityAssist')} stability assist · ${k('help')} controls · ${menu} menu`;
+  }
   const vr = Math.round(cfg.aircraft.limits.vrKt);
   const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
   return `${k('throttleUp')} throttle up · ${k('pitchUp')} pull up at ${vr} kt · ${k('gear')} gear · ${k('flapsDown')}/${k('flapsUp')} flaps · ${k('help')} controls · ${menu} menu`;

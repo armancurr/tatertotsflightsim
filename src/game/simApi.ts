@@ -40,6 +40,11 @@ export interface SimSnapshotFull extends SimSnapshot {
   crash: string | null;
   lastLanding: null | { rating: string; fpm: number; airspeedKt: number; onRunway: boolean; centerlineOffsetM: number | null; surface: string };
   perf: FpsLike;
+  /**
+   * Helicopters: rotor speed (% of nominal), torque %, N1 %, collective %, stability assist, vortex
+   * ring / blade stall 0..1, thrust (N). null for fixed-wing aircraft.
+   */
+  rotor: null | { nr: number; torque: number; n1: number; collective: number; sas: boolean; vrs: number; bladeStall: number; thrust: number };
   position: { x: number; y: number; z: number };
   time: number;
 }
@@ -64,6 +69,8 @@ export function buildSimSnapshot(args: {
   fps: FpsLike;
   cameraMode: CameraMode;
   paused: boolean;
+  /** Helicopters: 100 % rotor rpm (for window.sim.rotor.nr). */
+  nominalRotorRpm?: number;
 }): SimSnapshotFull {
   const { state, controls, fps, cameraMode, paused } = args;
   const d = state.derived;
@@ -108,6 +115,18 @@ export function buildSimSnapshot(args: {
         }
       : null,
     perf: { ...fps },
+    rotor: state.rotor
+      ? {
+          nr: r1((state.rotor.omega / ((args.nominalRotorRpm ?? 394) * (Math.PI / 30))) * 100),
+          torque: Math.round(state.rotor.torque * 100),
+          n1: r1(state.rotor.n1 * 100),
+          collective: Math.round(state.rotor.collective * 100),
+          sas: state.rotor.sasOn,
+          vrs: Math.round(state.rotor.vrs * 100) / 100,
+          bladeStall: Math.round(state.rotor.bladeStall * 100) / 100,
+          thrust: Math.round(state.rotor.thrust),
+        }
+      : null,
     position: { x: r1(state.position.x), y: r1(state.position.y), z: r1(state.position.z) },
     time: r1(state.time),
   };

@@ -2,7 +2,7 @@
  * Contracts of the aircraft model (src/aircraft). No three.js here so pure code
  * (tests, animation mapping) can import it.
  */
-import type { CameraMode, InstrumentReadings } from '../types';
+import type { CameraMode, InstrumentReadings, RotorState } from '../types';
 
 export interface AircraftLights {
   nav: boolean;
@@ -55,6 +55,11 @@ export interface AircraftVisualState {
   stores?: boolean[];
   /** Per air-to-air station (CONFIG.weapons.airMissiles.stations order): a Sidewinder still hangs there. */
   airStores?: boolean[];
+  /**
+   * Helicopters: the rotor state (speed, tip-path-plane tilt, the blade controls after the stability
+   * assist, thrust). `propRpm` is the main-rotor rpm. Absent/null for fixed-wing aircraft.
+   */
+  rotor?: RotorState | null;
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */

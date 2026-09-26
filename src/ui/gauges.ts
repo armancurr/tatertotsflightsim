@@ -954,6 +954,193 @@ export const drawTachometer: GaugeDrawer = (ctx, cx, cy, size, r) => {
   drawGlass(ctx, cx, cy, s);
 };
 
+// ─── Helicopter gauges (Bell 206B-3 JetRanger) ───────────────────────────────
+
+/**
+ * Markings of the JetRanger's engine and rotor instruments, % (after the 206B-3 flight manual):
+ * the dual tachometer's rotor (NR) scale — red 90, green 95–104, red 107 — and its inner power
+ * turbine (N2) scale — green 97–100, red 105; the torquemeter — green 0–85, yellow 85–100
+ * (5-minute take-off range), red line 100; the gas producer (N1) — red 105.
+ */
+export const HELI_MARKS = {
+  nr: { redLow: 90, greenLow: 95, greenHigh: 104, redHigh: 107 },
+  n2: { greenLow: 97, greenHigh: 100, redHigh: 105 },
+  torque: { greenHigh: 85, red: 100, max: 110 },
+  n1: { red: 105 },
+} as const;
+
+const DT_SPLIT = 60;
+/** Dual tach: 0 % at -135°, 0–60 % compressed into 70°, 60–120 % spread over 200° (the working range reads large). */
+export function dualTachNeedleDeg(pct: number): number {
+  const v = clamp(fin(pct), 0, 120);
+  if (v <= DT_SPLIT) return -135 + (v / DT_SPLIT) * 70;
+  return -65 + ((v - DT_SPLIT) / (120 - DT_SPLIT)) * 200;
+}
+
+/** Torquemeter: 0 % at -135°, 110 % at +135°, linear. */
+export function torqueNeedleDeg(pct: number): number {
+  return -135 + (clamp(fin(pct), 0, HELI_MARKS.torque.max) / HELI_MARKS.torque.max) * 270;
+}
+
+/** Helicopter airspeed indicator: 0 at 12 o'clock, 0–20 kt in the first 20° (the pitot reads nothing in a hover), then 20→150 kt over 310°. */
+export function heliAsiNeedleDeg(kt: number): number {
+  const v = fin(kt);
+  if (v <= 0) return 0;
+  if (v <= 20) return v;
+  return Math.min(20 + ((v - 20) * 310) / 130, 335);
+}
+
+function redLine(c: CanvasRenderingContext2D, cx: number, cy: number, deg: number, r0: number, r1: number, width: number): void {
+  c.beginPath();
+  ticks(c, cx, cy, [deg], r0, r1);
+  c.strokeStyle = RED;
+  c.lineWidth = width;
+  c.lineCap = 'butt';
+  c.stroke();
+}
+
+function heliAsiFace(vneKt: number) {
+  return (c: CanvasRenderingContext2D, cx: number, cy: number, size: number): void => {
+    const F = drawCase(c, cx, cy, size);
+    // No flap or stall arcs on a helicopter's ASI: just the Vne red line.
+    redLine(c, cx, cy, heliAsiNeedleDeg(vneKt), F * 0.72, F * 0.95, F * 0.05);
+    const minor: number[] = [];
+    const major: number[] = [];
+    const simple = isSimpleFace(size);
+    for (let v = 20; v <= 150; v += simple ? 10 : 5) ((simple ? v % 20 === 0 : v % 10 === 0) ? major : minor).push(heliAsiNeedleDeg(v));
+    strokeTicks(c, cx, cy, minor, F * (simple ? 0.84 : 0.86), F * 0.94, F * (simple ? 0.035 : 0.022));
+    strokeTicks(c, cx, cy, major, F * (simple ? 0.76 : 0.8), F * 0.94, F * (simple ? 0.05 : 0.032));
+    strokeTicks(c, cx, cy, [0], F * 0.8, F * 0.94, F * 0.032);
+    if (simple) {
+      numerals(c, cx, cy, F * 0.55, [40, 80, 120].map((v) => [heliAsiNeedleDeg(v), String(v)] as [number, string]), F * 0.3);
+      font(c, F * 0.24, 800, UI_FONT);
+      text(c, 'KT', cx, cy - F * 0.3, MARK);
+      return;
+    }
+    const labels: [number, string][] = [];
+    for (let v = 20; v <= 140; v += 20) labels.push([heliAsiNeedleDeg(v), String(v)]);
+    numerals(c, cx, cy, F * 0.6, labels, F * 0.17);
+    font(c, F * 0.085, 700, UI_FONT);
+    text(c, 'AIRSPEED', cx, cy - F * 0.3, MARK_DIM);
+    font(c, F * 0.1, 700, UI_FONT);
+    text(c, 'KNOTS', cx, cy + F * 0.3, MARK);
+  };
+}
+
+/** The helicopter's airspeed indicator (0–150 kt, red line at `vneKt`). */
+export function makeHeliAirspeed(vneKt: number): GaugeDrawer {
+  const vne = clamp(fin(vneKt, 130), 20, 150);
+  const face = heliAsiFace(vne);
+  return (ctx, cx, cy, size, r) => {
+    const s = sz(size);
+    if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
+    cachedFace(ctx, `hasi${isSimpleFace(s) ? 'S' : ''}${Math.round(vne)}`, cx, cy, s, face);
+    const F = (s / 2) * 0.885;
+    needle(ctx, cx, cy, heliAsiNeedleDeg(r.airspeedKt), F * 0.88, F * 0.22, F * 0.075);
+    hub(ctx, cx, cy, F * 0.09);
+    drawGlass(ctx, cx, cy, s);
+  };
+}
+
+const N2_NEEDLE = '#ffb547';
+
+function dualTachFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  const F = drawCase(c, cx, cy, size);
+  const M = HELI_MARKS;
+  const simple = isSimpleFace(size);
+  // Outer scale: rotor (NR). Green band, red limits.
+  band(c, cx, cy, F * 0.875, F * 0.08, dualTachNeedleDeg(M.nr.greenLow), dualTachNeedleDeg(M.nr.greenHigh), GREEN);
+  redLine(c, cx, cy, dualTachNeedleDeg(M.nr.redLow), F * 0.74, F * 0.95, F * 0.04);
+  redLine(c, cx, cy, dualTachNeedleDeg(M.nr.redHigh), F * 0.74, F * 0.95, F * 0.04);
+  // Inner scale: power turbine (N2), drawn in the turbine needle's colour.
+  band(c, cx, cy, F * 0.7, F * 0.05, dualTachNeedleDeg(M.n2.greenLow), dualTachNeedleDeg(M.n2.greenHigh), GREEN);
+  redLine(c, cx, cy, dualTachNeedleDeg(M.n2.redHigh), F * 0.64, F * 0.74, F * 0.035);
+  const minor: number[] = [];
+  const major: number[] = [];
+  for (let v = 0; v <= 120; v += simple ? 10 : 5) {
+    if (v < DT_SPLIT && v % 20 !== 0) continue;
+    (v % 20 === 0 ? major : minor).push(dualTachNeedleDeg(v));
+  }
+  strokeTicks(c, cx, cy, minor, F * (simple ? 0.84 : 0.86), F * 0.95, F * (simple ? 0.035 : 0.022));
+  strokeTicks(c, cx, cy, major, F * (simple ? 0.76 : 0.78), F * 0.95, F * (simple ? 0.05 : 0.034));
+  if (simple) {
+    // The needle rests on 100 %: that numeral would only hide under it (the green band marks it).
+    numerals(c, cx, cy, F * 0.54, [0, 60, 80, 120].map((v) => [dualTachNeedleDeg(v), String(v / 10)] as [number, string]), F * 0.27);
+    font(c, F * 0.22, 800, UI_FONT);
+    text(c, 'R', cx - F * 0.12, cy + F * 0.58, MARK);
+    text(c, 'T', cx + F * 0.12, cy + F * 0.58, N2_NEEDLE);
+    return;
+  }
+  numerals(c, cx, cy, F * 0.63, [0, 20, 40, 60, 70, 80, 90, 100, 110, 120].map((v) => [dualTachNeedleDeg(v), String(v / 10)] as [number, string]), F * 0.15);
+  font(c, F * 0.075, 700, UI_FONT);
+  text(c, 'RPM % ×10', cx, cy - F * 0.3, MARK_DIM);
+  font(c, F * 0.09, 800, UI_FONT);
+  text(c, 'R ROTOR', cx, cy + F * 0.36, MARK);
+  text(c, 'T TURB', cx, cy + F * 0.5, N2_NEEDLE);
+}
+
+/** Dual tachometer: rotor (NR, white "R" needle) and power turbine (N2, amber "T" needle), %. */
+export const drawDualTach: GaugeDrawer = (ctx, cx, cy, size, r) => {
+  const s = sz(size);
+  if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
+  cachedFace(ctx, isSimpleFace(s) ? 'dtachS' : 'dtach', cx, cy, s, dualTachFace);
+  const F = (s / 2) * 0.885;
+  const rot = r.rotor;
+  // N2 under NR: when they agree (the engine driving the rotor) the rotor needle covers it.
+  needle(ctx, cx, cy, dualTachNeedleDeg(rot?.n2Pct ?? 0), F * 0.7, F * 0.18, F * 0.085, N2_NEEDLE);
+  needle(ctx, cx, cy, dualTachNeedleDeg(rot?.nrPct ?? 0), F * 0.88, F * 0.22, F * 0.065);
+  hub(ctx, cx, cy, F * 0.09);
+  drawGlass(ctx, cx, cy, s);
+};
+
+function torqueFace(c: CanvasRenderingContext2D, cx: number, cy: number, size: number): void {
+  const F = drawCase(c, cx, cy, size);
+  const T = HELI_MARKS.torque;
+  const simple = isSimpleFace(size);
+  band(c, cx, cy, F * 0.875, F * 0.08, torqueNeedleDeg(0), torqueNeedleDeg(T.greenHigh), GREEN);
+  band(c, cx, cy, F * 0.875, F * 0.08, torqueNeedleDeg(T.greenHigh), torqueNeedleDeg(T.red), YELLOW);
+  redLine(c, cx, cy, torqueNeedleDeg(T.red), F * 0.72, F * 0.95, F * 0.05);
+  const minor: number[] = [];
+  const major: number[] = [];
+  for (let v = 0; v <= T.max; v += simple ? 10 : 5) (v % 20 === 0 ? major : minor).push(torqueNeedleDeg(v));
+  strokeTicks(c, cx, cy, minor, F * (simple ? 0.84 : 0.86), F * 0.95, F * (simple ? 0.035 : 0.022));
+  strokeTicks(c, cx, cy, major, F * (simple ? 0.76 : 0.78), F * 0.95, F * (simple ? 0.05 : 0.034));
+  const labels = (simple ? [20, 60, 100] : [0, 20, 40, 60, 80, 100]).map((v) => [torqueNeedleDeg(v), String(v)] as [number, string]);
+  numerals(c, cx, cy, simple ? F * 0.55 : F * 0.6, labels, simple ? F * 0.24 : F * 0.16);
+  font(c, simple ? F * 0.2 : F * 0.11, 800, UI_FONT);
+  text(c, 'TRQ', cx, cy - F * (simple ? 0.28 : 0.3), MARK);
+  if (!simple) {
+    font(c, F * 0.07, 700, UI_FONT);
+    text(c, '% TORQUE', cx, cy - F * 0.18, MARK_DIM);
+  }
+  // N1 (gas producer) window at the bottom.
+  const w = F * (simple ? 0.76 : 0.7);
+  const h = F * (simple ? 0.28 : 0.2);
+  roundRect(c, cx - w / 2, cy + F * (simple ? 0.42 : 0.38), w, h, h * 0.18);
+  c.fillStyle = '#050505';
+  c.fill();
+  c.strokeStyle = '#3a3b3e';
+  c.lineWidth = F * 0.015;
+  c.stroke();
+}
+
+/** Torquemeter (0–110 %, green to 85, yellow to the 100 % red line) with the gas producer N1 in a window. */
+export const drawTorque: GaugeDrawer = (ctx, cx, cy, size, r) => {
+  const s = sz(size);
+  if (!s || !Number.isFinite(cx) || !Number.isFinite(cy)) return;
+  const simple = isSimpleFace(s);
+  cachedFace(ctx, simple ? 'trqS' : 'trq', cx, cy, s, torqueFace);
+  const F = (s / 2) * 0.885;
+  const rot = r.rotor;
+  const n1 = clamp(fin(rot?.n1Pct ?? 0), 0, 120);
+  const h = F * (simple ? 0.28 : 0.2);
+  font(ctx, h * 0.72, 700, simple ? UI_FONT : DIAL_FONT);
+  text(ctx, `N1 ${n1.toFixed(simple ? 0 : 1)}`, cx, cy + F * (simple ? 0.42 : 0.38) + h * 0.53, n1 > HELI_MARKS.n1.red ? '#ff8a7e' : MARK);
+  needle(ctx, cx, cy, torqueNeedleDeg(rot?.torquePct ?? 0), F * 0.86, F * 0.22, F * 0.075);
+  hub(ctx, cx, cy, F * 0.09);
+  drawGlass(ctx, cx, cy, s);
+};
+
 /** The six-pack plus the tach, by name. */
 export const GAUGES: Record<'airspeed' | 'attitude' | 'altimeter' | 'turn' | 'heading' | 'vsi' | 'tach', GaugeDrawer> = {
   airspeed: drawAirspeed,
@@ -1195,14 +1382,150 @@ export const SYSTEM_CELLS: Record<'throttle' | 'flaps' | 'gear' | 'trim' | 'brak
   engine: { aspect: 2.0, draw: drawEngine },
 };
 
-const CELL_LIST = Object.values(SYSTEM_CELLS);
-/** Cells per row for the two-row layout: throttle · flaps · gear / trim · brakes · engine. */
-const ROWS2 = [CELL_LIST.slice(0, 3), CELL_LIST.slice(3)];
+/** A bar cell: label, value, a track with optional coloured zones (fractions of the track) and a fill. */
+function barCell(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, label: string, value: string, frac: number, valueColor = STRIP_VALUE, zones: readonly (readonly [number, number, string])[] = [], fill?: string): void {
+  const b = cellHeader(c, x, y, w, h, label, value, valueColor);
+  const th = b.bh * 0.55;
+  const ty = b.by + (b.bh - th) / 2;
+  track(c, b.bx, ty, b.bw, th);
+  for (const [a, z, col] of zones) {
+    const x0 = b.bx + b.bw * clamp(a, 0, 1);
+    const x1 = b.bx + b.bw * clamp(z, 0, 1);
+    if (x1 - x0 < 0.5) continue;
+    c.fillStyle = col;
+    c.fillRect(x0, ty + th * 0.7, x1 - x0, th * 0.3);
+  }
+  const f = clamp(fin(frac), 0, 1);
+  const fw = b.bw * f;
+  if (fw > 0.5) {
+    roundRect(c, b.bx, ty, Math.max(th, fw), th * 0.7, th * 0.3);
+    if (fill) c.fillStyle = fill;
+    else {
+      const g = c.createLinearGradient(b.bx, 0, b.bx + b.bw, 0);
+      g.addColorStop(0, '#3d8bd8');
+      g.addColorStop(1, '#8fd3ff');
+      c.fillStyle = g;
+    }
+    c.fill();
+  }
+}
+
+const ZONE_GREEN = 'rgba(47,191,87,0.85)';
+const ZONE_YELLOW = 'rgba(244,197,28,0.9)';
+const ZONE_RED = 'rgba(226,54,43,0.95)';
+const VAL_GREEN = '#7dffa0';
+const VAL_AMBER = '#ffd27a';
+const VAL_RED = '#ff8a7e';
+
+/** Helicopter: the collective lever, % (the throttle keys move it). */
+export const drawCollective: CellDrawer = (c, x, y, w, h, r) => {
+  if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const pct = clamp(fin(r.rotor?.collectivePct ?? r.throttlePct), 0, 100);
+  c.save();
+  barCell(c, x, y, w, h, 'COLLECTIVE', `${Math.round(pct)}%`, pct / 100);
+  c.restore();
+};
+
+/** Helicopter: engine torque, % of the transmission limit (green · yellow · red over 100). */
+export const drawTorqueCell: CellDrawer = (c, x, y, w, h, r) => {
+  if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const T = HELI_MARKS.torque;
+  const pct = clamp(fin(r.rotor?.torquePct ?? 0), 0, 150);
+  const color = pct > T.red ? VAL_RED : pct > T.greenHigh ? VAL_AMBER : STRIP_VALUE;
+  c.save();
+  barCell(c, x, y, w, h, 'TRQ', `${Math.round(pct)}%`, pct / T.max, color, [
+    [0, T.greenHigh / T.max, ZONE_GREEN],
+    [T.greenHigh / T.max, T.red / T.max, ZONE_YELLOW],
+    [T.red / T.max, 1, ZONE_RED],
+  ], pct > T.red ? VAL_RED : pct > T.greenHigh ? VAL_AMBER : undefined);
+  c.restore();
+};
+
+/** Helicopter: gas producer speed N1, %. */
+export const drawN1Cell: CellDrawer = (c, x, y, w, h, r) => {
+  if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const pct = clamp(fin(r.rotor?.n1Pct ?? 0), 0, 120);
+  c.save();
+  barCell(c, x, y, w, h, 'N1', `${Math.round(pct)}%`, pct / 110, pct > HELI_MARKS.n1.red ? VAL_RED : STRIP_VALUE, [[HELI_MARKS.n1.red / 110, 1, ZONE_RED]]);
+  c.restore();
+};
+
+/** Helicopter: rotor speed NR, % — the bar spans 80–110 % around the green band; red below it. */
+export const drawNrCell: CellDrawer = (c, x, y, w, h, r) => {
+  if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const M = HELI_MARKS.nr;
+  const pct = clamp(fin(r.rotor?.nrPct ?? 0), 0, 130);
+  const lo = 80;
+  const hi = 110;
+  const f = (v: number) => (v - lo) / (hi - lo);
+  const bad = pct < M.redLow + 5 || pct > M.redHigh;
+  const color = r.rotor?.lowRotorRpm || bad ? VAL_RED : pct >= M.greenLow && pct <= M.greenHigh ? VAL_GREEN : VAL_AMBER;
+  c.save();
+  barCell(c, x, y, w, h, 'NR', `${Math.round(pct)}%`, f(pct), color, [
+    [0, f(M.redLow), ZONE_RED],
+    [f(M.greenLow), f(M.greenHigh), ZONE_GREEN],
+    [f(M.redHigh), 1, ZONE_RED],
+  ], color);
+  c.restore();
+};
+
+/** Helicopter: stability assist lamp (K), and the skids (fixed gear: nothing to do). */
+export const drawSasCell: CellDrawer = (c, x, y, w, h, r) => {
+  if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const on = r.rotor ? r.rotor.sas : true;
+  c.save();
+  const pad = Math.max(2, h * 0.14);
+  const ph = h * 0.3;
+  const pw = w - pad * 2;
+  pill(c, x + pad, y + h * 0.14, pw, ph, on ? 'SAS ON' : 'SAS OFF', on ? 'green' : 'amber');
+  pill(c, x + pad, y + h * 0.56, pw, ph, 'SKIDS', 'off');
+  c.restore();
+};
+
+/** Helicopter engine cell: status lamp and the power-turbine speed. */
+export const drawHeliEngine: CellDrawer = (c, x, y, w, h, r) => {
+  if (!sz(w) || !sz(h) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const st = r.engineStatus;
+  const kind = st === 'RUNNING' ? 'green' : st === 'STARTING' ? 'amber' : st === 'FAILED' ? 'red' : 'off';
+  const word = st === 'RUNNING' ? 'RUN' : st === 'STARTING' ? 'START' : st === 'FAILED' ? 'FAIL' : 'OFF';
+  c.save();
+  const n2 = Math.round(clamp(fin(r.rotor?.n2Pct ?? 0), 0, 130));
+  const b = cellHeader(c, x, y, w, h, 'ENGINE', `${n2}%`);
+  const lr = Math.min(b.bh * 0.42, b.bw / 8);
+  lamp(c, b.bx + lr * 1.2, b.by + b.bh / 2, lr, kind);
+  font(c, h * 0.22, 800, UI_FONT);
+  text(c, word, b.bx + lr * 3, b.by + b.bh / 2 + h * 0.01, kind === 'red' ? VAL_RED : kind === 'off' ? STRIP_LABEL : STRIP_VALUE, 'left');
+  font(c, h * 0.16, 700, UI_FONT);
+  text(c, 'N2', b.bx + b.bw, b.by + b.bh / 2 + h * 0.01, STRIP_LABEL, 'right');
+  c.restore();
+};
+
+/** The helicopter's strip cells: no flaps, gear or brakes (skids), the rotor and engine instead. */
+export const HELI_SYSTEM_CELLS: Record<'collective' | 'torque' | 'n1' | 'nr' | 'sas' | 'engine', { aspect: number; draw: CellDrawer }> = {
+  collective: { aspect: 2.3, draw: drawCollective },
+  torque: { aspect: 1.8, draw: drawTorqueCell },
+  n1: { aspect: 1.5, draw: drawN1Cell },
+  nr: { aspect: 1.6, draw: drawNrCell },
+  sas: { aspect: 1.35, draw: drawSasCell },
+  engine: { aspect: 2.0, draw: drawHeliEngine },
+};
+
+/** Which set of strip cells: the fixed-wing one (throttle, flaps, gear…) or the helicopter's. */
+export type StripKind = 'fixed' | 'heli';
+
+type CellSpec = { aspect: number; draw: CellDrawer };
+const CELL_SETS: Record<StripKind, { one: CellSpec[]; two: CellSpec[][] }> = (() => {
+  const fixed = Object.values(SYSTEM_CELLS);
+  const heli = Object.values(HELI_SYSTEM_CELLS);
+  // Two rows of three: throttle · flaps · gear / trim · brakes · engine (collective · TRQ · N1 / NR · SAS · engine).
+  return { fixed: { one: fixed, two: [fixed.slice(0, 3), fixed.slice(3)] }, heli: { one: heli, two: [heli.slice(0, 3), heli.slice(3)] } };
+})();
 const aspectSum = (cells: { aspect: number }[]) => cells.reduce((s, k) => s + k.aspect, 0);
 
 /** Width of the strip for a cell height: one row, or two rows of three (the wider row sets the width). */
-export function systemsStripWidth(cellH: number, rows: 1 | 2 = 1): number {
-  const a = rows === 1 ? aspectSum(CELL_LIST) : Math.max(aspectSum(ROWS2[0]), aspectSum(ROWS2[1]));
+export function systemsStripWidth(cellH: number, rows: 1 | 2 = 1, kind: StripKind = 'fixed'): number {
+  const set = CELL_SETS[kind] ?? CELL_SETS.fixed;
+  const a = rows === 1 ? aspectSum(set.one) : Math.max(aspectSum(set.two[0]), aspectSum(set.two[1]));
   return a * sz(cellH);
 }
 
@@ -1210,11 +1533,12 @@ export function systemsStripWidth(cellH: number, rows: 1 | 2 = 1): number {
  * All system cells in x,y,w,h, sharing each row's width by aspect, with
  * hairline dividers: one row (default) or two rows of three.
  */
-export function drawSystemsStrip(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: InstrumentReadings, rows: 1 | 2 = 1): void {
+export function drawSystemsStrip(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: InstrumentReadings, rows: 1 | 2 = 1, kind: StripKind = 'fixed'): void {
   const W = sz(w);
   const H = sz(h);
   if (!W || !H || !Number.isFinite(x) || !Number.isFinite(y)) return;
-  const lines = rows === 2 ? ROWS2 : [CELL_LIST];
+  const set = CELL_SETS[kind] ?? CELL_SETS.fixed;
+  const lines = rows === 2 ? set.two : [set.one];
   const rh = H / lines.length;
   ctx.save();
   lines.forEach((cells, row) => {

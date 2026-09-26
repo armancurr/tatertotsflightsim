@@ -15,6 +15,8 @@ import { rms, goertzelAmplitude, dominantFrequency } from './analysis';
 import { firingFrequency } from './mapping';
 import { jetWhineHz } from './jetMapping';
 import { tf34WhistleHz } from './turbofanMapping';
+import { TURBOSHAFT, bladePassHz, compressorWhineHz } from './turboshaftMapping';
+import type { RotorAudioInputs } from './types';
 import type { CombatAudioFrame } from './combat';
 import type { AirAudioFrame } from './airTargets';
 import { airDoppler } from './airTargetsMapping';
@@ -188,6 +190,21 @@ const rotorAt = (hz: number) => (s: Float32Array, sr: number) => {
 const JET_IDLE: Partial<AudioInputs> = { rpm: CONFIG.audio.jet.idleCorePct, power: 0.02, engineRunning: true, listenerDistanceM: 26, aft: 0.95 };
 const JET_MIL: Partial<AudioInputs> = { rpm: 100, power: 1, engineRunning: true, listenerDistanceM: 26, aft: 0.95 };
 const JET_AB: Partial<AudioInputs> = { ...JET_MIL, afterburner: 1 };
+/** JetRanger rotor states (physical units, as createAudioInputTracker makes them from AircraftState.rotor). */
+const ROTOR_HOVER: RotorAudioInputs = {
+  nrRpm: TURBOSHAFT.nominalNrRpm, n1: 0.9, enginePowerW: 175000, torque: 0.78, thrustN: 12700, tailThrustN: 740, collective: 0.55,
+  vrs: 0, bladeStall: 0, groundEffect: 0.1, climbMs: 0, decelMs2: 0,
+};
+const HELI_HOVER: Partial<AudioInputs> = { rpm: TURBOSHAFT.nominalNrRpm, power: 0.74, engineRunning: true, onGround: false, listenerDistanceM: 20, aft: 0.7, rotor: ROTOR_HOVER };
+const HELI_GROUND_IDLE: Partial<AudioInputs> = {
+  ...HELI_HOVER, onGround: true, power: 0.12,
+  rotor: { ...ROTOR_HOVER, n1: 0.7, enginePowerW: 28000, torque: 0.12, thrustN: 1500, tailThrustN: 120, collective: 0, groundEffect: 1 },
+};
+/** A 500 fpm descent at 60 kt: blade–vortex interaction, the slap you hear from miles away. */
+const HELI_BVI: Partial<AudioInputs> = { ...HELI_HOVER, airspeedKt: 60, power: 0.4, rotor: { ...ROTOR_HOVER, enginePowerW: 95000, torque: 0.42, thrustN: 12200, climbMs: -3 } };
+/** The rotor horn alone (rotor stopped, engine off) so it can be measured without the rest of the helicopter. */
+const HORN_ONLY: Partial<AudioInputs> = { lowRotorRpm: true, onGround: false, airspeedKt: 0, cameraMode: 'cockpit' };
+
 const CRASH_FROM: Partial<AudioInputs> = { rpm: 2500, power: 0.9, engineRunning: true, onGround: false, airspeedKt: 90 };
 
 export const SCENARIOS: Scenario[] = [
@@ -272,6 +289,42 @@ export const SCENARIOS: Scenario[] = [
   { name: 'turbofan idle', engine: 'turbofan', base: JET_IDLE, check: whistleAt(tf34WhistleHz(CONFIG.audio.turbofan.idleCorePct)) },
   { name: 'turbofan 100 %', engine: 'turbofan', base: JET_MIL, check: whistleAt(tf34WhistleHz(100)) },
   { name: 'turbofan 100 %, cockpit', engine: 'turbofan', base: { ...JET_MIL, cameraMode: 'cockpit', airspeedKt: 300, onGround: false }, check: audible() },
+  // ── Bell 206 JetRanger: Allison 250 turboshaft + rotors (chase camera 20 m behind) ──
+  { name: 'turboshaft hover (rotor)', engine: 'turboshaft', base: HELI_HOVER, check: rotorAt(bladePassHz(TURBOSHAFT.nominalNrRpm)) },
+  { name: 'turboshaft ground idle, flat pitch (turbine whine)', engine: 'turboshaft', base: HELI_GROUND_IDLE, check: whineAt(compressorWhineHz(0.7)) },
+  { name: 'turboshaft descent, blade slap (BVI)', engine: 'turboshaft', base: HELI_BVI, check: rotorAt(bladePassHz(TURBOSHAFT.nominalNrRpm)) },
+  { name: 'turboshaft hover, cockpit', engine: 'turboshaft', base: { ...HELI_HOVER, cameraMode: 'cockpit' }, check: audible() },
+  {
+    name: 'turboshaft start (starter, light-off, spool-up)', engine: 'turboshaft', tick: 0.05, seconds: 2.5, window: [0, 2.5],
+    base: { starting: true, rotor: { ...ROTOR_HOVER, nrRpm: 0, n1: 0.05, enginePowerW: 0, torque: 0, thrustN: 0, tailThrustN: 0, collective: 0 } },
+    events: [0.3, 0.6, 0.9, 1.2, 1.5, 1.8].map((at, k): TimedInputs => ({
+      at, inputs: { rotor: { ...ROTOR_HOVER, nrRpm: 20 * k, n1: 0.1 + 0.08 * k, enginePowerW: 6000 * k, torque: 0.03 * k, thrustN: 0, tailThrustN: 0, collective: 0 } },
+    })),
+    check: (s, sr, _all, lv) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const early = win(0.05, 0.3);
+      const late = win(1.9, 2.4);
+      return { ok: early > 1e-3 && late > early && lv.oneShots >= 1, detail: `cranking ${fmtDb(early)}, spooling ${fmtDb(late)}, ${lv.oneShots} light-off` };
+    },
+  },
+  {
+    name: 'low rotor RPM horn (cockpit)', engine: 'turboshaft', base: HORN_ONLY,
+    check: (s, sr) => {
+      const f = dominantFrequency(s, sr, 300, 3000, 5);
+      // Steady (not beeped like the gear horn): 40 ms windows stay within a factor of 2.
+      const win = Math.round(0.04 * sr);
+      let lo = Infinity;
+      let hi = 0;
+      for (let i = 0; i + win <= s.length; i += win) {
+        const r = rms(s.subarray(i, i + win));
+        lo = Math.min(lo, r);
+        hi = Math.max(hi, r);
+      }
+      const want = TURBOSHAFT.hornHz;
+      const ok = Math.abs(f - want) < want * 0.06 && hi > 5e-3 && hi < lo * 2;
+      return { ok, detail: `peak ${f} Hz (want ${want}), steady rms ${lo.toFixed(4)}…${hi.toFixed(4)}, ${fmtDb(rms(s))}` };
+    },
+  },
   // ── Combat: the gun, explosions, missiles ──
   { name: 'GAU-8/A burst (outside, 30 m)', base: {}, combat: GAU8, tick: 0.05, window: [0.4, 2], check: fundamentalAt(65) },
   { name: 'GAU-8/A burst (cockpit)', base: { cameraMode: 'cockpit' }, combat: { ...GAU8, cockpit: true }, tick: 0.05, window: [0.4, 2], check: fundamentalAt(65) },
@@ -354,6 +407,11 @@ export function mixChecks(r: SelfTestResult[]): SelfTestResult[] {
   rel('mix: the GAU-8 is heavier than the M61', 'M61A1 burst (outside, 30 m)', 'GAU-8/A burst (outside, 30 m)', -1);
   rel('mix: a MiG 2.5 km away is far quieter than at 300 m', 'MiG-29 2.5 km away', 'MiG-29 300 m, closing at 120 m/s (Doppler-shifted whine)', 12);
   rel('mix: a MiG passing 300 m away is no louder than our own jet', 'MiG-29 300 m, closing at 120 m/s (Doppler-shifted whine)', 'jet MIL (100 %)', 0);
+  rel('mix: JetRanger ground idle < hover', 'turboshaft ground idle, flat pitch (turbine whine)', 'turboshaft hover (rotor)', 2);
+  rel('mix: blade slap is louder than the hover', 'turboshaft hover (rotor)', 'turboshaft descent, blade slap (BVI)', 1.5);
+  rel('mix: the JetRanger is about as loud as the Cessna at full power', 'piston full power 2700 rpm', 'turboshaft hover (rotor)', -6, 6);
+  rel('mix: the F-16 at MIL is louder than the JetRanger', 'turboshaft hover (rotor)', 'jet MIL (100 %)', 2);
+  rel('mix: the rotor horn is audible over the JetRanger cabin', 'turboshaft hover, cockpit', 'low rotor RPM horn (cockpit)', -12, 10);
   const maxPeak = Math.max(...r.map((x) => x.peak));
   out.push({ name: 'mix: nothing clips (limiter + soft clipper)', rms: 0, db: db(maxPeak), peak: maxPeak, ok: maxPeak <= 0.99, detail: `max peak ${maxPeak.toFixed(3)} (${fmtDb(maxPeak)})` });
   return out;

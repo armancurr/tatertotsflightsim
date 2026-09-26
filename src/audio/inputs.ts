@@ -2,10 +2,13 @@
  * PURE adapter: AircraftState (+ controls, camera) → AudioInputs, with the edge detection the
  * sound engine needs (touchdown once per record, gear/flap motors while the surfaces travel,
  * Doppler closing speed from the camera's motion). Keep one tracker per app; call it every frame.
+ * Helicopters (state.rotor present): the rotor/turboshaft fields for the 'turboshaft' voice and the
+ * low rotor RPM horn; the fixed-wing stall and gear horns stay silent.
  */
 import { CONFIG, MS_TO_KT } from '../config';
 import type { AircraftState, CameraMode, Controls, SurfaceType, Vec3 } from '../types';
-import type { AudioInputs } from './types';
+import type { AudioInputs, RotorAudioInputs } from './types';
+import { lowRotorRpmHorn, rotorPct } from './turboshaftMapping';
 import { gearWarning as gearWarningOf } from '../ui/gearWarning';
 import { gearStateFromPos } from '../ui/instruments';
 import { qRotate } from '../math/quat';
@@ -35,6 +38,10 @@ const DEG = Math.PI / 180;
 const TELEPORT_M = 60;
 const CLOSING_TAU = 0.15;
 const TAIL = { x: 0, y: 0, z: 1 };
+/** Smoothing of the helicopter's deceleration (flare) for the blade-slap model, s. */
+const DECEL_TAU = 0.5;
+const RAD_S_TO_RPM = 60 / (2 * Math.PI);
+const clampTo = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, f(v)));
 
 export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => AudioInputs {
   let first = true;
@@ -48,12 +55,20 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
   let closing = 0;
   let lastSpeedBrake: boolean | null = null;
   let speedBrakeTimer = 0;
+  // Helicopters: reused rotor inputs, the smoothed deceleration and the horn's hysteresis.
+  const rotor: RotorAudioInputs = {
+    nrRpm: 0, n1: 0, enginePowerW: 0, torque: 0, thrustN: 0, tailThrustN: 0, collective: 0, vrs: 0, bladeStall: 0,
+    groundEffect: 0, climbMs: 0, decelMs2: 0,
+  };
+  let lastHs = Number.NaN;
+  let decel = 0;
+  let rotorHorn = false;
   // Reused output object: no per-frame allocation. Callers must not keep it across frames.
   const out: AudioInputs = {
     rpm: 0, power: 0, engineRunning: false, starting: false, airspeedKt: 0, onGround: true, groundSpeedKt: 0,
     stallWarning: false, gearMoving: false, flapsMoving: false, touchdownFpm: null, crashed: false,
     cameraMode: 'chase', paused: false, brake: 0, surface: 'runway', gearWarning: false,
-    afterburner: 0, speedBrakeMoving: false, aft: 0,
+    afterburner: 0, speedBrakeMoving: false, aft: 0, rotor: undefined, lowRotorRpm: false,
   };
 
   return (s) => {
@@ -139,17 +154,50 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
       hasLastCam = false;
     }
 
-    first = false;
     const crashed = st.phase === 'crashed';
+
+    // Helicopter: rotor, drivetrain and turboshaft (physical units; turboshaftMapping.ts makes the sound).
+    const r = st.rotor;
+    if (r) {
+      const hs = Math.hypot(f(st.velocity.x), f(st.velocity.z));
+      if (!first && Number.isFinite(lastHs) && dt > 0) {
+        const k = 1 - Math.exp(-dt / DECEL_TAU);
+        decel += ((lastHs - hs) / dt - decel) * k;
+        if (!Number.isFinite(decel)) decel = 0;
+      } else {
+        decel = 0;
+      }
+      lastHs = hs;
+      rotor.nrRpm = clampTo(f(r.omega) * RAD_S_TO_RPM, 0, 2000);
+      rotor.n1 = clampTo(r.n1, 0, 1.5);
+      rotor.enginePowerW = clampTo(r.enginePower, 0, 1e7);
+      rotor.torque = clampTo(r.torque, 0, 5);
+      rotor.thrustN = clampTo(r.thrust, -1e6, 1e6);
+      rotor.tailThrustN = clampTo(r.tailThrust, -1e6, 1e6);
+      rotor.collective = clampTo(r.collective, 0, 1);
+      rotor.vrs = clampTo(r.vrs, 0, 1);
+      rotor.bladeStall = clampTo(r.bladeStall, 0, 1);
+      rotor.groundEffect = clampTo(r.groundEffect, 0, 1);
+      rotor.climbMs = clampTo(st.velocity.y, -300, 300);
+      rotor.decelMs2 = clampTo(decel, -100, 100);
+      rotorHorn = lowRotorRpmHorn(rotorPct(rotor.nrRpm), !!st.onGround, rotor.collective, !!st.engine.running, crashed, rotorHorn);
+    } else {
+      lastHs = Number.NaN;
+      decel = 0;
+      rotorHorn = false;
+    }
+
+    first = false;
     const gearHorn =
-      s.gearWarning ??
+      !r &&
+      (s.gearWarning ??
       gearWarningOf(
         {
           onGround: !!st.onGround, crashed, gear: gearStateFromPos(gp), handleDown: s.controls.gearDown !== false,
           throttlePct: f(s.controls.throttle) * 100, flapsDeg: fd, iasKt,
         },
         cfg,
-      ).horn;
+      ).horn);
     out.rpm = Math.min(1e5, Math.max(0, f(st.engine.rpm)));
     out.power = Math.max(0, Math.min(1, f(st.engine.power)));
     out.engineRunning = !!st.engine.running;
@@ -157,7 +205,7 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
     out.airspeedKt = iasKt;
     out.onGround = !!st.onGround;
     out.groundSpeedKt = kt(d.groundSpeed);
-    out.stallWarning = !!stallWarning;
+    out.stallWarning = !!stallWarning && !r; // a helicopter has no stall-warning vane
     out.gearMoving = gearMoving;
     out.flapsMoving = flapsMoving;
     out.touchdownFpm = touchdownFpm;
@@ -173,6 +221,8 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
     out.afterburner = Math.max(0, Math.min(1, f(st.engine.afterburner ?? 0)));
     out.speedBrakeMoving = speedBrakeTimer > 0;
     out.aft = aft;
+    out.rotor = r ? rotor : undefined;
+    out.lowRotorRpm = rotorHorn;
     return out;
   };
 }

@@ -1,7 +1,8 @@
 /**
  * The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state
  * machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config
- * passed to step() selects the airframe, the engine type (piston / jet) and fly-by-wire.
+ * passed to step() selects the airframe, the engine type (piston / jet) and fly-by-wire, or, for a
+ * helicopter (`rotorcraft`), the rotor model in ./rotor.ts in place of the wing and engine.
  * Pure and deterministic: step() never mutates its inputs and never touches the renderer or the DOM.
  *
  * ─── Calibration: Cessna 172RG (1100 kg, ISA, no wind; fixed 1/120 s step) ───
@@ -123,7 +124,31 @@
  *   RTO at 130 KIAS (idle + max braking)       abort at 683 m, stops at 1,401 m      on the runway
  *   Full aft column at 280 KIAS                > 3.75 g → structural failure         2.5 g limit, 3.75 ultimate
  *
- *   step() cost (M2 Max, node): C172 ~1.6 µs, C172 spinning (strips) ~4 µs, F-16 with FBW ~5 µs   ≪ 0.1 ms
+ * ─── Calibration: Bell 206B-3 JetRanger III (1,300 kg; Allison 250-C20J, 317 shp take-off limit; ISA) ───
+ * A helicopter: `rotorcraft` config → src/physics/rotor.ts replaces the wing and the engine (see its header).
+ * Checked by tests/physics/b206.test.ts, b206-fuzz.test.ts.
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Hover OGE, sea level                       266 shp (84 % torque), collective 0.43   ~85 % torque at mid weights
+ *   Hover attitude                             nose +3.7°, left skid low 3.1°, left pedal 0.43   nose up, left skid low
+ *   Hover at 5 ft skid height (Hayden)         76 % torque (−10 % from OGE)          5–20 %
+ *   Translational lift: 25 kt                  187 shp (−30 % from the hover)        big drop by ETL (15–25 kt)
+ *   Power bucket (Vy)                          152 shp at 50 kt                      Vy 52 kt
+ *   Top speed, 317 shp / 270 shp (MCP)         116 / 106 KTAS                        ~115 kt max cruise, Vne 130
+ *   Cruise 100 kt                              245 shp, nose −1.5°, pedals ~neutral (the fin carries the tail)
+ *   HOGE ceiling on 317 shp: 1,451 kg / 1,300 kg   4,750 ft / 11,500 ft              MGW HOGE ~5,000 ft
+ *   Autorotation 52 kt, collective down        ~1,700 fpm, NR 107 % (raise it a touch)  ~1,500–1,800 fpm, NR 90–107 %
+ *   Autorotation flare + cushion               touchdown < 360 fpm, rotor ~100 % at the flare
+ *   Vortex ring state                          collective −0.12 in the hover → 1,000+ fpm and VRS in ~3 s; more
+ *                                              collective droops the rotor; forward cyclic exits in ~5 s (< 500 ft)
+ *   Torque reaction                            +0.1 collective, pedals fixed: nose right > 10° in 2 s
+ *   Stability assist: hover drift / cruise     < 2 m in 30 s / Δhdg < 2°, Δalt < 50 ft in 30 s hands-off
+ *   Hover pedal turn                           ~40 °/s, stops within 15°
+ *   Engine off on the ground / restart         NR 100 → ~60 % in 20 s / back to 100 % ≤ 100 % torque
+ *   Skids: hard landing / dynamic roll-over    > 600 fpm collapses them / a skid-pinned lift-off → main rotor strike
+ *
+ *   step() cost (M2 Max, node): C172 ~1.6 µs, C172 spinning (strips) ~4 µs, F-16 with FBW ~5 µs, JetRanger ~2.2 µs   ≪ 0.1 ms
  */
 import { CONFIG, MS_TO_FPM, MS_TO_KT, type Config } from '../config';
 import type {
@@ -144,6 +169,7 @@ import { groundContacts } from './ground';
 import { FLAT_ENV } from './flatEnv';
 import { solveTrim, type TrimRequest } from './trim';
 import { gunRecoil } from './recoil';
+import { initialRotorState, solveRotorTrim, stepRotorcraft, trimmedRotorState } from './rotor';
 
 const DEG = Math.PI / 180;
 const ZERO: Vec3 = Object.freeze({ x: 0, y: 0, z: 0 });
@@ -165,6 +191,7 @@ export function defaultControls(): Controls {
     engineOn: true,
     speedBrake: false,
     trigger: false,
+    stabilityAssist: true,
   };
 }
 
@@ -185,6 +212,7 @@ function sanitize(c: Controls, cfg: Config): Controls {
     parkingBrake: !!c.parkingBrake,
     engineOn: c.engineOn !== false,
     speedBrake: c.speedBrake === true,
+    stabilityAssist: c.stabilityAssist !== false,
   };
 }
 
@@ -256,6 +284,7 @@ const windAt = (env: Environment, p: Vec3, t: number): Vec3 => (env.wind ? env.w
  */
 export function createInitialState(env: Environment = FLAT_ENV, cfg: Config = CONFIG, runway?: RunwayFrame | null): AircraftState {
   const ac = cfg.aircraft;
+  if (ac.rotorcraft) return createInitialRotorcraftState(env, cfg, runway ?? runwayFrame(cfg));
   const geo = ac.geometry;
   const gd = ac.ground;
   const rw = runway ?? runwayFrame(cfg);
@@ -314,6 +343,100 @@ export function createInitialState(env: Environment = FLAT_ENV, cfg: Config = CO
   };
 }
 
+/**
+ * A helicopter on the ground: skids level on the surface, sagging under their share of the weight,
+ * rotor turning at 100 % with the collective down (engine running, governed).
+ */
+function createInitialRotorcraftState(env: Environment, cfg: Config, rw: RunwayFrame): AircraftState {
+  const ac = cfg.aircraft;
+  const sk = ac.rotorcraft!.skids;
+  const aft = Math.max(...sk.points.map((p) => p.z));
+  const cgXZ = fromRunwayCoords(ac.spawn.runwayStartOffset + aft, 0, rw);
+  const heading = rw.headingDeg;
+  const rotor = initialRotorState(cfg, heading);
+  const W = ac.mass * cfg.sim.gravity - rotor.thrust;
+  const d = W / sk.points.length / sk.spring;
+  const qLevel = quatFromEuler(heading, 0, 0);
+  const ground = Math.max(
+    ...sk.points.map((b) => {
+      const r = bodyToWorld(qLevel, b);
+      return env.groundHeight(cgXZ.x + r.x, cgXZ.z + r.z);
+    }),
+  );
+  const position = { x: cgXZ.x, y: ground - sk.points[0].y - d, z: cgXZ.z };
+  const engine: EngineState = {
+    running: true, starting: false, startTimer: 0, failed: false,
+    power: rotor.enginePower / ac.rotorcraft!.engine.transmissionLimitW,
+    rpm: ac.rotorcraft!.rotor.nominalRpm, thrust: rotor.thrust, afterburner: 0,
+  };
+  return {
+    time: 0,
+    position,
+    velocity: { x: 0, y: 0, z: 0 },
+    orientation: qLevel,
+    angularVelocity: { x: 0, y: 0, z: 0 },
+    engine,
+    flapsDeg: 0,
+    gearPos: 1,
+    phase: 'ground',
+    stalled: false,
+    onGround: true,
+    wheelContact: [true, true, true],
+    wheelCompression: [d, d, d],
+    airborneTime: 0,
+    touchdown: null,
+    crash: null,
+    derived: computeDerived(position, ZERO, qLevel, ZERO, windAt(env, position, 0), 1, env, cfg),
+    rotor,
+  };
+}
+
+/** A helicopter in steady trimmed flight (0 kt = a hover), with the stability assist holding it. */
+function createTrimmedRotorcraftState(req: TrimRequest, env: Environment, cfg: Config): { state: AircraftState; controls: Controls } {
+  const ac = cfg.aircraft;
+  const heading = req.headingDeg ?? 0;
+  // Trim in ground effect when spawned low (the hub's height over the surface, level attitude).
+  const px = req.x ?? 0;
+  const pz = req.z ?? 0;
+  const water = env.waterLevel(px, pz);
+  const surface = Math.max(env.groundHeight(px, pz), water ?? -Infinity);
+  const tr = solveRotorTrim(req, cfg, req.altitudeM + ac.rotorcraft!.rotor.hub.y - surface);
+  const gamma = (req.flightPathDeg ?? 0) * DEG;
+  const h = heading * DEG;
+  const position = { x: req.x ?? 0, y: req.altitudeM, z: req.z ?? 0 };
+  const wind = windAt(env, position, 0);
+  const vh = tr.tas * Math.cos(gamma);
+  const velocity = { x: Math.sin(h) * vh + wind.x, y: tr.tas * Math.sin(gamma) + wind.y, z: -Math.cos(h) * vh + wind.z };
+  const orientation = quatFromEuler(heading, tr.pitchDeg, tr.rollDeg);
+  const { rotor, pilot } = trimmedRotorState(tr, heading, cfg);
+  const engine: EngineState = {
+    running: true, starting: false, startTimer: 0, failed: false,
+    power: tr.power / ac.rotorcraft!.engine.transmissionLimitW,
+    rpm: ac.rotorcraft!.rotor.nominalRpm, thrust: tr.thrust, afterburner: 0,
+  };
+  const state: AircraftState = {
+    time: 0,
+    position,
+    velocity,
+    orientation,
+    angularVelocity: { x: 0, y: 0, z: 0 },
+    engine,
+    flapsDeg: 0,
+    gearPos: 1,
+    phase: 'airborne',
+    stalled: false,
+    onGround: false,
+    wheelContact: [false, false, false],
+    wheelCompression: [0, 0, 0],
+    airborneTime: 60,
+    touchdown: null,
+    crash: null,
+    derived: computeDerived(position, velocity, orientation, ZERO, wind, 1, env, cfg),
+    rotor,
+  };
+  return { state, controls: { ...defaultControls(), ...pilot } };
+}
+
 /** Controls that hold a trim solution (throttle + elevator trim, elevator 0). */
 function controlsFor(req: TrimRequest, tr: ReturnType<typeof solveTrim>): Controls {
   return {
@@ -334,6 +457,7 @@ export function createTrimmedState(
   env: Environment = FLAT_ENV,
   cfg: Config = CONFIG,
 ): { state: AircraftState; controls: Controls } {
+  if (cfg.aircraft.rotorcraft) return createTrimmedRotorcraftState(req, env, cfg);
   const tr = solveTrim(req, cfg);
   const heading = req.headingDeg ?? 0;
   const gamma = (req.flightPathDeg ?? 0) * DEG;
@@ -392,6 +516,7 @@ export function createApproachState(env: Environment = FLAT_ENV, cfg: Config = C
 /** Controls matching createApproachState: gear down, approach flaps, throttle + trim that hold the glide hands-off. */
 export function approachControls(cfg: Config = CONFIG): Controls {
   const req = approachRequest(cfg.world.airport.elevation, cfg);
+  if (cfg.aircraft.rotorcraft) return createTrimmedRotorcraftState(req, FLAT_ENV, cfg).controls;
   return controlsFor(req, solveTrim(req, cfg));
 }
 
@@ -418,6 +543,7 @@ function crashedState(
     orientation: { ...s.orientation },
     angularVelocity: { x: 0, y: 0, z: 0 },
     engine: { running: false, starting: false, startTimer: 0, failed: true, power: 0, rpm: 0, thrust: 0, afterburner: 0 },
+    ...(s.rotor ? { rotor: { ...s.rotor, omega: 0, thrust: 0, tailThrust: 0, enginePower: 0, n1: 0, torque: 0, vrs: 0, bladeStall: 0 } } : {}),
     phase: 'crashed',
     stalled: false,
     crash,
@@ -477,18 +603,30 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // for gear.retractDelay s, so a handle raised during the takeoff roll or a skipped bounce can't
   // fold the gear under a settling aircraft (play-test bug #2).
   const weightOnWheels = state.onGround || state.airborneTime < ac.gear.retractDelay;
-  const gearTarget = c.gearDown || (ac.gear.squatSwitch && weightOnWheels && state.gearPos >= 0.999) ? 1 : 0;
+  const gearTarget = !ac.gear.retractable || c.gearDown || (ac.gear.squatSwitch && weightOnWheels && state.gearPos >= 0.999) ? 1 : 0;
   const gearPos = moveToward(state.gearPos, gearTarget, dt / ac.gear.transitTime);
-  const engine =
-    ac.engine.type === 'jet'
-      ? stepJetEngine(state.engine, c, dt, rho, mach, iasKt, cfg)
-      : stepEngine(state.engine, c, dt, rho, Math.max(0, ad.u), iasKt, cfg);
-
   // ── Airframe forces (body) ──
-  // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
-  const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
-  const groundSpoilers = groundSpoilerExtension(state, c, cfg);
-  const aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0, groundSpoilers });
+  let engine: EngineState;
+  let aero: { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number };
+  let rotor: AircraftState['rotor'];
+  if (ac.rotorcraft) {
+    // Helicopter: rotors, airframe, drivetrain and turboshaft (./rotor). Hub height over the surface
+    // (last step's AGL is plenty accurate) for the ground effect.
+    const hubHeight = state.derived.altitudeAGL + bodyToWorld(q, ac.rotorcraft.rotor.hub).y;
+    const hs = stepRotorcraft(state, pilot, vb, rho, hubHeight, dt, cfg);
+    engine = hs.engine;
+    rotor = hs.rotor;
+    aero = { fx: hs.force.x, fy: hs.force.y, fz: hs.force.z, tx: hs.torque.x, ty: hs.torque.y, tz: hs.torque.z };
+  } else {
+    engine =
+      ac.engine.type === 'jet'
+        ? stepJetEngine(state.engine, c, dt, rho, mach, iasKt, cfg)
+        : stepEngine(state.engine, c, dt, rho, Math.max(0, ad.u), iasKt, cfg);
+    // Wing height above the surface (last step's AGL is plenty accurate) for ground effect.
+    const wingHeight = state.derived.altitudeAGL + ac.geometry.wingRootLeadingEdge.y;
+    const groundSpoilers = groundSpoilerExtension(state, c, cfg);
+    aero = computeAero(vb, w, rho, flapsDeg, gearPos, c, engine.thrust, cfg, wingHeight, { mach, speedBrake: c.speedBrake ? 1 : 0, groundSpoilers });
+  }
   // Gun recoil while rounds are leaving the barrel (set by the weapons system; see ./recoil).
   const gun = gunRecoil(raw.gunFiring, cfg);
   const fAir = bodyToWorld(q, { x: aero.fx + gun.fx, y: aero.fy + gun.fy, z: aero.fz + gun.fz });
@@ -496,7 +634,7 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // ── Ground, structure, water, obstacles ──
   const omegaWorld = bodyToWorld(q, w);
   const gr = groundContacts(
-    { position: pos, velocity: vel, orientation: q, omegaWorld, gearPos, brake: c.brake, parkingBrake: c.parkingBrake, rudder: pilot.rudder, engineRunning: engine.running },
+    { position: pos, velocity: vel, orientation: q, omegaWorld, gearPos, brake: c.brake, parkingBrake: c.parkingBrake, rudder: pilot.rudder, engineRunning: engine.running, skidAnchors: state.rotor?.skidAnchors },
     env,
     cfg,
   );
@@ -511,16 +649,18 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
       const vsFpm = vel.y * MS_TO_FPM;
       const lim = ac.landing;
       if (-vsFpm > lim.hardFpm) {
-        const reason = -vel.y > lim.terrainImpactMs ? 'Hit terrain' : 'Hard landing — gear collapsed';
+        const reason = -vel.y > lim.terrainImpactMs ? 'Hit terrain' : ac.rotorcraft ? 'Hard landing — skids collapsed' : 'Hard landing — gear collapsed';
         return crashedState(state, reason, time, env, cfg, { flapsDeg, gearPos });
       }
       if (state.airborneTime >= lim.minAirborneTime) {
         const e = eulerFromQuat(q);
         if (Math.abs(e.rollDeg) > lim.maxBankDeg) {
-          return crashedState(state, 'Wingtip strike — too much bank at touchdown', time, env, cfg, { flapsDeg, gearPos });
+          const why = ac.rotorcraft ? 'Rolled over — too much bank at touchdown' : 'Wingtip strike — too much bank at touchdown';
+          return crashedState(state, why, time, env, cfg, { flapsDeg, gearPos });
         }
         if (e.pitchDeg < lim.minPitchDeg) {
-          return crashedState(state, 'Prop strike — landed nose-first', time, env, cfg, { flapsDeg, gearPos });
+          const why = ac.rotorcraft ? 'Nosed over — landed on the skid toes' : 'Prop strike — landed nose-first';
+          return crashedState(state, why, time, env, cfg, { flapsDeg, gearPos });
         }
         const surface = env.surfaceAt(pos.x, pos.z);
         const onRunway = surface === 'runway';
@@ -576,7 +716,9 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   const gBody = worldToBody(q, gr.force);
   const loadFactor = (aero.fy + gun.fy + gBody.y) / (m * g);
   if (nAero > ac.limits.structuralFailureG || nAero < ac.limits.structuralFailureNegG) {
-    return crashedState(state, 'Structural failure — over-G', time, env, cfg, { flapsDeg, gearPos });
+    // A teetering rotor unloaded into negative g flaps into the mast.
+    const why = ac.rotorcraft && nAero < ac.limits.structuralFailureNegG ? 'Mast bumping — rotor separated in negative g' : 'Structural failure — over-G';
+    return crashedState(state, why, time, env, cfg, { flapsDeg, gearPos });
   }
   if (iasKt > ac.limits.vneKt * ac.limits.overspeedFailureFactor) {
     return crashedState(state, 'Structural failure — overspeed', time, env, cfg, { flapsDeg, gearPos });
@@ -587,7 +729,8 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
   // ── Stall flag with hysteresis (only meaningful in the air) ──
   const aStall = stallAlphaRad(flapsDeg, cfg);
   let stalled = false;
-  if (phase === 'airborne') {
+  // (A helicopter has no wing to stall: the rotor's blade stall is in state.rotor.)
+  if (phase === 'airborne' && !ac.rotorcraft) {
     stalled = state.stalled
       ? derived.alpha > aStall - ac.stall.recoveryHysteresisDeg * DEG
       : derived.alpha > aStall;
@@ -611,6 +754,7 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
     touchdown,
     crash: null,
     derived,
+    ...(rotor ? { rotor: { ...rotor, skidAnchors: gr.skidAnchors ?? rotor.skidAnchors } } : {}),
   };
 }
 

@@ -12,6 +12,8 @@
  *     the horn sounds: amber "GEAR — SQUAT SWITCH".
  *   • Gear overspeed: gear down above VLE, or in transit above VLO.
  *   • Lights: three greens down and locked, red in transit, off when up.
+ *   • Fixed gear (`gear.retractable === false`: skids, a fixed tricycle): nothing to warn about,
+ *     ever — no horn, no GEAR, no squat switch, no gear-speed limits.
  *
  * Total: NaN/±Infinity inputs give a defined answer (fuzz-tested).
  */
@@ -52,7 +54,7 @@ const num = (v: number, nanAs: number) => (Number.isNaN(v) ? nanAs : v);
 export function gearWarning(inp: GearWarningInput, cfg: Config = CONFIG): GearWarning {
   const gw = cfg.hud.gearWarning;
   const lights: GearWarning['lights'] = inp.gear === 'down' ? 'green' : inp.gear === 'transit' ? 'red' : 'off';
-  if (inp.crashed) return { horn: false, gearUnsafe: false, squatSwitch: false, overspeed: false, lights };
+  if (inp.crashed || cfg.aircraft.gear.retractable === false) return { horn: false, gearUnsafe: false, squatSwitch: false, overspeed: false, lights };
   const onGround = !!inp.onGround;
   const downLocked = inp.gear === 'down';
   // NaN throttle reads as full power and NaN flaps as up: never a false alarm from garbage.

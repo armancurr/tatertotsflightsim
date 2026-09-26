@@ -3,11 +3,12 @@
  * section in `src/config.ts` (same shape as `CONFIG.aircraft`), a model folder under
  * `src/aircraft/` with a factory returning an `AircraftModelHandle`, and one entry below.
  */
-import { CONFIG, F16_AIRCRAFT, F16_WEAPONS, A10_AIRCRAFT, A10_WEAPONS, B747_AIRCRAFT, type Config } from '../config';
+import { CONFIG, F16_AIRCRAFT, F16_WEAPONS, A10_AIRCRAFT, A10_WEAPONS, B747_AIRCRAFT, B206_AIRCRAFT, type Config } from '../config';
 import { createAircraft } from '../aircraft';
 import { createF16Model } from '../aircraft/f16';
 import { createA10Model } from '../aircraft/a10';
 import { createB747Model } from '../aircraft/b747';
+import { createB206Model } from '../aircraft/b206';
 import type { AircraftDef } from './types';
 
 export type { AircraftDef, AircraftModelHandle, BreakupPart, HudStyle, EngineSound } from './types';
@@ -88,8 +89,31 @@ const B747: AircraftDef = {
   createModel: () => createB747Model(),
 };
 
+const b206Config: Config = {
+  ...CONFIG,
+  aircraft: B206_AIRCRAFT,
+  // The collective wants finer keyboard steps than a throttle: ~5 s from bottom to top.
+  controls: { ...CONFIG.controls, throttleRate: 0.2 },
+  camera: {
+    ...CONFIG.camera,
+    chase: { ...CONFIG.camera.chase, distance: 20, height: 5 },
+    orbit: { ...CONFIG.camera.orbit, distance: 22 },
+  },
+};
+
+const B206: AircraftDef = {
+  id: 'b206',
+  name: 'Bell 206B-3 JetRanger III',
+  shortName: 'JetRanger',
+  description: 'Light turbine helicopter — collective, cyclic and pedals, a real rotor model. K toggles the stability assist.',
+  config: b206Config,
+  hud: 'steam',
+  sound: 'turboshaft',
+  createModel: () => createB206Model(),
+};
+
 /** In menu order. */
-export const FLEET: readonly AircraftDef[] = [C172, F16, A10, B747];
+export const FLEET: readonly AircraftDef[] = [C172, F16, A10, B747, B206];
 
 export const DEFAULT_AIRCRAFT_ID = C172.id;
 

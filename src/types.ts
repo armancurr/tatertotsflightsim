@@ -104,6 +104,11 @@ export interface Controls {
    * ammo left). The physics applies `cfg.weapons.gun.recoilN` at the muzzle while it is true.
    */
   gunFiring?: boolean;
+  /**
+   * Helicopters: the stability assist (attitude hold, heading hold, hover hold; K toggles it).
+   * Absent = on. Ignored by fixed-wing aircraft.
+   */
+  stabilityAssist?: boolean;
 }
 
 /**
@@ -195,6 +200,54 @@ export interface DerivedData {
   r: number;
 }
 
+/**
+ * Helicopter rotor, drivetrain and turboshaft state (src/physics/rotor.ts). Present only on aircraft
+ * with a `rotorcraft` config. On a helicopter `Controls.throttle` is the COLLECTIVE lever, elevator /
+ * aileron the cyclic and rudder the anti-torque pedals.
+ */
+export interface RotorState {
+  /** Main-rotor speed, rad/s (100 % NR = rotor.nominalRpm). The tail rotor turns at gearRatio × this. */
+  omega: number;
+  /** Main- and tail-rotor induced velocity (dynamic inflow), m/s. */
+  vi: number;
+  viTail: number;
+  /** Main- and tail-rotor thrust, N. */
+  thrust: number;
+  tailThrust: number;
+  /** Tip-path-plane tilt relative to the mast, rad: + aft (thrust tilted back), + right. */
+  flapLong: number;
+  flapLat: number;
+  /** Turboshaft: shaft power delivered, W; gas-producer speed N1, 0..~1.05; governor integrator, W. */
+  enginePower: number;
+  n1: number;
+  govInt: number;
+  /** Engine torque as a fraction of the transmission limit (1 = 100 % on the torquemeter). */
+  torque: number;
+  /** What actually moves the blades (after the stability assist): collective 0..1, cyclic ±1 (+ aft / + right), pedal ±1 (+ right). */
+  collective: number;
+  cyclicLong: number;
+  cyclicLat: number;
+  pedal: number;
+  /** Stability assist engaged this step, its integrators (control units) and the held heading, deg. */
+  sasOn: boolean;
+  sasLong: number;
+  sasLat: number;
+  sasYaw: number;
+  headingRef: number;
+  /** Hover hold's integrators: attitude trim it has learned to stop the drift (wind, tail-rotor drift), deg. */
+  hoverLong: number;
+  hoverLat: number;
+  /** Stick-slip friction: where each skid contact is stuck to the ground (world), null when not touching. */
+  skidAnchors: (Vec3 | null)[];
+  /** 0..1 vortex-ring-state intensity, 0..1 retreating-blade stall, 0..1 ground-effect strength. */
+  vrs: number;
+  bladeStall: number;
+  groundEffect: number;
+  /** Aerodynamic (rotors + airframe) body force this step, N: x right, y up (for the slip ball and g). */
+  fx: number;
+  fy: number;
+}
+
 export interface AircraftState {
   /** Seconds since the last reset. */
   time: number;
@@ -225,6 +278,8 @@ export interface AircraftState {
   touchdown: TouchdownRecord | null;
   crash: CrashRecord | null;
   derived: DerivedData;
+  /** Helicopters only: rotor, drivetrain and turboshaft state. */
+  rotor?: RotorState;
 }
 
 /** Everything the instruments/HUD need, already in display units. Produced by src/ui/instruments.ts. */
@@ -266,6 +321,31 @@ export interface InstrumentReadings {
   afterburner?: number;
   /** Which aircraft these readings belong to (fleet id). */
   aircraftId?: string;
+  /** Helicopters: rotor and turboshaft instruments. */
+  rotor?: RotorReadings;
+}
+
+/** Helicopter instruments (dual tach, torquemeter, N1, collective, warnings). */
+export interface RotorReadings {
+  /** Main-rotor speed, % of nominal (green 95–104 in flight on the real JetRanger's dual tach). */
+  nrPct: number;
+  /** Power-turbine speed, %: equals NR while the engine drives the rotor, falls away from it when the freewheel splits them. */
+  n2Pct: number;
+  /** Gas-producer speed, %. */
+  n1Pct: number;
+  /** Engine torque, % of the transmission limit. */
+  torquePct: number;
+  /** Collective lever, 0..100 %. */
+  collectivePct: number;
+  /** Stability assist engaged. */
+  sas: boolean;
+  /** Low rotor RPM warning (horn + light below 95 % NR, like the real one). */
+  lowRotorRpm: boolean;
+  /** Torque above 100 % (the 5-minute take-off limit). */
+  overTorque: boolean;
+  /** 0..1 vortex ring state, 0..1 retreating-blade stall (cues for the HUD and the sound). */
+  vrs: number;
+  bladeStall: number;
 }
 
 /** Shape of `window.sim` (read-only snapshot fields; see src/game/simApi.ts). */

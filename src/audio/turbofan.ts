@@ -10,6 +10,7 @@
  */
 import { CONFIG } from '../config';
 import type { AudioInputs, AudioLevels } from './types';
+import { zeroRotorLevels } from './turboshaftMapping';
 import { createBuilder, retireGraph, type EngineVoice, type VoiceFrame, type VoiceOutputs } from './builder';
 import { jetCorePct, jetDirectivity } from './jetMapping';
 import { tf34CoreHz, tf34FanPct, tf34WhistleHz, turbofanMix } from './turbofanMapping';
@@ -150,6 +151,7 @@ export function createTurbofanVoice(ctx: BaseAudioContext, out: VoiceOutputs, rn
       L.whistle = 0;
       L.gear = 0;
       L.flap = 0;
+      zeroRotorLevels(L);
       return 0;
     },
     retire(t, onGone) {

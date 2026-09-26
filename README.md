@@ -7,7 +7,8 @@
 [![CI](https://github.com/<owner>/tatertotsflightsim/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/tatertotsflightsim/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Fly a **Cessna 172RG**, an **F-16C**, an **A-10C Warthog** or a **Boeing 747-400** over a big
+Fly a **Cessna 172RG**, an **F-16C**, an **A-10C Warthog**, a **Boeing 747-400** or a **Bell 206
+JetRanger** helicopter over a big
 world of farmland, forests, rivers, towns, a coastline and snow-capped mountains. The flight
 physics are real, so you can stall, spin and crash (the aircraft breaks apart). The jets carry
 guns and missiles: bust tanks at the target range and shoot down enemy MiGs, Sukhois and Hind
@@ -74,9 +75,11 @@ another device on your network, run `npx vite --host 0.0.0.0`.
 | **F-16C Fighting Falcon** | A supersonic fighter. Fly-by-wire (9 g, 25° angle-of-attack limit, 300°/s rolls), afterburner, speed brake, jet HUD. Fast and unforgiving. | Rotates ~150 kt, lands ~145 kt, Mach 2 at 40,000 ft | M61A1 20 mm gun (511 rounds), 2 AGM-65 Mavericks, 2 AIM-9 Sidewinders |
 | **A-10C Thunderbolt II** "Warthog" | A slow, tough tank killer with a big straight wing and two slow-spooling turbofans. Split "deceleron" speed brakes; the gun's recoil slows the jet down. | Rotates ~120 kt, stalls ~116 kt, tops out ~370 kt | GAU-8/A 30 mm gun (1,150 rounds), 4 AGM-65 Mavericks, 2 AIM-9 Sidewinders |
 | **Boeing 747-400** | The "Queen of the Skies" in Tater Airways colours, flown light (~220 t) so it fits the 1,600 m runway. Four engines, 64 m of wing, 18 wheels, heavy and stately. A full glass flight deck (PFD, ND, EICAS) and an airliner-style on-screen display. | Rotates ~145 kt with flaps 10 after ~1 km, cruises Mach 0.85 at FL350, lands ~130 kt with flaps 30, limit 365 kt | Nothing |
+| **Bell 206B-3 JetRanger III** | A light turbine helicopter with a real rotor model: collective, cyclic and pedals, torque you counter with the pedals, translational lift, ground effect, autorotation with the engine off, vortex ring state, dynamic roll-over on the skids. A stability assist (<kbd>K</kbd>) holds attitude, heading and the hover for keyboard pilots; switch it off to fly the raw machine. Dual tach and torquemeter. | Hovers at ~85 % torque (~75 % in ground effect), best climb 52 kt, cruises ~110 kt, never exceed 130 kt; autorotates at ~1,700 fpm | Nothing |
 
-All four have a 6-degrees-of-freedom flight model tuned against published numbers (the
-calibration tables are at the top of `src/physics/aircraft.ts`).
+All five have a 6-degrees-of-freedom flight model tuned against published numbers (the
+calibration tables are at the top of `src/physics/aircraft.ts`; the helicopter's rotor model is
+`src/physics/rotor.ts`).
 
 ## What you can do
 
@@ -138,6 +141,19 @@ flaps as it accelerates, and fly it with small, early inputs. To land, Shift+R p
 with flaps 30; aim for about 130 knots over the threshold. The spoilers deploy by themselves on
 touchdown. Use the whole runway.
 
+**JetRanger.** It starts on the runway with the rotor turning and the collective (<kbd>W</kbd> /
+<kbd>S</kbd>) down. Raise the collective slowly until it lifts to a low hover (about 40 %; the
+torque reads ~75 % in ground effect), then nudge the cyclic forward (<kbd>↑</kbd>): as it passes
+15–20 knots it gains translational lift and climbs. <kbd>A</kbd> / <kbd>D</kbd> are the pedals;
+more collective swings the nose right, as in the real one. With the stability assist on (the
+default) the cyclic sets the attitude and the helicopter holds it, and with the stick centred at
+low speed it holds the hover over the spot. To land, slow down to a hover and lower the collective
+gently. Things to try: shut the engine down with <kbd>E</kbd> at altitude and autorotate (collective
+down, 55 kt, keep the rotor under 107 % with a touch of collective, flare near the ground, cushion
+with the collective); descend straight down fast and
+feel the vortex ring state (fly out of it with forward cyclic, not more collective); press
+<kbd>K</kbd> and hover the raw machine.
+
 ### Combat (F-16 and A-10)
 
 The target range is **north of the airport**: take off from runway 36 and keep going. The **RANGE**
@@ -159,8 +175,8 @@ distance. To start right there, add `?aircraft=a10&spawn=range` to the address.
 | Pitch: nose down / nose up | <kbd>↑</kbd> / <kbd>↓</kbd> |
 | Roll left / right | <kbd>←</kbd> / <kbd>→</kbd> |
 | Rudder left / right (and nosewheel steering) | <kbd>A</kbd> / <kbd>D</kbd> |
-| Throttle up (past ~90 % lights the F-16's afterburner) | <kbd>W</kbd>, <kbd>Page Up</kbd>, <kbd>=</kbd>, <kbd>Numpad +</kbd> |
-| Throttle down | <kbd>S</kbd>, <kbd>Page Down</kbd>, <kbd>-</kbd>, <kbd>Numpad -</kbd> |
+| Throttle up (past ~90 % lights the F-16's afterburner; the collective on the helicopter) | <kbd>W</kbd>, <kbd>Page Up</kbd>, <kbd>=</kbd>, <kbd>Numpad +</kbd> |
+| Throttle down (collective down on the helicopter) | <kbd>S</kbd>, <kbd>Page Down</kbd>, <kbd>-</kbd>, <kbd>Numpad -</kbd> |
 | Flaps down / up, one notch at a time | <kbd>F</kbd> / <kbd>V</kbd> |
 | Landing gear up / down | <kbd>G</kbd> |
 | Wheel brakes (hold) / parking brake | <kbd>Space</kbd> / <kbd>B</kbd> |
@@ -168,7 +184,8 @@ distance. To start right there, add `?aircraft=a10&spawn=range` to the address.
 | Fire the gun (hold) | <kbd>Q</kbd>, <kbd>Enter</kbd> |
 | Lock a target / next target | <kbd>T</kbd> |
 | Fire a missile (Maverick at a vehicle, Sidewinder at an aircraft) | <kbd>Z</kbd> |
-| Elevator trim: nose down / nose up | <kbd>[</kbd> / <kbd>]</kbd> |
+| Elevator trim: nose down / nose up (helicopter: the pitch attitude it holds) | <kbd>[</kbd> / <kbd>]</kbd> |
+| Helicopter stability assist on / off | <kbd>K</kbd> |
 | Engine start / stop | <kbd>E</kbd> |
 | Landing light | <kbd>L</kbd> |
 | Next camera | <kbd>C</kbd> |
@@ -198,10 +215,10 @@ Add these to the address, for example `http://127.0.0.1:8092/?aircraft=f16&cam=c
 
 | Option | What it does |
 | --- | --- |
-| `aircraft=c172rg`, `f16`, `a10` or `b747` | Choose the aircraft |
+| `aircraft=c172rg`, `f16`, `a10`, `b747` or `b206` | Choose the aircraft |
 | `rwy=36`, `18`, `03` or `21` | Start (and reset) lined up on that runway end |
 | `spawn=range` | Start 4 km short of the target range at 1,500 ft, pointing at it |
-| `spawn=x,z,aglFt,headingDeg,speedKt` | Start airborne anywhere. `x` is metres east and `z` metres south of the airport |
+| `spawn=x,z,aglFt,headingDeg,speedKt` | Start airborne anywhere. `x` is metres east and `z` metres south of the airport (the helicopter can start in a hover: speed `0`) |
 | `cam=cockpit`, `chase`, `external` or `orbit` | Starting camera |
 | `tod=0` to `3` | Time of day: morning, midday, golden hour, dawn |
 | `pause=1` | Start paused |
@@ -311,7 +328,7 @@ src/
   types.ts       shared contracts and frame conventions (+X east, +Y up, +Z south)
   fleet/         the aircraft registry (add an aircraft here)
   physics/       pure, deterministic flight model: step(state, controls, dt, env)
-  aircraft/      procedural aircraft models and cockpits (Cessna at the top level; f16/, a10/, b747/)
+  aircraft/      procedural aircraft models and cockpits (Cessna at the top level; f16/, a10/, b747/, b206/)
   combat/        guns, arcade missiles, ground targets (targets/) and enemy aircraft (air/)
   world/         terrain, water, airport, roads, towns, trees, grass, cars, ships and air traffic
   game/          main loop, window.sim, and systems/ (one plug-in per feature)
@@ -345,7 +362,9 @@ Built with [Three.js](https://threejs.org) (WebGL2 rendering), [TypeScript](http
 [Vite](https://vite.dev) (dev server and build), [Vitest](https://vitest.dev) (tests),
 [fast-check](https://fast-check.dev) (property-based tests), [Playwright](https://playwright.dev)
 (browser automation) and [happy-dom](https://github.com/capricorn86/happy-dom) (DOM for unit
-tests). Aircraft data comes from public Cessna 172RG, F-16C, A-10C and Boeing 747-400 figures.
+tests). Aircraft data comes from public Cessna 172RG, F-16C, A-10C, Boeing 747-400 and Bell 206B-3
+figures; the rotor model follows Padfield, Johnson and Heffley & Mnich's NASA minimum-complexity
+helicopter model.
 Every model, texture and sound in the game is generated procedurally in this repository.
 
 ## License

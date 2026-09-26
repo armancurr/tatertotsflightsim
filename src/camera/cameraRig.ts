@@ -222,6 +222,21 @@ export interface ShakeSources {
   stalled: boolean;
   /** Seconds since a crash, or null when not crashed. */
   crashAge: number | null;
+  /** Helicopters: rotor vibration 0..1 (see rotorVibration). */
+  rotorVibration?: number;
+}
+
+/**
+ * Helicopter vibration felt in the cabin, 0..1: the shudder through translational lift (10–22 kt
+ * of airspeed, while the rotor carries the aircraft), the vortex-ring buffet and retreating-blade
+ * stall. Pure.
+ */
+export function rotorVibration(r: { vrs: number; bladeStall: number; thrust: number }, iasKt: number, weightN: number, airborne: boolean): number {
+  const fin = (v: number) => (Number.isFinite(v) ? v : 0);
+  const loaded = airborne && weightN > 0 ? clamp(fin(r.thrust) / weightN, 0, 1.5) : 0;
+  const ias = fin(iasKt);
+  const etl = ias > 8 && ias < 24 ? Math.sin(((ias - 8) / 16) * Math.PI) * 0.12 * Math.min(1, loaded) : 0;
+  return clamp(Math.max(etl, 0.45 * fin(r.vrs), 0.5 * fin(r.bladeStall)), 0, 1);
 }
 
 /** Shake intensity 0..1 for CameraInput.shake from the flight situation (config.camera.shake). */
@@ -232,6 +247,7 @@ export function shakeTarget(src: ShakeSources, cfg: Config = CONFIG): number {
     v = Math.max(v, s.groundRoll * clamp(src.groundSpeed / s.groundRollSpeed, 0, 1));
   }
   if (src.stalled) v = Math.max(v, s.stall);
+  if (src.rotorVibration !== undefined && Number.isFinite(src.rotorVibration)) v = Math.max(v, clamp(src.rotorVibration, 0, 1));
   if (src.crashAge !== null && src.crashAge >= 0 && Number.isFinite(src.crashAge)) {
     v = Math.max(v, s.crash * Math.exp(-s.decay * src.crashAge));
   }

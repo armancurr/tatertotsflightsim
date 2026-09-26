@@ -17,7 +17,7 @@
  *   ?tod=0..3                                time-of-day preset
  *   ?pause=1                                 start paused (the world still streams and renders)
  *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
- *   ?aircraft=c172rg|f16|a10                 which aircraft to fly (src/fleet)
+ *   ?aircraft=c172rg|f16|a10|b747|b206       which aircraft to fly (src/fleet)
  *   ?spawn=range                             start 4 km short of the target range, 1,500 ft, 250 kt
  *   ?rwy=36|18|03|21                         start lined up on that runway end (R resets there too)
  */
@@ -34,7 +34,7 @@ import { FLEET, getAircraftDef, type AircraftDef, type AircraftModelHandle } fro
 import { loadAircraftChoice, safeLocalStorage } from '../ui/picker';
 import { createInputManager } from '../input/inputManager';
 import { createControlState, updateControls, resetControls, type SimAction } from '../input/controlSystem';
-import { createCameraRig, setCameraMode, nextCameraMode, snapCamera, updateCameraRig, shakeTarget, type CameraRigState } from '../camera/cameraRig';
+import { createCameraRig, setCameraMode, nextCameraMode, snapCamera, updateCameraRig, shakeTarget, rotorVibration, type CameraRigState } from '../camera/cameraRig';
 import { applyCameraPose } from '../camera/threeCamera';
 import { FixedStepLoop } from './loop';
 import { createFpsMeter, recordFrame, fpsStats } from './fps';
@@ -209,7 +209,8 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     // 4 km short of the target range, pointing at it (set by the targets system; falls back to north).
     const r = combat.range ?? { x: 0, z: -7000, headingDeg: 0 };
     const h = (r.headingDeg * Math.PI) / 180;
-    teleport({ x: r.x - Math.sin(h) * 4000, z: r.z + Math.cos(h) * 4000, aglFt: 1500, headingDeg: r.headingDeg, speedKt: def.id === 'c172rg' ? 110 : 250 });
+    const kt = def.id === 'c172rg' ? 110 : ac.aircraft.rotorcraft ? 100 : 250;
+    teleport({ x: r.x - Math.sin(h) * 4000, z: r.z + Math.cos(h) * 4000, aglFt: 1500, headingDeg: r.headingDeg, speedKt: kt });
   } else if (spawn) {
     const [x, z, agl, hdg, kt] = spawn.split(',').map(Number);
     if (Number.isFinite(x) && Number.isFinite(z)) teleport({ x, z, aglFt: Number.isFinite(agl) ? agl : 1500, headingDeg: Number.isFinite(hdg) ? hdg : 0, speedKt: Number.isFinite(kt) ? kt : 95 });
@@ -326,6 +327,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.gunFiring = combat.status.gunFiring;
     visual.stores = combat.status.stores;
     visual.airStores = combat.status.airStores;
+    visual.rotor = state.rotor ?? null;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.
@@ -336,6 +338,9 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
         groundSpeed: state.derived.groundSpeed,
         stalled: state.stalled,
         crashAge: state.crash ? state.time - state.crash.time : null,
+        rotorVibration: state.rotor
+          ? rotorVibration(state.rotor, state.derived.ias * 1.943844, ac.aircraft.mass * cfg.sim.gravity, state.phase === 'airborne')
+          : undefined,
       });
     const cam = updateCameraRig(
       camRig,
@@ -368,7 +373,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     renderStats.geometries = info.memory.geometries;
     renderStats.textures = info.memory.textures;
     recordFrame(fpsMeter, frameDt, now);
-    simApi.update(buildSimSnapshot({ state, controls, fps: fpsStats(fpsMeter), cameraMode: camRig.mode, paused }));
+    simApi.update(buildSimSnapshot({ state, controls, fps: fpsStats(fpsMeter), cameraMode: camRig.mode, paused, nominalRotorRpm: ac.aircraft.rotorcraft?.rotor.nominalRpm }));
     simApi.object.render = renderStats;
     simApi.object.timeOfDay = atmosphere.timeOfDayName;
     simApi.object.aircraft = def.id;

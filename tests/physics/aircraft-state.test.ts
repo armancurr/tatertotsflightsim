@@ -68,10 +68,10 @@ describe('aircraft state', () => {
     expect(Math.abs(after.velocity.y)).toBeLessThan(0.02);
   });
 
-  it('defaultControls: idle, centred, flaps up, gear down, brakes off, engine on, speed brake in, trigger off', () => {
+  it('defaultControls: idle, centred, flaps up, gear down, brakes off, engine on, speed brake in, trigger off, stability assist on', () => {
     expect(defaultControls()).toEqual({
       throttle: 0, elevator: 0, aileron: 0, rudder: 0, elevatorTrim: 0, flapsNotch: 0,
-      gearDown: true, brake: 0, parkingBrake: false, engineOn: true, speedBrake: false, trigger: false,
+      gearDown: true, brake: 0, parkingBrake: false, engineOn: true, speedBrake: false, trigger: false, stabilityAssist: true,
     });
   });
 
