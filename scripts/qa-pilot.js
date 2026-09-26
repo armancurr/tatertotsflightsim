@@ -17,6 +17,14 @@
  *   await qaPilot.approachAndLand();             // stabilised 3° approach, flare, rollout (after Shift+R, or from a pattern)
  *   await qaPilot.circuit();                     // Cessna: a full traffic pattern from the runway, to a full stop
  *   await qaPilot.rtbAndLand();                  // from anywhere: pattern entry → downwind → base → final → land
+ *   // Helicopters (window.sim.rotor non-null, e.g. the JetRanger `?aircraft=b206`) — takeoff / climbTo / level /
+ *   // turn / gotoPoint / approachAndLand / rtbAndLand / circuit fly the helicopter versions, and:
+ *   await qaPilot.liftoff(5);                    // collective up to a hover at 5 ft skid height
+ *   await qaPilot.hover(10000);                  // hold it (→ { driftM, maxDriftM, maxHeightErrFt, … })
+ *   await qaPilot.hoverTurn(180);                // pedal turn on the spot
+ *   await qaPilot.transition(60, 700);           // forward cyclic through translational lift to a 60 kt, 700 fpm climb
+ *   await qaPilot.approachAndLand();             // ~6° approach, 60 → 40 kt → a hover over the aim point → touchdown, collective down
+ *   await qaPilot.autorotation();                // E off at altitude, collective down, 55 kt, flare, cushion, land
  *   await qaPilot.flyToRange();  qaPilot.pickTarget('tank');  await qaPilot.gunRun(id);  await qaPilot.mavShot(id);
  * Progress: qaPilot.phase, qaPilot.log, qaPilot.stats.
  *
@@ -120,6 +128,39 @@
       speedKp: 0.6, speedKi: 0.1, throttleIdle: 0, approachThrottle: 25, aoaSmoothS: 3, levelOffFt: 1000, aimM: 450,
       gearOffsetFt: 16.4,
     },
+    // Bell 206B-3 JetRanger III (1,300 kg): no runway speeds — a hover at 5 ft skid height, a normal
+    // take-off through translational lift to a 60 kt climb (Vy 52), a ~6° normal approach decelerating
+    // from 60 to 40 kt and on to a hover over the aim point, a vertical touchdown from the hover.
+    // The fixed-wing numbers below are unused; `heli` selects the helicopter routines.
+    b206: {
+      heli: true, jet: false, fbw: false, afterburner: false,
+      vrKt: 0, rotatePitchDeg: 4, climbKt: 60, climbPitchMaxDeg: 10, cruiseKt: 90,
+      takeoffThrottle: 45, climbThrottle: 40, cruiseThrottle: 30,
+      approachKt: 40, finalFlapsNotch: 0, patternFlapsNotch: 0, patternAglFt: 500, patternKt: 60, finalLengthM: 2000,
+      maxBankDeg: 30, patternBankDeg: 20, maxThrottle: 100,
+      flareLeadS: 4.5, flareMinFt: 8, flareMaxFt: 28, touchdownSinkFpm: 70, maxFlarePitchDeg: 10, minFlarePitchDeg: -2, flareGain: 0.6, flareIdle: 'entry',
+      trackKdegPerM: 0.25, finalMaxCorrDeg: 30,
+      pitchKp: 0.22, pitchKd: 0.06, rollKp: 0.12, rollKd: 0.04, yawKp: 0.08, yawKd: 0.03, flareKp: 0.3, flareKd: 0.15,
+      speedKp: 2.5, speedKi: 0.6, throttleIdle: 0, approachThrottle: 25,
+      // ── The helicopter pilot ──
+      gearOffsetFt: 4.1, hoverFt: 5, climbFpm: 700, descentFpm: 700, torqueMaxPct: 95,
+      approachAngleDeg: 6, approachDecelMs2: 0.3, aimM: 50, touchdownFpm: 50,
+      // Collective: lever fraction per fpm of vertical-speed error (P), and per fpm·s (I, on top of the trim table).
+      collKp: 0.00012, collKi: 0.00005,
+      // Speed on the attitude: deg of pitch per kt/s of acceleration asked (≈ 1/(g·tan 1°) in kt/s), kt/s per kt of speed error.
+      accelPitchDeg: 3, speedGain: 0.15, maxAccelKts: 2, maxDecelKts: 1.5,
+      // The stability assist the pilot flies through (src/config.ts rotorcraft.sas — refined from the config).
+      sas: { pitchBiasDeg: 3.7, rollBiasDeg: -2.4, pitchCmdDeg: 20, rollCmdDeg: 35, trimPitchDeg: 15, yawRateCmdDegS: 40, hoverHoldKt: 12, coordinateFromKt: 30, coordinateFullKt: 50 },
+      // Trim (1,300 kg, sea level, out of ground effect — solveRotorTrim in src/physics/rotor.ts): the
+      // collective and pitch attitude for level flight against IAS, and their change per 500 fpm of climb.
+      trim: {
+        kt: [0, 10, 20, 30, 40, 50, 60, 70, 80, 100, 120],
+        coll: [0.408, 0.397, 0.326, 0.275, 0.251, 0.243, 0.246, 0.259, 0.281, 0.352, 0.455],
+        collPer500: [0.044, 0.045, 0.07, 0.077, 0.08, 0.08, 0.08, 0.079, 0.077, 0.072, 0.065],
+        pitch: [3.7, 3.9, 2.6, 1.5, 0.9, 0.5, 0.0, -0.4, -0.8, -1.5, -2.0],
+        pitchPer500: [0.2, 0.2, 1.0, 1.5, 1.4, 1.4, 1.5, 1.6, 1.6, 1.7, 1.6],
+      },
+    },
   };
 
   /**
@@ -127,8 +168,13 @@
    * WeaponsConfig) when given: Vr, the landing ratings, the main-gear height, the flap notches.
    */
   function profileFor(id, ac, weapons) {
-    const key = BASE[id] ? id : id === 'a10c' ? 'a10' : id === '747' || id === 'b744' ? 'b747' : 'c172rg';
+    const rotorcraft = !!(ac && typeof ac === 'object' && ac.rotorcraft);
+    const key = BASE[id] ? id : id === 'a10c' ? 'a10' : id === '747' || id === 'b744' ? 'b747' : rotorcraft || id === 'jetranger' ? 'b206' : 'c172rg';
     const p = { id: key, ...structuredCloneSafe(BASE[key]) };
+    if (rotorcraft && p.sas && ac.rotorcraft.sas) {
+      const sc = ac.rotorcraft.sas;
+      for (const k of Object.keys(p.sas)) if (Number.isFinite(sc[k])) p.sas[k] = sc[k];
+    }
     if (ac && typeof ac === 'object') {
       const lim = ac.limits || {};
       if (fin(lim.vrKt) > 0) p.vrKt = lim.vrKt;
@@ -282,6 +328,56 @@
     const vsFpm = clamp(nominal - 3 * aboveFt, nominal * 2.2, Math.min(0, nominal * 0.1 + 150));
     const trackDeg = wrap360(rw.courseDeg - clamp(c.cross * p.trackKdegPerM, -p.finalMaxCorrDeg, p.finalMaxCorrDeg));
     return { vsFpm, trackDeg, aboveFt, distM, crossM: c.cross, alongM: c.along, heightFt };
+  }
+
+  // ─── Helicopters (pure) ─────────────────────────────────────────────────────
+  /** Piecewise-linear table lookup (xs ascending), clamped at the ends. */
+  function interp(xs, ys, x) {
+    const v = fin(x);
+    if (v <= xs[0]) return ys[0];
+    for (let i = 1; i < xs.length; i++) {
+      if (v <= xs[i]) return ys[i - 1] + ((ys[i] - ys[i - 1]) * (v - xs[i - 1])) / (xs[i] - xs[i - 1]);
+    }
+    return ys[ys.length - 1];
+  }
+  /** The helicopter's trim collective (0..1) and pitch attitude (deg) at `kt` IAS and `vsFpm` (profile `trim` table). */
+  function heliTrim(kt, vsFpm, p) {
+    const T = p.trim;
+    const k = clamp(fin(kt), 0, 200);
+    const v = clamp(fin(vsFpm), -2000, 2000) / 500;
+    // The collective: below ~15 kt the loss of the ground cushion as the helicopter moves off eats the
+    // translational lift, and on an approach the power comes back in early — the pilot's rule of thumb
+    // keeps the hover collective to 15 kt and reaches the table by 30 kt.
+    const kc = Math.max(0, Math.min(k, 2 * (k - 15)));
+    return {
+      coll: interp(T.kt, T.coll, kc) + v * interp(T.kt, T.collPer500, kc),
+      pitch: interp(T.kt, T.pitch, k) + v * interp(T.kt, T.pitchPer500, k),
+    };
+  }
+  /**
+   * Lateral stick (−1..1) for a bank-angle command through the stability assist (attitude command:
+   * φcmd = rollBias·(1 − min(1, 2|a|)) + a·rollCmdDeg), inverted.
+   */
+  function heliAilFor(phiDeg, sas) {
+    const b = sas.rollBiasDeg;
+    const c = sas.rollCmdDeg;
+    const e = fin(phiDeg) - b;
+    let a = e / (e >= 0 ? c - 2 * b : c + 2 * b);
+    if (Math.abs(a) > 0.5) a = fin(phiDeg) / c;
+    return clamp(a, -1, 1);
+  }
+  /**
+   * Target ground speed (kt) on a helicopter's approach at `distM` from the aim point: the approach
+   * speed (faster far out: o.farKt beyond 1 km), never faster than a constant deceleration
+   * (approachDecelMs2) to a standstill over the aim point (V = √(2·a·d)).
+   */
+  function heliApproachKt(distM, p, o = {}) {
+    const d = Math.max(0, fin(distM));
+    const far = o.farKt ?? 60;
+    const app = o.approachKt ?? p.approachKt;
+    const sched = d > 1000 ? Math.min(far, app + (d - 1000) * 0.02) : app;
+    const decel = Math.sqrt(2 * (o.decelMs2 ?? p.approachDecelMs2) * d) / KT_MS;
+    return Math.min(sched, decel);
   }
 
   /** The runway frame the pilot uses (defaults: runway 36 at Tater Field — config.world.airport). */
@@ -528,6 +624,715 @@
       if ((s.gearHandle === 'down') !== down) await tap('KeyG');
     }
 
+    // ─── Helicopters: the hands ─────────────────────────────────────────────────
+    /**
+     * The keyboard as a helicopter pilot knows it (config.controls): the cyclic (arrows) and the
+     * pedals (A/D) are sprung — held, a key drives the stick toward its stop at `rate` (`reverse`
+     * when it is on the other side), released it springs back at `back`; the collective (W/S) and
+     * the pitch trim ([ ]) are levers that stay where they are left. The pilot knows how long it held
+     * each key, so it knows where each control is — and reads the collective and trim back off the
+     * instruments (window.sim.throttle / trim) to stay honest.
+     */
+    const HANDS = {
+      elev: { rate: 2.2, reverse: 3.5, back: 0.8, pos: 'ArrowDown', neg: 'ArrowUp' },
+      ail: { rate: 2.8, reverse: 3.5, back: 3.5, pos: 'ArrowRight', neg: 'ArrowLeft' },
+      rud: { rate: 2.5, reverse: 3.5, back: 3.5, pos: 'KeyD', neg: 'KeyA' },
+    };
+    const LEVERS = {
+      coll: { rate: 0.45, pos: 'KeyW', neg: 'KeyS', lo: 0, hi: 1, read: (s) => fin(s.throttle) / 100 },
+      trim: { rate: 0.35, pos: 'BracketRight', neg: 'BracketLeft', lo: -1, hi: 1, read: (s) => fin(s.trim) / 100 },
+    };
+    /** Take the key rates from the sim's config.controls (when init() can read it). */
+    function setHands(c) {
+      if (!c || typeof c !== 'object') return;
+      const ret = fin(c.returnRate, 3.5);
+      if (c.pitchRate > 0) Object.assign(HANDS.elev, { rate: c.pitchRate, reverse: Math.max(c.pitchRate, ret), back: fin(c.pitchReturnRate, ret) });
+      if (c.rollRate > 0) Object.assign(HANDS.ail, { rate: c.rollRate, reverse: Math.max(c.rollRate, ret), back: ret });
+      if (c.yawRate > 0) Object.assign(HANDS.rud, { rate: c.yawRate, reverse: Math.max(c.yawRate, ret), back: ret });
+      if (c.throttleRate > 0) LEVERS.coll.rate = c.throttleRate;
+      if (c.trimRate > 0) LEVERS.trim.rate = c.trimRate;
+    }
+    /** Where the controls are (as the pilot's hands know it) and which way each key is held. */
+    const hx = { elev: 0, ail: 0, rud: 0, coll: null, trim: null };
+    const heldDir = { elev: 0, ail: 0, rud: 0, coll: 0, trim: 0 };
+    const HANDLES = { elev: HANDS.elev, ail: HANDS.ail, rud: HANDS.rud, coll: LEVERS.coll, trim: LEVERS.trim };
+    function axisAfter(v, d, dt, A) {
+      if (d !== 0) return moveTo(v, d, (v * d < 0 ? Math.max(A.rate, A.reverse) : A.rate) * dt);
+      return moveTo(v, 0, A.back * dt);
+    }
+    function setDir(k, d) {
+      const A = HANDLES[k];
+      if (heldDir[k] === d) return;
+      if (heldDir[k] !== 0) key(heldDir[k] > 0 ? A.pos : A.neg, false);
+      if (d !== 0) key(d > 0 ? A.pos : A.neg, true);
+      heldDir[k] = d;
+    }
+    /**
+     * One helicopter control window (ms): every frame (~16 ms) each sprung axis gets the key that
+     * keeps it closest to its target (a pulse train — the stick hovers there), each lever is driven
+     * to its target and left. u: { elev, ail, rud (−1..1, 0 = hands off), coll (0..1), trim (−1..1) }
+     * (a lever target of null = leave it).
+     */
+    async function heliWindow(u, ms) {
+      const s0 = sim();
+      for (const k of ['coll', 'trim']) {
+        const r = LEVERS[k].read(s0);
+        hx[k] = hx[k] === null ? r : clamp(hx[k], r - 0.0051, r + 0.0051);
+      }
+      const t0 = drv.now();
+      let tPrev = t0;
+      const h = 1 / 60;
+      for (;;) {
+        const now = drv.now();
+        const dt = Math.max(0, (now - tPrev) / 1000);
+        tPrev = now;
+        for (const k of ['elev', 'ail', 'rud']) hx[k] = axisAfter(hx[k], heldDir[k], dt, HANDS[k]);
+        for (const k of ['coll', 'trim']) hx[k] = clamp(hx[k] + heldDir[k] * LEVERS[k].rate * dt, LEVERS[k].lo, LEVERS[k].hi);
+        if (now - t0 >= ms) break;
+        for (const k of ['elev', 'ail', 'rud']) {
+          const A = HANDS[k];
+          const w = clamp(fin(u[k], 0), -1, 1);
+          let best = 0;
+          let bestErr = Math.abs(axisAfter(hx[k], 0, h, A) - w);
+          for (const d of [1, -1]) {
+            const e = Math.abs(axisAfter(hx[k], d, h, A) - w);
+            if (e < bestErr - 1e-4) { bestErr = e; best = d; }
+          }
+          setDir(k, best);
+        }
+        for (const k of ['coll', 'trim']) {
+          const L = LEVERS[k];
+          let d = 0;
+          if (u[k] !== null && u[k] !== undefined && Number.isFinite(u[k])) {
+            const rem = clamp(u[k], L.lo, L.hi) - hx[k];
+            if (Math.abs(rem) > L.rate * h * 0.5) d = Math.sign(rem);
+            // "Full down" / "full up": push it onto the stop and keep pushing.
+            else if (u[k] <= L.lo) d = -1;
+            else if (u[k] >= L.hi) d = 1;
+          }
+          setDir(k, d);
+        }
+        await sleep(16);
+      }
+      for (const k of Object.keys(heldDir)) setDir(k, 0);
+    }
+
+    // ─── Helicopters: what the pilot sees ───────────────────────────────────────
+    /**
+     * hv: the ground under the skids (ft MSL, a running average of altitude − AGL: the radar
+     * altimeter reads whole feet), the speed the pilot flies (IAS above ~35 kt; below it the ground
+     * speed along the nose, from the position — the airspeed indicator is useless in the hover), its
+     * rate of change (kt/s), the yaw rate and the velocity over the ground (kt, forward / right).
+     */
+    const hv = { gndFt: null, V: 0, acc: 0, yawRate: 0, vf: 0, vr: 0, lastT: null, lastV: null, lastHdg: null, pT: null, px: 0, pz: 0 };
+    function heliObserve(s) {
+      const t = drv.now();
+      updateRates(s);
+      const sample = fin(s.position.y) * M_FT - fin(s.altitudeAGL);
+      if (hv.gndFt === null || Math.abs(sample - hv.gndFt) > 3 || s.altitudeAGL > 150) hv.gndFt = sample;
+      else hv.gndFt += (sample - hv.gndFt) * 0.03;
+      if (hv.pT === null) { hv.pT = t; hv.px = s.position.x; hv.pz = s.position.z; }
+      else if (t - hv.pT >= 400) {
+        const dt = (t - hv.pT) / 1000;
+        const vx = (s.position.x - hv.px) / dt;
+        const vz = (s.position.z - hv.pz) / dt;
+        const hr = s.heading * D2R;
+        const f = (vx * Math.sin(hr) - vz * Math.cos(hr)) / KT_MS;
+        const r = (vx * Math.cos(hr) + vz * Math.sin(hr)) / KT_MS;
+        const k = clamp(dt / 0.6, 0, 1);
+        hv.vf += (f - hv.vf) * k;
+        hv.vr += (r - hv.vr) * k;
+        hv.pT = t; hv.px = s.position.x; hv.pz = s.position.z;
+      }
+      // Below ~25 kt the pilot flies the ground speed along the nose (signed); above ~35 kt the IAS.
+      const w = clamp((fin(s.airspeed) - 25) / 10, 0, 1);
+      const gsAlong = Math.sign(hv.vf || 1) * fin(s.groundSpeed) * (Math.abs(hv.vf) > 1e-3 ? Math.min(1, Math.abs(hv.vf) / Math.max(0.5, Math.hypot(hv.vf, hv.vr))) : 1);
+      const V = w * fin(s.airspeed) + (1 - w) * gsAlong;
+      if (hv.lastT !== null && t > hv.lastT) {
+        const dt = (t - hv.lastT) / 1000;
+        hv.acc += ((V - hv.lastV) / dt - hv.acc) * clamp(dt / 1.0, 0, 1);
+        hv.yawRate += (wrap180(s.heading - hv.lastHdg) / dt - hv.yawRate) * clamp(dt / 0.3, 0, 1);
+      }
+      hv.V = V;
+      hv.lastT = t; hv.lastV = V; hv.lastHdg = s.heading;
+    }
+    const heliResetObs = () => { hv.lastT = null; hv.pT = null; hv.acc = 0; hv.yawRate = 0; resetRates(); };
+    /** Skid height above the ground, ft. */
+    const skidFt = (s) => (hv.gndFt === null ? fin(s.altitudeAGL) : fin(s.position.y) * M_FT - hv.gndFt) - P.gearOffsetFt;
+
+    // ─── Helicopters: the pilot's loops ─────────────────────────────────────────
+    /** Collective for a vertical speed: the trim table + P + I on the vertical-speed error, torque-limited. */
+    const hc = { i: 0, lastT: null };
+    function heliCollFor(s, vsT, g = {}) {
+      const now = drv.now();
+      const dt = hc.lastT === null ? 0.1 : clamp((now - hc.lastT) / 1000, 0.01, 0.5);
+      hc.lastT = now;
+      const tr = heliTrim(s.airspeed, vsT, P);
+      const err = vsT - fin(s.verticalSpeed);
+      const over = fin(s.rotor && s.rotor.torque, 0) - P.torqueMaxPct;
+      if (!(over > 0 && err > 0)) hc.i = clamp(hc.i + (g.ki ?? P.collKi) * err * dt, -0.25, 0.25);
+      let L = tr.coll + hc.i + (g.kp ?? P.collKp) * err;
+      if (over > 0) L = Math.min(L, (hx.coll ?? L) - over * 0.002);
+      return clamp(L, 0, 1);
+    }
+    /** Take the collective integrator from where the lever is now (so a new manoeuvre starts smooth). */
+    function heliSeedColl(s) {
+      hc.i = clamp(fin(s.throttle) / 100 - heliTrim(s.airspeed, s.verticalSpeed, P).coll, -0.25, 0.25);
+      hc.lastT = null;
+    }
+    /** Speed on the attitude: pitch = trim attitude − accelPitchDeg × the acceleration asked, + a slow integral. */
+    const hp = { i: 0, lastT: null };
+    function heliPitchForSpeed(s, Vt, vsT, o = {}) {
+      const now = drv.now();
+      const dt = hp.lastT === null ? 0.1 : clamp((now - hp.lastT) / 1000, 0.01, 0.5);
+      hp.lastT = now;
+      const V = hv.V;
+      const aCmd = clamp(fin(o.accelFF, 0) + P.speedGain * (Vt - V), -(o.maxDecel ?? P.maxDecelKts), o.maxAccel ?? P.maxAccelKts);
+      hp.i = clamp(hp.i + (o.ki ?? 0.4) * (hv.acc - aCmd) * dt, -4, 4);
+      return clamp(heliTrim(Math.max(0, V), vsT, P).pitch - P.accelPitchDeg * aCmd + hp.i, o.minPitch ?? -10, o.maxPitch ?? 12);
+    }
+    /**
+     * Pitch attitude command (deg) → the trim lever (carries it) and the stick (covers what the trim
+     * hasn't reached yet, plus `elevHold`: hands on the cyclic, which also keeps the hover hold out).
+     */
+    function pitchHands(C, elevHold = 0) {
+      const sc = P.sas;
+      const want = (C - sc.pitchBiasDeg - elevHold * sc.pitchCmdDeg) / sc.trimPitchDeg;
+      const trimT = clamp(want, -1, 1);
+      const cur = hx.trim ?? trimT;
+      // Past the trim's stops (a flare) the stick holds the rest.
+      const lagDeg = (trimT - moveTo(cur, trimT, LEVERS.trim.rate * 0.15)) * sc.trimPitchDeg + (want - trimT) * sc.trimPitchDeg;
+      const elev = clamp(elevHold + (Math.abs(lagDeg) > 2 || want !== trimT ? lagDeg / sc.pitchCmdDeg : 0), -1, 1);
+      return { trim: trimT, elev };
+    }
+    /** Bank for a track (deg): proportional, released (null: the assist holds the heading) when on it. */
+    function heliRollFor(s, trackDeg, maxBank) {
+      const err = wrap180(trackDeg - (s.airspeed > 30 ? track(s) : s.heading));
+      if (Math.abs(err) < 1.5) return null;
+      return clamp(err * 1.5, -maxBank, maxBank);
+    }
+    /** Vertical speed (fpm) to reach / hold a skid height (ft) in the hover. */
+    const hoverVs = (s, hFt, up = 150, down = 120) => clamp((hFt - skidFt(s)) * 25, -down, up);
+    /**
+     * Fly a helicopter until `done(sim)` or timeout: `targets(sim)` → { vs (fpm) | coll (0..1),
+     * pitch (attitude, deg) + elevHold | trim / elev, roll (bank, deg) | ail, yawRate (deg/s) | rud }.
+     * Anything not given: hands off (the stability assist holds the attitude, the heading, the hover).
+     */
+    async function heliFly(targets, done, timeoutMs, ms = 100) {
+      const end = drv.now() + timeoutMs;
+      while (drv.now() < end) {
+        const s = sim();
+        if (s.state === 'crashed') { releaseAll(); return 'crashed'; }
+        heliObserve(s);
+        if (done && done(s)) return 'done';
+        const t = targets(s) || {};
+        const u = { elev: 0, ail: 0, rud: 0, coll: null, trim: null };
+        if (t.coll !== undefined && t.coll !== null) u.coll = t.coll;
+        else if (t.vs !== undefined && t.vs !== null) u.coll = heliCollFor(s, t.vs, t.collGains);
+        if (t.pitch !== undefined && t.pitch !== null) {
+          const ph = pitchHands(t.pitch, t.elevHold ?? 0);
+          u.trim = ph.trim;
+          u.elev = ph.elev;
+        } else {
+          if (t.trim !== undefined) u.trim = t.trim;
+          if (t.elev !== undefined) u.elev = t.elev;
+        }
+        if (t.roll !== undefined && t.roll !== null) u.ail = heliAilFor(t.roll, P.sas) + (0.3 * (t.roll - s.roll)) / P.sas.rollCmdDeg;
+        else if (t.ail !== undefined) u.ail = t.ail;
+        if (t.yawRate !== undefined && t.yawRate !== null) u.rud = (t.yawRate + 0.3 * (t.yawRate - hv.yawRate)) / P.sas.yawRateCmdDegS;
+        else if (t.rud !== undefined) u.rud = t.rud;
+        await heliWindow(u, typeof ms === 'function' ? ms(s) : ms);
+      }
+      return 'timeout';
+    }
+    /** done() helper: `cond` held continuously for `ms`. */
+    function steadyFor(cond, ms) {
+      let since = null;
+      return (s) => {
+        if (!cond(s)) { since = null; return false; }
+        if (since === null) since = drv.now();
+        return drv.now() - since >= ms;
+      };
+    }
+    const isHeli = () => !!P.heli || !!(sim() && sim().rotor);
+
+    // ─── Helicopters: the manoeuvres ────────────────────────────────────────────
+    const heli = {
+      /** Engine on and the rotor at ≥ 97 % (E if the engine is off), collective down. */
+      async rotorUp() {
+        const s = sim();
+        if (s.engine === 'off') { note('engine start'); await tap('KeyE'); }
+        return heliFly(() => ({ coll: 0 }), (x) => x.engine === 'running' && fin(x.rotor && x.rotor.nr, 100) >= 97, 60000);
+      },
+      /**
+       * Lift off to a hover at hoverFt skid height: collective up smoothly (quicker to ~30 %, then
+       * slowly until the skids leave), then the collective flies the height; the assist holds the
+       * attitude, the heading and the position.
+       */
+      async liftoff(hoverFt = P.hoverFt, o = {}) {
+        heliResetObs();
+        api.phase = 'liftoff';
+        let s = sim();
+        if (s.state === 'crashed') return 'crashed';
+        if (s.onGround && (s.engine !== 'running' || fin(s.rotor && s.rotor.nr, 100) < 97)) await heli.rotorUp();
+        s = sim();
+        heliObserve(s);
+        const start = { x: s.position.x, z: s.position.z, hdg: s.heading };
+        note('liftoff: collective up', { torque: s.rotor && s.rotor.torque });
+        let r = 'done';
+        if (s.onGround) {
+          let lever = fin(s.throttle) / 100;
+          let lastT = drv.now();
+          r = await heliFly(
+            (x) => {
+              const now = drv.now();
+              const dt = (now - lastT) / 1000;
+              lastT = now;
+              lever = Math.min(0.6, lever + (lever < 0.3 ? 0.1 : 0.03) * dt);
+              return { coll: lever };
+            },
+            (x) => !x.onGround && skidFt(x) > 0.7,
+            60000,
+          );
+          if (r !== 'done') return r;
+          note('skids off', { torque: sim().rotor && sim().rotor.torque, coll: sim().throttle });
+        }
+        heliSeedColl(sim());
+        api.phase = `hover at ${hoverFt} ft`;
+        r = await heliFly(
+          (x) => ({ vs: hoverVs(x, hoverFt) }),
+          steadyFor((x) => Math.abs(skidFt(x) - hoverFt) < 0.8 && Math.abs(x.verticalSpeed) < 50 && x.groundSpeed < 1.5, 1500),
+          o.timeoutMs ?? 40000,
+        );
+        s = sim();
+        note('hovering', { skidFt: +skidFt(s).toFixed(1), driftM: +Math.hypot(s.position.x - start.x, s.position.z - start.z).toFixed(2), torque: s.rotor && s.rotor.torque });
+        return r;
+      },
+      /** Hold the hover (height on the collective; the assist holds the position and heading) for ms. Returns the drift. */
+      async hover(ms, o = {}) {
+        api.phase = 'hover';
+        let s = sim();
+        heliObserve(s);
+        const hFt = o.hoverFt ?? Math.round(skidFt(s) * 2) / 2;
+        const x0 = s.position.x;
+        const z0 = s.position.z;
+        const h0 = s.heading;
+        let maxDrift = 0;
+        let maxH = 0;
+        let maxHdg = 0;
+        heliSeedColl(s);
+        const r = await heliFly(
+          (x) => {
+            maxDrift = Math.max(maxDrift, Math.hypot(x.position.x - x0, x.position.z - z0));
+            maxH = Math.max(maxH, Math.abs(skidFt(x) - hFt));
+            maxHdg = Math.max(maxHdg, Math.abs(wrap180(x.heading - h0)));
+            return { vs: hoverVs(x, hFt) };
+          },
+          null,
+          ms,
+        );
+        s = sim();
+        const res = { result: r === 'timeout' ? 'done' : r, driftM: Math.hypot(s.position.x - x0, s.position.z - z0), maxDriftM: maxDrift, maxHeightErrFt: maxH, maxHeadingErrDeg: maxHdg, skidFt: skidFt(s) };
+        stats.hover = res;
+        note('hover done', { driftM: +res.driftM.toFixed(2), maxDriftM: +maxDrift.toFixed(2), maxHeightErrFt: +maxH.toFixed(1) });
+        return res;
+      },
+      /** A pedal turn on the spot through deltaDeg (− = left), at up to rateDegS, holding the hover height. */
+      async hoverTurn(deltaDeg, o = {}) {
+        const s0 = sim();
+        heliObserve(s0);
+        const hdg0 = s0.heading; // (window.sim is updated in place: keep the numbers, not the object)
+        const hFt = o.hoverFt ?? Math.max(P.hoverFt, Math.round(skidFt(s0) * 2) / 2);
+        const sign = Math.sign(deltaDeg) || 1;
+        const maxRate = o.rateDegS ?? 20;
+        api.phase = `hover turn ${deltaDeg > 0 ? 'right' : 'left'} ${Math.abs(deltaDeg)}°`;
+        note(api.phase + ' start');
+        const x0 = s0.position.x;
+        const z0 = s0.position.z;
+        let turned = 0;
+        let prev = hdg0;
+        let maxDrift = 0;
+        heliSeedColl(s0);
+        let r = await heliFly(
+          (x) => {
+            turned += wrap180(x.heading - prev) * sign;
+            prev = x.heading;
+            maxDrift = Math.max(maxDrift, Math.hypot(x.position.x - x0, x.position.z - z0));
+            const rem = Math.abs(deltaDeg) - turned;
+            // Ease the pedal off so the assist's heading hold catches it where the rate dies.
+            const rate = sign * clamp(rem * 0.7, 3, maxRate);
+            return { vs: hoverVs(x, hFt), yawRate: rate };
+          },
+          () => Math.abs(deltaDeg) - turned < 1.5,
+          o.timeoutMs ?? 60000,
+        );
+        if (r === 'done') r = (await heli.hover(o.settleMs ?? 3000, { hoverFt: hFt })).result;
+        const s = sim();
+        const target = wrap360(hdg0 + deltaDeg);
+        note(api.phase + ' done', { targetHdg: target, hdgErr: +wrap180(s.heading - target).toFixed(1), maxDriftM: +maxDrift.toFixed(2) });
+        stats.hoverTurn = { headingErrDeg: wrap180(s.heading - target), maxDriftM: maxDrift };
+        return r;
+      },
+      /**
+       * Normal take-off from the hover: forward cyclic (hands on, the hover hold out), hold the height
+       * to ~15 kt, through translational lift, then collective for climbFpm while the attitude
+       * takes it on to kt. Done when on speed and climbing.
+       */
+      async transition(kt = P.climbKt, climbFpm = P.climbFpm, o = {}) {
+        api.phase = `transition to ${kt} kt`;
+        let s = sim();
+        heliObserve(s);
+        // Accelerate a little higher than the hover (the nose goes down, the ground cushion goes away).
+        const hFt = Math.max(P.hoverFt + 3, skidFt(s));
+        note('transition start');
+        heliSeedColl(s);
+        hp.i = 0;
+        hp.lastT = null;
+        const hdg = o.headingDeg ?? s.heading;
+        const r = await heliFly(
+          (x) => {
+            const V = hv.V;
+            const climbW = clamp((V - 15) / 20, 0, 1);
+            const vsT = V < 15 ? hoverVs(x, hFt) : Math.max(climbFpm * climbW * (3 - 2 * climbW) * climbW, skidFt(x) < 15 ? 100 : -200);
+            // Up to the acceleration height first, then gently (≤ 1 kt/s) until translational lift.
+            const high = skidFt(x) > hFt - 1.5;
+            const pitch = heliPitchForSpeed(x, high ? kt : 0, vsT, { maxAccel: V < 15 ? 1.5 : P.maxAccelKts });
+            return { vs: vsT, pitch, elevHold: V < 14 && high ? -0.3 : 0, roll: V > 35 ? heliRollFor(x, hdg, 10) : null };
+          },
+          (x) => hv.V >= kt - 3 && x.verticalSpeed > climbFpm * 0.6 && skidFt(x) > 50,
+          o.timeoutMs ?? 120000,
+        );
+        s = sim();
+        note('transition done', { skidFt: Math.round(skidFt(s)), torque: s.rotor && s.rotor.torque });
+        return r;
+      },
+      /** Take-off: lift off, a short hover, the transition, climb out to untilAglFt. */
+      async takeoff(o = {}) {
+        let r = await heli.liftoff(o.hoverFt ?? P.hoverFt);
+        if (r === 'crashed') return r;
+        await heli.hover(o.hoverMs ?? 2000);
+        r = await heli.transition(o.climbKt ?? P.climbKt, o.climbFpm ?? P.climbFpm);
+        if (r === 'crashed') return r;
+        const s = sim();
+        const field = s.altitude - s.altitudeAGL;
+        const until = o.untilAglFt ?? 500;
+        if (s.altitudeAGL < until) {
+          api.phase = 'climb out';
+          r = await heliFly(
+            (x) => ({ vs: o.climbFpm ?? P.climbFpm, pitch: heliPitchForSpeed(x, o.climbKt ?? P.climbKt, o.climbFpm ?? P.climbFpm), roll: null }),
+            (x) => x.altitude - field > until,
+            120000,
+          );
+        }
+        note('climbing');
+        return r;
+      },
+      /** Climb or descend to aglFt above the field at speedKt (default the climb speed), on o.headingDeg or straight on. */
+      async climbTo(aglFt, o = {}) {
+        api.phase = `climb to ${aglFt}`;
+        const s0 = sim();
+        heliObserve(s0);
+        const target = s0.altitude - s0.altitudeAGL + aglFt;
+        const kt = o.speedKt ?? (hv.V > 30 ? Math.max(P.climbKt, Math.min(hv.V, P.cruiseKt)) : P.climbKt);
+        const hdg = o.headingDeg ?? null;
+        heliSeedColl(s0);
+        const vsFor = (x) => clamp((target - x.altitude) * 4, -(o.descentFpm ?? P.descentFpm), o.climbFpm ?? P.climbFpm);
+        const r = await heliFly(
+          (x) => {
+            const vsT = vsFor(x);
+            return { vs: vsT, pitch: heliPitchForSpeed(x, kt, vsT), roll: hdg === null ? null : heliRollFor(x, hdg, o.bank ?? P.patternBankDeg) };
+          },
+          (x) => Math.abs(x.altitude - target) < 30 && Math.abs(x.verticalSpeed) < 200,
+          o.timeoutMs ?? 300000,
+        );
+        api.phase = 'level';
+        await heliFly((x) => { const vsT = vsFor(x); return { vs: vsT, pitch: heliPitchForSpeed(x, kt, vsT), roll: hdg === null ? null : heliRollFor(x, hdg, 10) }; }, null, 3000);
+        note(`level at ${aglFt}`);
+        return r;
+      },
+      /** Straight and level (the altitude and speed at the start) for ms. */
+      async level(ms, o = {}) {
+        api.phase = 'level';
+        const s0 = sim();
+        heliObserve(s0);
+        const alt = s0.altitude;
+        const kt = o.speedKt ?? hv.V;
+        heliSeedColl(s0);
+        return heliFly((x) => { const vsT = clamp((alt - x.altitude) * 3, -500, 500); return { vs: vsT, pitch: heliPitchForSpeed(x, kt, vsT), roll: null }; }, null, ms);
+      },
+      /** Heading change deltaDeg (− = left) at `bank`, holding the altitude and speed; stick released on the new heading. */
+      async turn(deltaDeg, bank = P.patternBankDeg, o = {}) {
+        const s0 = sim();
+        heliObserve(s0);
+        const hdg0 = s0.heading;
+        const alt = s0.altitude + clamp(s0.verticalSpeed, -1000, 1000) / 10;
+        const kt = o.speedKt ?? Math.max(40, hv.V);
+        const sign = Math.sign(deltaDeg) || 1;
+        api.phase = `turn ${deltaDeg > 0 ? 'right' : 'left'} ${Math.abs(deltaDeg)}°`;
+        note(api.phase + ' start');
+        heliSeedColl(s0);
+        let turned = 0;
+        let prevH = hdg0;
+        const vsFor = (x) => clamp((alt - x.altitude) * 3, -500, 500);
+        const r = await heliFly(
+          (x) => {
+            turned += wrap180(x.heading - prevH) * sign;
+            prevH = x.heading;
+            const rem = Math.abs(deltaDeg) - turned;
+            const b = rem < 15 ? sign * Math.max(0, rem) * (bank / 15) : sign * bank;
+            const vsT = vsFor(x);
+            return { vs: vsT, pitch: heliPitchForSpeed(x, kt, vsT), roll: b };
+          },
+          () => Math.abs(deltaDeg) - turned < 2,
+          o.timeoutMs ?? 180000,
+        );
+        await heliFly((x) => { const vsT = vsFor(x); return { vs: vsT, pitch: heliPitchForSpeed(x, kt, vsT), roll: null }; }, (x) => Math.abs(x.roll - P.sas.rollBiasDeg) < 4, 8000);
+        note(api.phase + ' done', { targetHdg: wrap360(hdg0 + deltaDeg) });
+        return r;
+      },
+      /** Direct to (x, z) at o.altFt MSL (or o.aglFt above the field) and o.speedKt; done within o.arriveM. */
+      async gotoPoint(x, z, o = {}) {
+        const alt = o.altFt ?? RW.fieldFt + (o.aglFt ?? P.patternAglFt);
+        const kt = o.speedKt ?? P.patternKt;
+        const bank = o.bank ?? P.patternBankDeg;
+        api.phase = o.phase ?? `direct ${Math.round(x)},${Math.round(z)}`;
+        heliSeedColl(sim());
+        let dMin = Infinity;
+        const r = await heliFly(
+          (s) => {
+            const brg = bearingTo(s.position.x, s.position.z, x, z);
+            const vsT = s.altitudeAGL < 150 ? Math.max(300, clamp((alt - s.altitude) * 3, -700, 700)) : clamp((alt - s.altitude) * 3, -(o.descentFpm ?? P.descentFpm), o.climbFpm ?? P.climbFpm);
+            return { vs: vsT, pitch: heliPitchForSpeed(s, kt, vsT), roll: heliRollFor(s, brg, bank) };
+          },
+          (s) => {
+            const d = Math.hypot(s.position.x - x, s.position.z - z);
+            dMin = Math.min(dMin, d);
+            return d < (o.arriveM ?? 300) || (dMin < 800 && d > dMin + 150);
+          },
+          o.timeoutMs ?? 600000,
+        );
+        note(api.phase + ' reached');
+        return r;
+      },
+      /**
+       * Normal approach to a hover over the aim point (runway 36, aimM past the threshold, or o.aim
+       * {x, z} with o.courseDeg) and a vertical landing: from anywhere, first to the approach fix
+       * (finalLengthM out on the extended centreline); on final a ~6° path, the speed bleeding from
+       * 60 to 40 kt and then at a constant deceleration to a standstill over the aim point (never
+       * much over 500 fpm down, and slow descents only when slow — no vortex ring), a hover at
+       * hoverFt, then down at ~50 fpm to the skids, and the collective full down.
+       */
+      async approachAndLand(o = {}) {
+        const crs = o.courseDeg ?? RW.courseDeg;
+        const aimM = o.aimM ?? P.aimM;
+        const aim = o.aim ?? { x: RW.thrX + Math.sin(crs * D2R) * aimM, z: RW.thrZ - Math.cos(crs * D2R) * aimM };
+        const fieldFt = o.fieldFt ?? RW.fieldFt;
+        const tanG = Math.tan((o.angleDeg ?? P.approachAngleDeg) * D2R);
+        const hoverFt = o.hoverFt ?? P.hoverFt;
+        let s = sim();
+        heliObserve(s);
+        const c0 = lineCoords(s.position.x, s.position.z, aim.x, aim.z, crs);
+        const d0 = -c0.along;
+        const fixM = o.fixM ?? P.finalLengthM;
+        const onFinal = d0 > 150 && d0 < fixM + 600 && Math.abs(c0.cross) < Math.max(120, d0 * 0.15) && Math.abs(wrap180(s.heading - crs)) < 40;
+        note('approach start', { distM: Math.round(d0), crossM: Math.round(c0.cross), onFinal });
+        if (!onFinal) {
+          const fixAlt = fieldFt + (P.gearOffsetFt + hoverFt) + fixM * tanG * M_FT;
+          const fx = aim.x - Math.sin(crs * D2R) * fixM;
+          const fz = aim.z + Math.cos(crs * D2R) * fixM;
+          // Coming from the wrong side (the fix is well off the nose of the final course): out past it first, then turn in.
+          if (Math.abs(wrap180(bearingTo(s.position.x, s.position.z, fx, fz) - crs)) > 60) {
+            const outM = fixM + 1200;
+            const r1 = await heli.gotoPoint(aim.x - Math.sin(crs * D2R) * outM, aim.z + Math.cos(crs * D2R) * outM, { altFt: fixAlt, speedKt: o.farKt ?? 60, arriveM: 300, phase: 'outbound for the approach' });
+            if (r1 === 'crashed') return r1;
+          }
+          const r0 = await heli.gotoPoint(fx, fz, { altFt: fixAlt, speedKt: o.farKt ?? 60, arriveM: 250, phase: 'to the approach fix' });
+          if (r0 === 'crashed') return r0;
+        }
+        api.phase = 'approach';
+        heliSeedColl(sim());
+        hp.i = 0;
+        hp.lastT = null;
+        let lastCross = null;
+        let crossRate = 0;
+        let lastT = null;
+        const dist = (x) => -lineCoords(x.position.x, x.position.z, aim.x, aim.z, crs).along;
+        let r = await heliFly(
+          (x) => {
+            const c = lineCoords(x.position.x, x.position.z, aim.x, aim.z, crs);
+            const d = -c.along;
+            const now = drv.now();
+            if (lastT !== null && now > lastT) crossRate += ((c.cross - lastCross) / ((now - lastT) / 1000) - crossRate) * 0.3;
+            lastT = now;
+            lastCross = c.cross;
+            const V = hv.V;
+            const Vt = heliApproachKt(d, P, o);
+            // On the deceleration branch the target speed falls at a (m/s²): feed that forward.
+            const decelBranch = Vt < (d > 1000 ? 60 : o.approachKt ?? P.approachKt) - 0.5;
+            const accelFF = decelBranch ? -(o.decelMs2 ?? P.approachDecelMs2) / KT_MS : 0;
+            // The path: the aim point's hover height plus d·tan γ (CG height above the field, ft).
+            const hPath = hoverFt + P.gearOffsetFt + Math.max(0, d) * tanG * M_FT;
+            const hNow = x.position.y * M_FT - fieldFt;
+            let vsT = clamp(-Math.max(0, V) * 101.27 * tanG + 2 * (hPath - hNow), -800, 300);
+            if (V < 25) vsT = Math.max(vsT, -300 - V * 8); // slow and descending steeply = vortex ring
+            if (skidFt(x) < hoverFt + 3) vsT = Math.max(vsT, hoverVs(x, hoverFt));
+            // Lateral: bank to the track while there is airspeed, then sideslip onto the line (the assist holds the heading).
+            let roll;
+            if (x.airspeed > 35) roll = heliRollFor(x, wrap360(crs - clamp(c.cross * 0.15, -30, 30)), 15);
+            else roll = clamp(-c.cross * 0.6 - crossRate * 2.5, -6, 6) + P.sas.rollBiasDeg;
+            const pitch = heliPitchForSpeed(x, Vt, vsT, { accelFF, maxPitch: 12 });
+            return { vs: vsT, pitch, elevHold: V < 14 ? -0.25 : 0, roll };
+          },
+          (x) => dist(x) < 2 || (dist(x) < 25 && hv.V < 1.5),
+          o.timeoutMs ?? 400000,
+        );
+        if (r === 'crashed') return r;
+        s = sim();
+        note('over the aim point', { distM: +dist(s).toFixed(1), crossM: +lineCoords(s.position.x, s.position.z, aim.x, aim.z, crs).cross.toFixed(1), kt: +hv.V.toFixed(1), skidFt: +skidFt(s).toFixed(1) });
+        // Hover: ease the hands off the cyclic while the trim comes back to the hover attitude (together,
+        // so the attitude doesn't jump), then the assist's hover hold stops the last of the drift; the
+        // collective holds the height.
+        api.phase = 'hover';
+        heliSeedColl(s);
+        const tHover = drv.now();
+        r = await heliFly(
+          (x) => {
+            const k = clamp(1 - (drv.now() - tHover) / 2500, 0, 1);
+            return k > 0 ? { vs: hoverVs(x, hoverFt), pitch: P.sas.pitchBiasDeg, elevHold: -0.25 * k } : { vs: hoverVs(x, hoverFt), trim: 0 };
+          },
+          steadyFor((x) => Math.abs(skidFt(x) - hoverFt) < 1 && Math.abs(x.verticalSpeed) < 60 && x.groundSpeed < 1, 1500),
+          o.hoverTimeoutMs ?? 30000,
+        );
+        if (r === 'crashed') return r;
+        s = sim();
+        note('hover before touchdown', { skidFt: +skidFt(s).toFixed(1), distM: +dist(s).toFixed(1), torque: s.rotor && s.rotor.torque });
+        return heli.land(o);
+      },
+      /**
+       * Vertical landing from the hover: down at a sink that falls with height to touchdownFpm at the
+       * skids, then the collective full down, smoothly. stats.landing = the touchdown record.
+       */
+      async land(o = {}) {
+        api.phase = 'touchdown';
+        heliSeedColl(sim());
+        const tdFpm = o.touchdownFpm ?? P.touchdownFpm;
+        let r = await heliFly(
+          // (the ground cushion builds under the last few feet: keep lowering the lever — a stronger integral)
+          (x) => ({ vs: -clamp(skidFt(x) * 15 + tdFpm, tdFpm, 150), collGains: { ki: P.collKi * 4 } }),
+          (x) => x.onGround,
+          o.timeoutMs ?? 60000,
+          50,
+        );
+        const td = sim().lastLanding;
+        stats.landing = td ? { ...td } : null;
+        note('touchdown', td ? { rating: td.rating, fpm: td.fpm, tdKt: td.airspeedKt } : {});
+        if (r === 'crashed') return r;
+        api.phase = 'collective down';
+        let lever = fin(sim().throttle) / 100;
+        let lastT = drv.now();
+        r = await heliFly(
+          () => {
+            const now = drv.now();
+            lever = Math.max(0, lever - 0.15 * ((now - lastT) / 1000));
+            lastT = now;
+            return { coll: lever, trim: 0 };
+          },
+          (x) => x.throttle <= 0 && lever <= 0,
+          20000,
+        );
+        await heliFly(() => ({ coll: 0 }), null, 1500);
+        const end = sim().lastLanding;
+        stats.landing = end ? { ...end, ...(stats.landing || {}) } : stats.landing;
+        note('down');
+        api.phase = 'done';
+        return r === 'timeout' ? 'done' : r;
+      },
+      /**
+       * Practice autorotation to a touchdown (from ≥ ~800 ft AGL, in forward flight): the engine off
+       * (E) and the collective straight down, the rotor kept in the green with the collective (97–107 %),
+       * speedKt (55) on the attitude, straight ahead; at flareFt (50 ft skid height) a flare (nose up
+       * ~20° while it still sinks fast, then ~10°) that kills the speed and the descent and speeds
+       * the rotor up; at levelFt (10 ft) level the skids (~5°) and cushion the touchdown with the
+       * collective (the rotor's stored energy); then collective down. The engine stays off.
+       */
+      async autorotation(o = {}) {
+        const kt = o.speedKt ?? 55;
+        const flareFt = o.flareFt ?? 50;
+        const levelFt = o.levelFt ?? 10;
+        heliResetObs();
+        let s = sim();
+        heliObserve(s);
+        api.phase = 'autorotation: entry';
+        note('engine off', { skidFt: Math.round(skidFt(s)), nr: s.rotor && s.rotor.nr });
+        let lever = fin(s.throttle) / 100;
+        let lastT = drv.now();
+        // Rotor speed on the collective: down with the lever, a little up when the rotor runs fast.
+        const nrLever = (x) => {
+          const now = drv.now();
+          const dt = clamp((now - lastT) / 1000, 0, 0.5);
+          lastT = now;
+          const nr = fin(x.rotor && x.rotor.nr, 100);
+          const want = clamp((nr - 103) * 0.03, 0, 0.35);
+          lever = want > lever ? Math.min(want, lever + 0.3 * dt) : Math.max(want, lever - 0.6 * dt);
+          return lever;
+        };
+        if (s.engine !== 'off') await tap('KeyE');
+        hp.i = 0;
+        hp.lastT = null;
+        let nrMin = Infinity;
+        let nrMax = 0;
+        let vsMax = 0;
+        let r = await heliFly(
+          (x) => {
+            const nr = fin(x.rotor && x.rotor.nr, 100);
+            nrMin = Math.min(nrMin, nr);
+            nrMax = Math.max(nrMax, nr);
+            vsMax = Math.min(vsMax, x.verticalSpeed);
+            if (x.verticalSpeed < -800) api.phase = 'autorotation: descent';
+            return { coll: nrLever(x), pitch: heliPitchForSpeed(x, kt, -500, { minPitch: -8, maxPitch: 10 }), roll: null };
+          },
+          (x) => skidFt(x) <= flareFt,
+          o.timeoutMs ?? 240000,
+        );
+        note('autorotation: flare', { nrMin, nrMax, vsMax, kt: +hv.V.toFixed(0) });
+        stats.autorotation = { nrMin, nrMax, descentFpm: -vsMax };
+        if (r !== 'done') return r;
+        api.phase = 'autorotation: flare';
+        r = await heliFly(
+          // (never a big attitude close to the ground: the tail bumper is ~20° away at 15 ft)
+          (x) => ({ coll: nrLever(x), pitch: x.verticalSpeed < -400 && hv.V > 15 ? (skidFt(x) > 30 ? 20 : 12) : clamp(8 + 0.4 * (hv.V - 15), 8, skidFt(x) > 30 ? 18 : 12), roll: null }),
+          (x) => skidFt(x) <= levelFt || x.onGround,
+          20000,
+          50,
+        );
+        if (r === 'crashed') return r;
+        api.phase = 'autorotation: cushion';
+        note('autorotation: level and cushion', { kt: +hv.V.toFixed(0), vs: sim().verticalSpeed });
+        r = await heliFly(
+          (x) => {
+            const hM = Math.max(0, skidFt(x)) / M_FT;
+            const vsMs = fin(x.verticalSpeed) / 196.85;
+            return { coll: clamp(0.2 + 0.2 * (-0.4 - 0.25 * hM - vsMs), 0, 1), pitch: 5, roll: null };
+          },
+          (x) => x.onGround,
+          20000,
+          50,
+        );
+        // On the skids with no engine the assist is out and nothing holds the tail: the pedals keep the nose straight.
+        const hdgTd = sim().heading;
+        const pedalsStraight = (x) => clamp(0.06 * wrap180(hdgTd - x.heading) - 0.02 * hv.yawRate, -1, 1);
+        const td = sim().lastLanding;
+        stats.landing = td ? { ...td } : null;
+        note('touchdown', td ? { rating: td.rating, fpm: td.fpm, tdKt: td.airspeedKt } : {});
+        if (r === 'crashed') return r;
+        api.phase = 'collective down';
+        await heliFly((x) => ({ coll: 0, trim: 0, rud: pedalsStraight(x) }), (x) => x.groundSpeed < 1 && x.throttle <= 0, 20000);
+        note('down', { hdgChange: +wrap180(sim().heading - hdgTd).toFixed(1) });
+        api.phase = 'done';
+        return 'done';
+      },
+    };
+
     const api = {
       phase: 'idle',
       log,
@@ -543,6 +1348,16 @@
       get runway() { return RW; },
       set runway(v) { RW = v; },
       lib: G.qaPilotLib,
+      /** True when flying a helicopter (the profile says so, or window.sim.rotor is there). */
+      get heli() { return isHeli(); },
+      /** Helicopter manoeuvres (also reached through takeoff / climbTo / level / turn / gotoPoint / approachAndLand). */
+      liftoff: (hoverFt, o) => heli.liftoff(hoverFt, o),
+      hover: (ms, o) => heli.hover(ms, o),
+      hoverTurn: (deg, o) => heli.hoverTurn(deg, o),
+      transition: (kt, climbFpm, o) => heli.transition(kt, climbFpm, o),
+      land: (o) => heli.land(o),
+      autorotation: (o) => heli.autorotation(o),
+      heliFly,
 
       /**
        * Read the aircraft (window.sim.aircraft) and build its profile from its config (Vite dev
@@ -560,17 +1375,22 @@
             const fleet = await import(/* @vite-ignore */ `${location.origin}/src/fleet/index.ts`);
             const def = fleet.getAircraftDef(id);
             ac = def.config.aircraft; weapons = def.config.weapons; airport = def.config.world.airport;
+            setHands(def.config.controls);
           } catch {
             /* built-in numbers */
           }
         }
+        if (o.config && o.config.controls) setHands(o.config.controls);
         P = profileFor(id, ac, weapons);
+        // A helicopter (window.sim.rotor is non-null) flies with the helicopter routines, whatever its id.
+        if (sim().rotor && !P.heli) P = profileFor('b206', ac, weapons);
         RW = runwayInfo(airport);
         return P;
       },
 
-      /** Take-off from the runway: full power (afterburner for the F-16), rotate at Vr, gear + flaps up, climb out. */
+      /** Take-off from the runway: full power (afterburner for the F-16), rotate at Vr, gear + flaps up, climb out. Helicopters: lift off, hover, transition, climb out. */
       async takeoff(o = {}) {
+        if (isHeli()) return heli.takeoff(o);
         let s = sim();
         const start = { x: s.position.x, z: s.position.z };
         api.phase = 'takeoff roll';
@@ -631,6 +1451,7 @@
 
       /** Climb (or descend) to aglFt, then level off at cruise power. */
       async climbTo(aglFt, o = {}) {
+        if (isHeli()) return heli.climbTo(aglFt, o);
         api.phase = `climb to ${aglFt}`;
         const fieldAlt = sim().altitude - sim().altitudeAGL;
         const targetAlt = fieldAlt + aglFt;
@@ -654,6 +1475,7 @@
         return r;
       },
       async level(ms) {
+        if (isHeli()) return heli.level(ms);
         api.phase = 'level';
         const alt = sim().altitude;
         const hdg = sim().heading;
@@ -661,6 +1483,7 @@
       },
       /** Heading change deltaDeg (− = left) at `bank`, holding altitude. */
       async turn(deltaDeg, bank = 30) {
+        if (isHeli()) return heli.turn(deltaDeg, Math.min(bank, P.maxBankDeg));
         const s0 = sim();
         const target = wrap360(s0.heading + deltaDeg);
         const alt = s0.altitude + clamp(s0.verticalSpeed, -3000, 3000) / 6;
@@ -778,6 +1601,7 @@
        * within o.arriveM. o.until(sim) ends it early.
        */
       async gotoPoint(x, z, o = {}) {
+        if (isHeli()) return heli.gotoPoint(x, z, o);
         const fieldAlt = RW.fieldFt;
         const alt = o.altFt ?? fieldAlt + (o.aglFt ?? 2000);
         const hold = speedHold(o.speedKt ?? P.cruiseKt, o.throttle ?? P.cruiseThrottle, P.throttleIdle, o.maxThrottle ?? P.maxThrottle);
@@ -840,6 +1664,7 @@
        * touch down on the mains, brake to a stop on the centreline.
        */
       async approachAndLand(o = {}) {
+        if (isHeli()) return heli.approachAndLand(o);
         api.phase = 'final approach';
         note('approach start');
         await gearTo(true);
@@ -917,6 +1742,7 @@
        * at pattern altitude, turn base and final (one continuous 180° turn), then approachAndLand().
        */
       async rtbAndLand(o = {}) {
+        if (isHeli()) return heli.approachAndLand(o);
         const s = sim();
         const V = P.patternKt * KT_MS;
         const R = (V * V) / (9.81 * Math.tan(P.patternBankDeg * D2R));
@@ -998,6 +1824,13 @@
       },
       /** Cessna circuit from the runway: take-off, crosswind, downwind, base, final, landing to a full stop. */
       async circuit(o = {}) {
+        if (isHeli()) {
+          // Helicopter: take off, climb to pattern height, and back round to a hover and a landing on the numbers.
+          const r0 = await api.takeoff({ untilAglFt: 300 });
+          if (r0 === 'crashed') return r0;
+          await api.climbTo(o.patternAglFt ?? P.patternAglFt);
+          return heli.approachAndLand(o);
+        }
         const side = o.side ?? -1; // left-hand traffic for runway 36 (downwind to the west)
         await api.takeoff({ untilAglFt: 400 });
         if (sim().state === 'crashed') return 'crashed';
@@ -1432,13 +2265,14 @@
     densityRatio, speedOfSound, machFrom,
     BASE, profileFor,
     flareHeightFt, flareSinkFpm, flarePitch, landingPitchTarget, pathDeg,
+    interp, heliTrim, heliAilFor, heliApproachKt,
     bearingTo, lineCoords, lineHeading, pitchForVs, glidePathTargets, runwayInfo,
     createPilot,
   };
   G.qaPilotLib = lib;
 
   if (typeof window !== 'undefined' && typeof document !== 'undefined' && window.dispatchEvent) {
-    const KEYS = { BracketLeft: '[', BracketRight: ']', KeyW: 'w', KeyS: 's', KeyA: 'a', KeyD: 'd', KeyG: 'g', KeyF: 'f', KeyV: 'v', KeyQ: 'q', KeyZ: 'z', KeyT: 't', KeyX: 'x', KeyR: 'r', Space: ' ' };
+    const KEYS = { BracketLeft: '[', BracketRight: ']', KeyW: 'w', KeyS: 's', KeyA: 'a', KeyD: 'd', KeyG: 'g', KeyF: 'f', KeyV: 'v', KeyQ: 'q', KeyZ: 'z', KeyT: 't', KeyX: 'x', KeyR: 'r', KeyE: 'e', KeyK: 'k', Space: ' ' };
     const browserDriver = {
       read: () => window.sim,
       key(code, down, shift = false) {

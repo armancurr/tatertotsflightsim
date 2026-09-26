@@ -10,7 +10,7 @@
  * gauge can show, whatever garbage the state holds (tests fuzz it).
  */
 import { CONFIG, M_TO_FT, MS_TO_FPM, MS_TO_KT, RAD_TO_DEG, DEG_TO_RAD, type Config } from '../config';
-import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings } from '../types';
+import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings, RotorReadings } from '../types';
 import { stallAlphaRad, simStateLabel } from '../physics';
 import { gearWarning } from './gearWarning';
 
@@ -78,7 +78,28 @@ export interface InstrumentModel {
   turn: number;
   ball: number;
   rpm: number;
+  /** Helicopters: smoothed rotor / turbine needles, % (see rotorReadings). */
+  nr: number;
+  n2: number;
+  n1: number;
+  trq: number;
+  /**
+   * Power-turbine speed before the needle smoothing, %: locked to NR while the engine drives the
+   * rotor, decaying on its own once the freewheel has let go (engine off / failed).
+   */
+  n2Free: number;
 }
+
+/** Engine shaft power above which the turboshaft is driving the rotor (the freewheel is engaged), W. */
+const DRIVING_POWER_W = 1000;
+/** Power-turbine spin-down time constant with the engine off (the rotor keeps turning on its own), s. */
+const N2_SPIN_DOWN_TAU = 3.5;
+/** The governor holds N2 here when the engine runs but the rotor is overrunning it (split needles), %. */
+const N2_GOVERNED_PCT = 100;
+/** Low rotor RPM warning below this NR, % (the 206's horn and light). */
+export const LOW_ROTOR_RPM_PCT = 95;
+/** On the ground the low-RPM warning is armed only with the collective above this (like the real collective switch). */
+const LOW_RPM_GROUND_COLLECTIVE = 0.3;
 
 const fin = (x: number, fallback = 0): number => (Number.isFinite(x) ? x : fallback);
 const clamp = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > hi ? hi : x);
@@ -105,7 +126,7 @@ function approach(cur: number, target: number, tau: number, dt: number): number 
 }
 
 export function createInstrumentModel(_cfg: Config = CONFIG): InstrumentModel {
-  return { initialized: false, lastTime: 0, ias: 0, alt: 0, hdg: 0, vsi: 0, turn: 0, ball: 0, rpm: 0 };
+  return { initialized: false, lastTime: 0, ias: 0, alt: 0, hdg: 0, vsi: 0, turn: 0, ball: 0, rpm: 0, nr: 0, n2: 0, n1: 0, trq: 0, n2Free: 0 };
 }
 
 export function gearStateFromPos(gearPos: number): GearState {
@@ -140,7 +161,8 @@ export function rawTurnRate(state: AircraftState, cfg: Config = CONFIG): number 
  * Undamped inclinometer ball position, -1..1 (+ right). The ball follows the
  * apparent gravity (the specific force): airborne that is the aerodynamic side
  * force from sideslip and rudder (the same derivatives the physics uses) against
- * the load factor; on the ground it is the centripetal acceleration of a turn.
+ * the load factor — for a helicopter the body side force the rotor physics
+ * reports (`state.rotor.fx`); on the ground it is the centripetal acceleration of a turn.
  */
 export function rawSlipBall(state: AircraftState, controls: Controls, cfg: Config = CONFIG): number {
   const d = state.derived;
@@ -152,6 +174,12 @@ export function rawSlipBall(state: AircraftState, controls: Controls, cfg: Confi
     // Turning right (r > 0) accelerates the aircraft to the right: the ball swings out to the left.
     fLat = fin(d.groundSpeed) * fin(d.r);
     fUp = g;
+  } else if (ac.rotorcraft) {
+    // Helicopter: the rotor, tail rotor and airframe force the physics summed this step. Hovering
+    // with the tail rotor pushing sideways the ball sits a little off-centre, like the real one.
+    const mass = ac.mass > 0 ? ac.mass : 1;
+    fLat = clamp(fin(state.rotor?.fx ?? 0) / mass, -10 * g, 10 * g);
+    fUp = fin(d.loadFactor, 1) * g;
   } else {
     const rho = clamp(fin(d.density, cfg.sim.seaLevelDensity), 0, 2);
     const V = clamp(fin(d.tas), 0, 200);
@@ -168,6 +196,33 @@ export function rawSlipBall(state: AircraftState, controls: Controls, cfg: Confi
   // The ball sits opposite the lateral specific force (it "falls" toward the apparent gravity).
   const tilt = Math.atan2(-fLat, fUp);
   return clamp(fin(tilt / (cfg.hud.ballRangeDeg * DEG_TO_RAD)), -1, 1);
+}
+
+/** Raw (unsmoothed) helicopter gauge values, %, from the rotor state (defaults when it is absent). */
+export function rawRotorGauges(state: AircraftState, cfg: Config = CONFIG): { nrPct: number; n1Pct: number; torquePct: number; driving: boolean } {
+  const rc = cfg.aircraft.rotorcraft;
+  const nominal = rc && rc.rotor.nominalRpm > 0 ? rc.rotor.nominalRpm : fin(cfg.aircraft.engine.maxRpm, 1) || 1;
+  const rotor = state.rotor;
+  const e = state.engine;
+  const running = e.running === true && e.failed !== true;
+  let nrPct: number;
+  let n1Pct: number;
+  let torquePct: number;
+  let driving: boolean;
+  if (rotor) {
+    nrPct = (fin(rotor.omega) * 60) / (2 * Math.PI) / nominal * 100;
+    n1Pct = fin(rotor.n1) * 100;
+    torquePct = fin(rotor.torque) * 100;
+    driving = (running || e.starting === true) && fin(rotor.enginePower) > DRIVING_POWER_W;
+  } else {
+    // No rotor state (physics not stepped yet, tests): the engine block stands in.
+    nrPct = (fin(e.rpm) / nominal) * 100;
+    const pw = clamp(fin(e.power), 0, 1.2);
+    n1Pct = running ? 63 + 40 * pw : 0;
+    torquePct = running ? pw * 100 : 0;
+    driving = running;
+  }
+  return { nrPct: clamp(nrPct, 0, 130), n1Pct: clamp(n1Pct, 0, 120), torquePct: clamp(torquePct, 0, 150), driving };
 }
 
 /**
@@ -193,6 +248,8 @@ export function updateInstruments(
   const turnT = rawTurnRate(state, cfg);
   const ballT = rawSlipBall(state, controls, cfg);
   const rpmT = clamp(fin(state.engine.rpm), 0, L.maxRpm);
+  const heli = cfg.aircraft.rotorcraft != null;
+  const rg = heli ? rawRotorGauges(state, cfg) : null;
 
   const time = fin(state.time, m.lastTime);
   const snap = !m.initialized || time < m.lastTime - 1e-6;
@@ -205,6 +262,13 @@ export function updateInstruments(
     m.turn = turnT;
     m.ball = ballT;
     m.rpm = rpmT;
+    if (rg) {
+      m.nr = rg.nrPct;
+      m.n2Free = rg.driving || state.engine.running ? Math.min(rg.nrPct, rg.driving ? 130 : N2_GOVERNED_PCT) : 0;
+      m.n2 = m.n2Free;
+      m.n1 = rg.n1Pct;
+      m.trq = rg.torquePct;
+    }
     m.initialized = true;
   } else {
     m.ias = approach(m.ias, iasT, h.needleTau, step);
@@ -218,6 +282,17 @@ export function updateInstruments(
     m.turn = approach(m.turn, turnT, h.turnTau, step);
     m.ball = approach(m.ball, ballT, h.ballTau, step);
     m.rpm = approach(m.rpm, rpmT, h.needleTau, step);
+    if (rg) {
+      // N2: locked to NR through the freewheel while the engine drives; governed at 100 % when the
+      // rotor overruns a running engine; spinning down on its own with the engine off (needle split).
+      if (rg.driving) m.n2Free = rg.nrPct;
+      else if (state.engine.running && !state.engine.failed) m.n2Free = approach(m.n2Free, Math.min(rg.nrPct, N2_GOVERNED_PCT), h.needleTau, step);
+      else m.n2Free = approach(m.n2Free, 0, N2_SPIN_DOWN_TAU, step);
+      m.nr = approach(m.nr, rg.nrPct, h.needleTau, step);
+      m.n2 = approach(m.n2, m.n2Free, h.needleTau, step);
+      m.n1 = approach(m.n1, rg.n1Pct, h.needleTau, step);
+      m.trq = approach(m.trq, rg.torquePct, h.needleTau, step);
+    }
   }
   m.lastTime = time;
 
@@ -227,11 +302,14 @@ export function updateInstruments(
   const gear = gearStateFromPos(state.gearPos);
   const alpha = fin(d.alpha);
   const airborne = state.phase === 'airborne';
+  // No stall warning on a helicopter: body α means nothing in a hover (the air comes from above).
   const stallWarning =
-    airborne && (state.stalled || alpha >= stallAlphaRad(flapsDeg, cfg) - cfg.aircraft.stall.warningMarginDeg * DEG_TO_RAD);
+    !heli && airborne && (state.stalled || alpha >= stallAlphaRad(flapsDeg, cfg) - cfg.aircraft.stall.warningMarginDeg * DEG_TO_RAD);
+  // On a helicopter the throttle lever is the collective: throttle % reads collective %.
   const throttlePct = clamp(fin(controls.throttle) * 100, 0, 100);
   const onGround = state.onGround === true;
-  const gearHandleDown = controls.gearDown !== false;
+  // Fixed gear (skids) has no handle: it is always "down".
+  const gearHandleDown = cfg.aircraft.gear.retractable === false || controls.gearDown !== false;
   const tas = clamp(fin(d.tas), 0, 2000);
   const vsMs = clamp(fin(d.verticalSpeed), -2000, 2000);
   const flightPathDeg = tas > 1 ? Math.asin(clamp(vsMs / tas, -1, 1)) * RAD_TO_DEG : 0;
@@ -240,7 +318,7 @@ export function updateInstruments(
     cfg,
   );
 
-  return {
+  const out: HudReadings = {
     airspeedKt: m.ias,
     altitudeFt: m.alt,
     altitudeAglFt: clamp(fin(d.altitudeAGL) * M_TO_FT, 0, 99000),
@@ -278,5 +356,31 @@ export function updateInstruments(
     speedBrake: controls.speedBrake === true,
     betaDeg: clamp(fin(d.beta) * RAD_TO_DEG, -90, 90),
     flightPathDeg,
+  };
+  if (rg) out.rotor = rotorReadings(m, state, controls, rg.nrPct);
+  return out;
+}
+
+/** The helicopter's rotor instruments from the (already advanced) model. */
+function rotorReadings(m: InstrumentModel, state: AircraftState, controls: Controls, nrRawPct: number): RotorReadings {
+  const rotor = state.rotor;
+  const collective = clamp(fin(controls.throttle), 0, 1);
+  const running = state.engine.running === true && state.engine.failed !== true;
+  const crashed = state.phase === 'crashed';
+  const airborne = !crashed && state.onGround !== true && state.phase === 'airborne';
+  // The real 206's low-RPM horn is armed in flight, and on the ground once the collective is raised.
+  const armed = airborne || (!crashed && state.onGround === true && running && collective > LOW_RPM_GROUND_COLLECTIVE);
+  const torquePct = clamp(m.trq, 0, 150);
+  return {
+    nrPct: clamp(m.nr, 0, 130),
+    n2Pct: clamp(m.n2, 0, 130),
+    n1Pct: clamp(m.n1, 0, 120),
+    torquePct,
+    collectivePct: collective * 100,
+    sas: rotor ? rotor.sasOn === true : controls.stabilityAssist !== false,
+    lowRotorRpm: armed && nrRawPct < LOW_ROTOR_RPM_PCT,
+    overTorque: !crashed && fin(rotor?.torque ?? 0) > 1,
+    vrs: clamp(fin(rotor?.vrs ?? 0), 0, 1),
+    bladeStall: clamp(fin(rotor?.bladeStall ?? 0), 0, 1),
   };
 }

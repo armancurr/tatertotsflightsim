@@ -165,7 +165,8 @@ describe('control system under random input', () => {
     fc.assert(fc.property(sequenceArb, (seq) => {
       const { state } = run(seq);
       const r = resetControls(state);
-      expect(r.controls).toEqual(createControlState().controls);
+      // The helicopter stability assist (K) is a preference: it survives a reset.
+      expect(r.controls).toEqual({ ...createControlState().controls, stabilityAssist: state.controls.stabilityAssist !== false });
       expect(r.mouseYoke).toBe(state.mouseYoke);
       expect(r.landingLight).toBe(state.landingLight);
       expect(r.raw).toEqual({ elevator: 0, aileron: 0, rudder: 0 });

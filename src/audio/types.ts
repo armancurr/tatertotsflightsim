@@ -42,6 +42,38 @@ export interface AudioInputs {
    * behind, −1 ahead of the nose (jet noise directivity in exterior views). Default 0.
    */
   aft?: number;
+  /** Optional (helicopters): the rotor, drivetrain and turboshaft (absent on fixed-wing aircraft). */
+  rotor?: RotorAudioInputs;
+  /** Optional (helicopters): the low rotor RPM horn is sounding (see lowRotorRpmHorn in turboshaftMapping.ts). Default false. */
+  lowRotorRpm?: boolean;
+}
+
+/**
+ * The helicopter's rotor and engine as the sound engine sees them (from AircraftState.rotor, see
+ * createAudioInputTracker). Physical units; the voice (turboshaftMapping.ts) turns them into sound.
+ */
+export interface RotorAudioInputs {
+  /** Main-rotor speed NR, rpm (100 % = 394 rpm on the JetRanger). */
+  nrRpm: number;
+  /** Gas-producer speed N1, fraction (≈0.63 ground idle, 1 = 100 %). */
+  n1: number;
+  /** Shaft power delivered, W. */
+  enginePowerW: number;
+  /** Engine torque, fraction of the transmission limit. */
+  torque: number;
+  /** Main- and tail-rotor thrust, N. */
+  thrustN: number;
+  tailThrustN: number;
+  /** Collective actually on the blades, 0..1. */
+  collective: number;
+  /** 0..1 vortex-ring state, 0..1 retreating-blade stall, 0..1 ground effect. */
+  vrs: number;
+  bladeStall: number;
+  groundEffect: number;
+  /** Vertical speed, m/s (+ up). */
+  climbMs: number;
+  /** Horizontal deceleration (smoothed), m/s² (+ slowing down: a flare). */
+  decelMs2: number;
 }
 
 /** Output level meter (post-limiter), for QA. */
@@ -59,7 +91,7 @@ export interface AudioSystem {
   update(a: AudioInputs, dt: number): void;
   setMuted(m: boolean): void;
   readonly muted: boolean;
-  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'). */
+  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'), the JetRanger's Allison 250 + rotors ('turboshaft'). */
   setEngine(kind: EngineSound): void;
   readonly engine: EngineSound;
   /** An explosion near the wreck (the crash effects' `sim:explosion`); size 0..1, distance from the camera, m. */
@@ -141,6 +173,21 @@ export interface AudioLevels {
   crashLive: number;
   // ── A-10 TF34 turbofans (1 while that voice plays; it reuses whineHz = whistle, fanHz = N1 shaft rate…) ──
   turbofan: number;
+  // ── JetRanger turboshaft + rotors (1 while that voice plays; it reuses bladeHz = main-rotor blade passage,
+  //    whineHz = compressor whine, corePct = N1 %, roar = exhaust, starter; all 0 for the other voices) ──
+  turboshaft: number;
+  /** Main-rotor speed NR, % of nominal. */
+  rotorPct: number;
+  /** Blade slap (impulsive) level 0..1 and its sharpness 0..1 (blade–vortex interaction, stall, compressibility). */
+  slap: number;
+  slapSharpness: number;
+  /** Tail-rotor buzz level 0..1 and its blade-pass frequency, Hz. */
+  tailRotor: number;
+  tailHz: number;
+  /** Transmission whine level 0..1. */
+  gearbox: number;
+  /** Low rotor RPM horn level (0 when silent). */
+  rotorHorn: number;
   // ── Combat ──
   /** Gun gate (1 while rounds leave the barrel), its fundamental (firing rate, Hz), the exterior delay d / c (s). */
   gun: number;

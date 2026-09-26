@@ -265,3 +265,70 @@ export function softClipCurve(n: number, knee: number, ceiling: number): Float32
   }
   return c;
 }
+
+/** The two blades of a teetering rotor are never quite identical: relative strength and phase of blade 2. */
+const BLADE2 = { amp: 0.86, phase: 0.5 + 0.011 };
+
+/** Circular distance of phase `t` from `c` (both in periods), −0.5..0.5. */
+const wrap = (t: number, c: number): number => {
+  let d = t - c;
+  d -= Math.round(d);
+  return d;
+};
+
+/**
+ * One main-rotor REVOLUTION of a two-blade rotor as a gate (0..1): a pulse per blade passage.
+ * `width` is the Gaussian width in revolutions (≈0.07 = soft whoosh/thump, ≈0.012 = sharp slap).
+ * Not normalised: use it with `gateOffset` (the osc is the zero-mean, peak-normalised version).
+ */
+export function rotorGateWaveform(n: number, width: number): Float32Array {
+  const s = new Float32Array(n);
+  const w = Math.max(0.002, Math.min(0.25, Number.isFinite(width) ? width : 0.05));
+  for (let j = 0; j < n; j++) {
+    const t = j / n;
+    const d1 = wrap(t, 0);
+    const d2 = wrap(t, BLADE2.phase);
+    s[j] = Math.exp(-0.5 * (d1 / w) ** 2) + BLADE2.amp * Math.exp(-0.5 * (d2 / w) ** 2);
+  }
+  return s;
+}
+
+/**
+ * One main-rotor revolution of blade–vortex-interaction pressure: per blade passage a sharp, mostly
+ * positive-then-negative impulse (the derivative of a narrow Gaussian, asymmetric) — the "crack" of
+ * blade slap. Zero-mean, peak-normalised.
+ */
+export function bladeSlapWaveform(n: number, width = 0.006): Float32Array {
+  const s = new Float32Array(n);
+  const w = Math.max(0.002, Math.min(0.05, width));
+  const pulse = (d: number) => {
+    const x = d / w;
+    // Steeper compression than rarefaction: the impulse is lopsided like a real BVI pressure spike.
+    return -x * Math.exp(-0.5 * x * x) * (x < 0 ? 1.35 : 0.8);
+  };
+  for (let j = 0; j < n; j++) {
+    const t = j / n;
+    s[j] = pulse(wrap(t, 0)) + BLADE2.amp * pulse(wrap(t, BLADE2.phase));
+  }
+  return normalise(s);
+}
+
+/**
+ * The constant a gain's base value needs so that `base + osc` never goes negative, where `osc` plays
+ * `samples` as a PeriodicWave (WebAudio drops the DC and normalises the peak to 1). ≥ 0.
+ */
+export function gateOffset(samples: ArrayLike<number>): number {
+  const n = samples.length;
+  if (n === 0) return 0;
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += Number.isFinite(samples[i]) ? samples[i] : 0;
+  mean /= n;
+  let peak = 0;
+  let min = Infinity;
+  for (let i = 0; i < n; i++) {
+    const v = (Number.isFinite(samples[i]) ? samples[i] : 0) - mean;
+    peak = Math.max(peak, Math.abs(v));
+    min = Math.min(min, v);
+  }
+  return peak > 0 ? Math.max(0, -min / peak) : 0;
+}

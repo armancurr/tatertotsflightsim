@@ -108,6 +108,7 @@ function defaultControls(): Controls {
     engineOn: true,
     speedBrake: false,
     trigger: false,
+    stabilityAssist: true,
   };
 }
 
@@ -133,7 +134,7 @@ export function emptyInputFrame(): InputFrame {
 
 /** Return controls to the defaults (optionally overridden by a preset); keeps the pilot's preferences. */
 export function resetControls(state: ControlState, preset: Partial<Controls> = {}): ControlState {
-  const controls: Controls = { ...defaultControls(), ...preset };
+  const controls: Controls = { ...defaultControls(), stabilityAssist: state.controls.stabilityAssist !== false, ...preset };
   return {
     controls,
     mouseYoke: state.mouseYoke,
@@ -225,6 +226,7 @@ export function updateControls(
   let parkingBrake = prev.parkingBrake;
   let speedBrake = prev.speedBrake ?? false;
   let engineOn = prev.engineOn;
+  let stabilityAssist = prev.stabilityAssist !== false;
   let landingLight = state.landingLight;
   let mouseYoke = state.mouseYoke;
   const actions: SimAction[] = [];
@@ -239,6 +241,7 @@ export function updateControls(
     if (matches(keys.parkingBrake, code)) parkingBrake = !parkingBrake;
     if (matches(keys.speedBrake, code)) speedBrake = !speedBrake;
     if (matches(keys.engine, code)) engineOn = !engineOn;
+    if (matches(keys.stabilityAssist, code)) stabilityAssist = !stabilityAssist;
     if (matches(keys.landingLight, code)) landingLight = !landingLight;
     if (matches(keys.mouseYoke, code)) mouseYoke = !mouseYoke;
     if (matches(keys.reset, code)) actions.push(press.shift ? 'resetApproach' : 'reset');
@@ -314,6 +317,7 @@ export function updateControls(
     speedBrake,
     engineOn,
     trigger: isDown(keys.fireGun),
+    stabilityAssist,
   };
   return {
     state: {

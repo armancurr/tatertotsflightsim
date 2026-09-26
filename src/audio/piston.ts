@@ -11,6 +11,7 @@
  */
 import { CONFIG } from '../config';
 import type { AudioInputs, AudioLevels } from './types';
+import { zeroRotorLevels } from './turboshaftMapping';
 import { createBuilder, retireGraph, type EngineVoice, type VoiceFrame, type VoiceOutputs } from './builder';
 import {
   bladePassFrequency, clamp, cycleFrequency, engineMix, exhaustCenterHz, firingFrequency, whistleGain,
@@ -183,6 +184,7 @@ export function createPistonVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd:
       L.intake = 0;
       L.ecs = 0;
       L.hydraulic = 0;
+      zeroRotorLevels(L);
 
       let shots = 0;
       if (f.primed) {

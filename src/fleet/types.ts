@@ -45,8 +45,8 @@ export interface AircraftModelHandle {
 
 /** 'steam' six-pack (Cessna), 'jet' head-up display (F-16, A-10), 'glass' airliner PFD + EICAS overlay (747). */
 export type HudStyle = 'steam' | 'jet' | 'glass';
-/** Engine voice: Cessna O-360 + prop, F-16 F110 afterburning jet, A-10 TF34 high-bypass turbofans. */
-export type EngineSound = 'piston' | 'jet' | 'turbofan';
+/** Engine voice: Cessna O-360 + prop, F-16 F110 afterburning jet, A-10 TF34 high-bypass turbofans, JetRanger turboshaft + rotors. */
+export type EngineSound = 'piston' | 'jet' | 'turbofan' | 'turboshaft';
 
 export interface AircraftDef {
   /** Stable id used in URLs (`?aircraft=f16`) and saved settings. */

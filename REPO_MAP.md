@@ -7,7 +7,7 @@ descriptions come from each file's own opening comment, so this map stays accura
 `npm run repo-map` after adding, moving or renaming files.
 
 Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.worktrees/`
-(temporary agent workspaces) and the QA image folders. 806 files, 198,032 lines.
+(temporary agent workspaces) and the QA image folders. 837 files, 209,063 lines.
 
 ## Start here
 
@@ -33,6 +33,7 @@ Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.w
 | `src/` | All of the simulator’s source code (TypeScript). |
 | `src/aircraft/` | The 3D Cessna 172RG: fuselage, wings, tail, retractable gear, propeller, paint, lights and the cockpit with its live instrument panel. |
 | `src/aircraft/a10/` |  |
+| `src/aircraft/b206/` |  |
 | `src/aircraft/b747/` |  |
 | `src/aircraft/f16/` |  |
 | `src/audio/` | All sound, made live in the browser with the Web Audio API — engine, wind, stall horn, tyres, gear and flap motors, crash. |
@@ -67,6 +68,7 @@ Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.w
 | `tests/` | The automated tests (Vitest). Folders mirror `src/`; plus cross-cutting fuzz, functional-flight and browser end-to-end tests. |
 | `tests/aircraft/` | Tests for the 3D aircraft: gear kinematics, prop disc, wreck, geometry anchors. |
 | `tests/aircraft/a10/` |  |
+| `tests/aircraft/b206/` |  |
 | `tests/aircraft/b747/` |  |
 | `tests/aircraft/f16/` |  |
 | `tests/audio/` | Tests for the sound system (with a fake Web Audio context). |
@@ -113,15 +115,15 @@ Project root: the page (`index.html`), build/test config, the licence and the pr
 | `.gitattributes` | 5 | Line-ending rules (LF in the repository) and binary file types. |
 | `.gitignore` | 17 | Files git ignores (dependencies, build output, agent worktrees, scratch screenshots). |
 | `.nvmrc` | 2 | The Node.js version for `nvm use`. |
-| `ARCHITECTURE.md` | 499 | How the simulator is built, explained in plain English. |
+| `ARCHITECTURE.md` | 554 | How the simulator is built, explained in plain English. |
 | `CODE_OF_CONDUCT.md` | 133 | Contributor Covenant 2.1. |
 | `CONTRIBUTING.md` | 145 | How to set up, the principles, code style, visual QA and what a good pull request looks like. |
 | `ELEVATOR_PITCH.md` | 59 | What this project is, in one page. |
 | `LICENSE` | 22 | MIT licence. |
 | `PLAN.md` | 132 | The build plan: architecture contracts, agent rules and the wave history. |
-| `README.md` | 355 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
+| `README.md` | 374 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
 | `RECORD.md` | 245 | The build log: what was done, decisions, bugs found and their causes. |
-| `REPO_MAP.md` | 1417 | This file: every folder and file and what it is for. |
+| `REPO_MAP.md` | 1420 | This file: every folder and file and what it is for. |
 | `RESUME.md` | 161 | Hand-off notes: exactly where the work stopped and what to do next. |
 | `SECURITY.md` | 24 | How to report a security problem privately. |
 | `index.html` | 25 | The one web page. Holds the canvas container and the HUD layer and loads `src/main.ts`. |
@@ -162,7 +164,7 @@ Extra documentation (how the tests are organised) and shelved work waiting to be
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `ADDING_AN_AIRCRAFT.md` | 461 | Guide: add a flyable aircraft (config, flight model, weapons, 3D model, fleet entry, tests, tuning). |
+| `ADDING_AN_AIRCRAFT.md` | 485 | Guide: add a flyable aircraft (config, flight model, weapons, 3D model, fleet entry, tests, tuning). |
 | `ADDING_BOATS.md` | 226 | Guide: add a boat route or a new kind of vessel (routes, models, wakes, tests). |
 | `ADDING_LAND_FEATURES.md` | 359 | Guide: how the world is built; add a landmark system, a town, a road, water or a runway. |
 | `ADDING_VEHICLES_AND_TARGETS.md` | 275 | Guide: add range targets, enemy aircraft and road vehicle types. |
@@ -196,6 +198,7 @@ Developer preview pages — each one shows a single part of the sim (terrain, sk
 | `aircraft.html` | 20 | Developer preview page. |
 | `airport.html` | 21 | Developer preview page. |
 | `atmosphere.html` | 20 | Developer preview page. |
+| `b206.html` | 20 | Developer preview page. |
 | `b747.html` | 20 | Developer preview page. |
 | `cars.html` | 21 | Developer preview page. |
 | `carsWorld.html` | 21 | Developer preview page. |
@@ -225,7 +228,7 @@ Helper scripts: headless screenshots, the test-browser picker, the keyboard-only
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `audio-check.mjs` | 133 | Audio check in the LIVE game, in Google Chrome for Testing (never the user's Chrome), with autoplay allowed so the real AudioContext runs without a click. |
-| `qa-pilot.js` | 1454 | QA pilot — flies the simulator ONLY through keyboard events (the same path a person uses: DOM keydown/keyup → input manager → smoothed controls → physics). |
+| `qa-pilot.js` | 2288 | QA pilot — flies the simulator ONLY through keyboard events (the same path a person uses: DOM keydown/keyup → input manager → smoothed controls → physics). |
 | `repo-map.mjs` | 223 | Generates REPO_MAP.md — a map of every file in the repository with a one-line description taken from the file's own leading doc comment (so the map stays true as the code changes). |
 | `shot.mjs` | 59 | Headless screenshot + console check, for development QA. |
 | `test-browser.d.mts` | 30 | Types for scripts/test-browser.mjs. |
@@ -238,9 +241,9 @@ All of the simulator’s source code (TypeScript).
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `boot.ts` | 118 | Boot sequence (main.ts calls `boot()` with the real browser; tests pass fakes): 1. |
-| `config.ts` | 3355 | Every tunable value in the simulator lives here. |
+| `config.ts` | 3826 | Every tunable value in the simulator lives here. |
 | `main.ts` | 25 | Entry point. |
-| `types.ts` | 292 | Shared contracts between the pure simulation (physics, controls, camera, instruments) and the renderer. |
+| `types.ts` | 372 | Shared contracts between the pure simulation (physics, controls, camera, instruments) and the renderer. |
 
 ### `src/aircraft/`
 
@@ -270,7 +273,7 @@ The 3D Cessna 172RG: fuselage, wings, tail, retractable gear, propeller, paint, 
 | `prop.ts` | 148 | Two-blade constant-speed propeller: twisted, tapered blades lofted from cambered sections (aluminium front, flat-black back, red/white/red tips), the spinner, and the translucent blur disc that takes over at speed. |
 | `shape.ts` | 429 | The C172RG airframe as numbers: fuselage profile curves, wing and tail planforms, gear kinematics. |
 | `tail.ts` | 214 | Empennage: horizontal stabiliser with the elevator (one surface on a straight hinge, cut out round the rudder, trim tab on the right half), the swept fin with its long dorsal fillet, and the rudder with the counterbal… |
-| `types.ts` | 120 | Contracts of the aircraft model (src/aircraft). |
+| `types.ts` | 125 | Contracts of the aircraft model (src/aircraft). |
 | `wells.ts` | 198 | Gear well liners: the recessed tubs behind the belly openings (the livery cuts the skin there with alpha; see `wellCutDistance`). |
 | `wing.ts` | 224 | High strut-braced wing: NACA 2412 sections, constant-chord inner panel, outer panel tapered on the leading edge (straight trailing edge), 1.7° dihedral, 3° washout, drooped fibreglass tips, single streamlined strut pe… |
 | `wreck.ts` | 154 | Wreck: how the airframe is bent after a crash. |
@@ -293,6 +296,23 @@ The 3D Cessna 172RG: fuselage, wings, tail, retractable gear, propeller, paint, 
 | `stores.ts` | 300 | A-10 armament, visual: the GAU-8/A Avenger's seven-barrel cluster under the nose (built about its own axis so the model can spin it) and the Desert-Storm-style tank-busting load: stations 3 / 9 LAU-88 triple launchers… |
 | `tail.ts` | 155 | A-10 tail: the straight horizontal stabiliser across the tail cone with the elevators (one mesh, one hinge line), and the two rectangular fins as its end plates, each with its rudder in an upper and a lower section (s… |
 | `wing.ts` | 312 | A-10 wing: the thick straight wing (16 % → 13 %), a constant-chord centre section (part of the fuselage structure) and two tapered outer panels with ~6.5° dihedral ending in the drooped Hoerner tips; inboard leading-e… |
+
+### `src/aircraft/b206/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `animate.ts` | 158 | PURE mapping from the sim's visual state to the JetRanger model's joints (no three.js): rotor speeds and blur, the tip-path-plane tilt, coning/droop, blade pitch (collective, cyclic, pedals), the cockpit controls and … |
+| `cockpit.ts` | 192 | The JetRanger's cabin, seen from the pilot's RIGHT seat: floor, the two crew seats and the rear bench, the instrument panel under its glareshield hood (a live canvas texture, panel.ts) on the centre pedestal, and the … |
+| `fuselage.ts` | 252 | The JetRanger's airframe skin: the lofted cabin pod and aft fuselage (painted livery, window cut-outs), the tapered tail boom, the cabin lining (the inside of the skin), the glass, the engine/transmission fairing on t… |
+| `gear.ts` | 138 | The JetRanger's skid gear: two aluminium skid tubes with upturned toes and wear shoes, two arched cross tubes clamped under the belly, saddles and the boarding steps. |
+| `index.ts` | 418 | Procedural Bell 206B-3 JetRanger III (N206TT): lofted cabin pod with the big curved windscreen, chin windows and overhead windows, the two-piece doors, the raised transmission/engine fairing with its intake screens an… |
+| `livery.ts` | 294 | The JetRanger's paint, evaluated per texel on the analytic skin: every texel (u, v) of the skin texture is mapped back to its body-frame point on the fuselage (same (u, z) parameterisation as the loft, see shape.ts) a… |
+| `materials.ts` | 210 | JetRanger materials. |
+| `panel.ts` | 245 | The JetRanger's instrument panel face, drawn live on a canvas from InstrumentReadings: the pilot's flight instruments on the right (airspeed, attitude, altimeter / turn coordinator, heading, vertical speed — the share… |
+| `rotor.ts` | 340 | The JetRanger's rotors: the two-blade teetering main rotor (mast, swashplate, yoke and trunnion, blade grips with pitch horns and links, NACA 0012 blades with −10° twist and aluminium tip caps) and the two-blade tail … |
+| `shape.ts` | 630 | Bell 206B-3 JetRanger III: the analytic shape (PURE, no three.js). |
+| `tail.ts` | 183 | The JetRanger's tail: the horizontal stabiliser (inverted cambered section, span and chord from geometry.horizontalTail) with small vertical endplates, the swept upper fin (its tip is geometry.verticalTailTop and the … |
+| `wreck.ts` | 117 | The JetRanger after a crash (PURE point deformations and rigid transforms, three.js math only). |
 
 ### `src/aircraft/b747/`
 
@@ -345,23 +365,25 @@ All sound, made live in the browser with the Web Audio API — engine, wind, sta
 | `airTargets.ts` | 276 | The enemy aircraft's sound: a small pool of procedural voices (no samples) that follow the nearest MiG-29s, Su-25s and Mi-24s (src/audio/airTargetsMapping.ts picks them and works out the level, Doppler, air absorption… |
 | `airTargetsMapping.ts` | 188 | Pure maths for the enemy aircraft's sound (src/audio/airTargets.ts): which aircraft are heard (the nearest few within range, keeping each voice on the same aircraft while it stays in the set), and for each one its lev… |
 | `analysis.ts` | 41 | PURE signal analysis used by the audio self-test (RMS, single-bin DFT, peak search). |
-| `audio.ts` | 654 | The aircraft's sound: a fully synthesised WebAudio graph (no sound files). |
+| `audio.ts` | 670 | The aircraft's sound: a fully synthesised WebAudio graph (no sound files). |
 | `builder.ts` | 188 | Small helpers for building WebAudio graphs: a node builder that remembers every node and source it made (so a sub-graph — an engine voice — can be torn down without leaks), and `Knob`, an AudioParam that is only re-ta… |
 | `combat.ts` | 430 | Combat sound (procedural WebAudio, no samples), under the master bus (mute, pause, compressor, limiter): the gun GAU-8/A "BRRRT" (65 rds/s → a 65 Hz buzz-saw of muzzle blasts, a heavy chest thump, the torn noise of ea… |
 | `combatMapping.ts` | 106 | PURE combat-sound mappings (total functions: NaN/±∞ in → finite, bounded out): - propagation: speed-of-sound delay, air absorption (a low-pass falling with distance), level; - the gun: firing rate (the fundamental of … |
 | `crashPlan.ts` | 88 | PURE crash-sound planning: the randomised schedule of secondary explosions after an impact, level laws for crash sounds heard from a distance, the burning fire's fade, and a rate limiter for the crash effects' window … |
 | `index.ts` | 5 | Public entry point of this folder (re-exports its API). |
-| `inputs.ts` | 179 | PURE adapter: AircraftState (+ controls, camera) → AudioInputs, with the edge detection the sound engine needs (touchdown once per record, gear/flap motors while the surfaces travel, Doppler closing speed from the cam… |
-| `jet.ts` | 279 | The F-16C's voice: a GE F110-GE-129 afterburning turbofan (see jetMapping.ts for the acoustics). |
+| `inputs.ts` | 229 | PURE adapter: AircraftState (+ controls, camera) → AudioInputs, with the edge detection the sound engine needs (touchdown once per record, gear/flap motors while the surfaces travel, Doppler closing speed from the cam… |
+| `jet.ts` | 281 | The F-16C's voice: a GE F110-GE-129 afterburning turbofan (see jetMapping.ts for the acoustics). |
 | `jetMapping.ts` | 172 | PURE mappings for the F-16's GE F110-GE-129 afterburning turbofan. |
 | `mapping.ts` | 195 | PURE mappings from the flight situation to synthesiser parameters. |
 | `oneshots.ts` | 331 | One-shot sounds (touchdown chirp/thump, gear clunk, engine catch, afterburner light-off, the layered crash — boom, crunch, metal tearing, clang, debris clatter, scraping — explosions, debris impacts, fire crackle). |
-| `piston.ts` | 207 | The Cessna 172RG's voice: Lycoming O-360 (4 cylinders, 4-stroke) + 2-blade McCauley prop, plus the systems sounds of a light piston single (electric-hydraulic gear pump, flap motor, door-seal whistle). |
-| `selftest.ts` | 431 | Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext (faster than real time, no speakers needed) through the full output chain (glue compressor → limiter → soft clipper) and measu… |
-| `turbofan.ts` | 160 | The A-10C's voice: two GE TF34-GE-100A high-bypass turbofans (see turbofanMapping.ts). |
+| `piston.ts` | 209 | The Cessna 172RG's voice: Lycoming O-360 (4 cylinders, 4-stroke) + 2-blade McCauley prop, plus the systems sounds of a light piston single (electric-hydraulic gear pump, flap motor, door-seal whistle). |
+| `selftest.ts` | 489 | Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext (faster than real time, no speakers needed) through the full output chain (glue compressor → limiter → soft clipper) and measu… |
+| `turbofan.ts` | 162 | The A-10C's voice: two GE TF34-GE-100A high-bypass turbofans (see turbofanMapping.ts). |
 | `turbofanMapping.ts` | 60 | PURE mappings for the A-10's TF34-GE-100A high-bypass turbofans (aircraft sound 'turbofan'): the "Hog whistle" is the fan's blade-pass tone (28 blades × N1 shaft rate: ≈1.2 kHz at ground idle, ≈3.4 kHz at 100 % N1) ov… |
-| `types.ts` | 162 | Shared type definitions for this folder. |
-| `waves.ts` | 268 | PURE waveform and noise generators for the synthesiser. |
+| `turboshaft.ts` | 295 | The Bell 206B-3 JetRanger III's voice: Allison 250-C20J turboshaft, two-blade main and tail rotors, main transmission (see turboshaftMapping.ts for the acoustics). |
+| `turboshaftMapping.ts` | 370 | PURE mappings for the Bell 206B-3 JetRanger III (aircraft sound 'turboshaft'): an Allison 250-C20J turboshaft driving a two-blade teetering main rotor and a two-blade tail rotor through a gearbox. |
+| `types.ts` | 209 | Shared type definitions for this folder. |
+| `waves.ts` | 335 | PURE waveform and noise generators for the synthesiser. |
 
 ### `src/camera/`
 
@@ -370,7 +392,7 @@ The four camera views (cockpit, chase, fly-by, orbit), their smooth transitions 
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `cameraMath.ts` | 108 | Small pure helpers for the camera rig (no three.js). |
-| `cameraRig.ts` | 604 | PURE camera rig: aircraft pose + mouse input → CameraPose for four modes, with smooth transitions, ground clearance, teleport snapping and optional shake. |
+| `cameraRig.ts` | 620 | PURE camera rig: aircraft pose + mouse input → CameraPose for four modes, with smooth transitions, ground clearance, teleport snapping and optional shake. |
 | `threeCamera.ts` | 21 | Adapter: copy a pure CameraPose onto a THREE.PerspectiveCamera. |
 
 ### `src/combat/`
@@ -460,7 +482,7 @@ The four camera views (cockpit, chase, fly-by, orbit), their smooth transitions 
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `index.ts` | 100 | The fleet registry: every aircraft the player can choose. |
+| `index.ts` | 124 | The fleet registry: every aircraft the player can choose. |
 | `types.ts` | 66 | The fleet: every flyable aircraft is an `AircraftDef` — its full physics config (same shape as CONFIG, with its own `aircraft` section), a 3D-model factory, and which HUD and engine sound it uses. |
 
 ### `src/fx/`
@@ -473,11 +495,13 @@ Visual effects made of particles: crash fireball, smoke and debris, and tyre smo
 | `hub.ts` | 27 | The effects shared per scene between the fx system (which owns and draws them, and plays the touchdown smoke) and the crash director (which plays the crash on them and sets the slow-motion time scale). |
 | `index.ts` | 6 | Public entry point of this folder (re-exports its API). |
 | `pool.ts` | 293 | PURE particle pool: preallocated struct-of-arrays storage, a free-list, and oldest-first recycling when full. |
+| `rotorWash.ts` | 456 | PURE rotor downwash (no three.js, no DOM): where a helicopter's wash reaches the surface below it, how strong it is there, what the surface throws up, and a particle recipe that spreads it out along the ground. |
 | `shading.ts` | 205 | PURE shading helpers for the particle shader, with their GLSL twins generated from the same constants (so the tested JS and the shader cannot drift apart): fireKelvin(T) / fireColor(T) flame emission for a normalised … |
 | `shake.ts` | 68 | PURE camera feel: shake intensity (0..1, fed to CameraInput.shake — the rig squares it into an amplitude) and a subtle speed-dependent FOV widening. |
 | `sim.ts` | 990 | PURE effects simulation (no three.js): the particle pools, the continuous emitters and the recipes the crash director (src/crash) plays — a white-hot flash, the rolling fireball that turns into a black mushroom, secon… |
 | `sort.ts` | 47 | PURE, allocation-free back-to-front ordering for alpha-blended particles: a counting sort on quantised view depth (O(n + buckets), stable, deterministic). |
 | `sprites.ts` | 281 | PURE procedural particle sprites, packed in one RGBA8 atlas (4 × 2 tiles), plus a tileable 4-channel noise texture that the particle shader scrolls to animate them (flames lick upward, fireballs roll, puffs boil and f… |
+| `washRing.ts` | 136 | The rotor wash on water, drawn as ONE flat disc lying on the surface (one draw call, hidden when there is no wash on water): the wash roughens the water so it stops mirroring the sky — a darker ring around the impact … |
 
 ### `src/game/`
 
@@ -485,12 +509,12 @@ The game loop that ties everything together, the fixed-step timer, the FPS meter
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `app.ts` | 392 | The simulator application: wires the pure simulation (input → controls → fixed-step physics) to the renderer (atmosphere, aircraft, cameras) and to the auto-discovered systems in src/game/systems (terrain, water, airp… |
+| `app.ts` | 397 | The simulator application: wires the pure simulation (input → controls → fixed-step physics) to the renderer (atmosphere, aircraft, cameras) and to the auto-discovered systems in src/game/systems (terrain, water, airp… |
 | `deferredDispose.ts` | 57 | Dispose GPU resources a few rendered frames after the objects left the scene. |
 | `fps.ts` | 126 | Frame-rate meter (pure). |
 | `interpolate.ts` | 21 | Render-time interpolation between the last two fixed physics states (pure). |
 | `loop.ts` | 54 | Fixed-step accumulator (pure, no DOM). |
-| `simApi.ts` | 143 | `window.sim` — the simulator's state exposed to the page, so a browser tool (or a curious pilot in DevTools) can ask it questions while flying instead of reading pixels. |
+| `simApi.ts` | 162 | `window.sim` — the simulator's state exposed to the page, so a browser tool (or a curious pilot in DevTools) can ask it questions while flying instead of reading pixels. |
 
 ### `src/game/systems/`
 
@@ -501,7 +525,7 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | `airTargets.ts` | 160 | Enemy aircraft to shoot down (owned by src/combat/air): MiG-29 pairs on racetrack CAPs around the range, a Su-25 pair making attack passes at it, a Mi-24 pair circling low near it. |
 | `airTraffic.ts` | 88 | Other aircraft (owned by src/world/traffic): circuit traffic on the runway end most into the surface wind (36 with the windsocks' 330°/8 kt; touch-and-goes, full stops, go-arounds — held off while the player is on tha… |
 | `airport.ts` | 32 | Airport: pavement, markings, buildings, parked aircraft, lights, PAPI (owned by src/world/airport). |
-| `audio.ts` | 306 | Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop or F-16 F110 turbofan, swapped on onAircraftChange / the frame's def), wind, horns, tyres, motors, hydraulics and the crash. |
+| `audio.ts` | 306 | Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop, F-16 F110, A-10 TF34s or the JetRanger's turboshaft + rotors; swapped on onAircraftChange / the frame's def), wind, horns… |
 | `camerafx.ts` | 42 | Camera feel (owned by src/fx): a subtle speed-dependent widening of the field of view in the cockpit and chase views (fx.fov), eased so view changes never jump. |
 | `cars.ts` | 24 | Road traffic: moving cars, trucks, buses and tractors, parked cars (owned by src/world/cars). |
 | `combatfx.ts` | 189 | Combat effects (owned by src/combat/fx): listens to the combat world's events — 30 mm impacts, gun hits, Maverick detonations, vehicles destroyed — and plays them into the scene's shared fx pools (the fx system at ord… |
@@ -515,6 +539,7 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | `menu.ts` | 164 | The app chrome (owned by src/ui): the branding top bar with Tater the mascot, the aircraft picker (upper right) and the ☰ button, and the pause menu (Esc / P / ☰). |
 | `missiles.ts` | 289 | The missiles (arcade): T picks the target nearest the nose (again = the next one) — a ground vehicle or an aircraft, whichever this aircraft can shoot — LOCK after a moment, and Z launches from the next loaded rail of… |
 | `roads.ts` | 23 | Roads, bridges, street lights (owned by src/world/roads). |
+| `rotorWash.ts` | 139 | Rotor downwash (helicopters only: any aircraft whose config has a `rotorcraft` section). |
 | `ships.ts` | 67 | Ships and boats (owned by src/world/traffic): the Port Chateau marina and its moored boats, sailing yachts, motor yachts, fishing boats, the harbour launch, the bay ferry and its terminals, a container ship and a tank… |
 | `targets.ts` | 160 | The target range (owned by src/combat/targets): finds the site (main thread, cheap) and sets `combatWorld.range` at once (so `?spawn=range` works), lays the range out in a worker, then registers the vehicles with the … |
 | `terrain.ts` | 24 | Terrain LOD tiles (owned by src/world/terrain). |
@@ -531,7 +556,7 @@ Keyboard, mouse and gamepad handling, turned into smooth pilot controls.
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `controlSystem.ts` | 338 | PURE control system: raw input (held keys, key-down edges, mouse, gamepad) → smoothed `Controls` for the physics + edge-triggered sim actions for the app. |
+| `controlSystem.ts` | 342 | PURE control system: raw input (held keys, key-down edges, mouse, gamepad) → smoothed `Controls` for the physics + edge-triggered sim actions for the app. |
 | `gamepad.ts` | 78 | Gamepad adapter (optional). |
 | `inputManager.ts` | 47 | Wires the keyboard, mouse and gamepad adapters to a canvas and produces one `InputFrame` per rendered frame for the pure control system and camera rig. |
 | `keyboard.ts` | 95 | Keyboard DOM adapter: tracks held keys (KeyboardEvent.code) and key-down edges. |
@@ -553,17 +578,18 @@ The flight model of the Cessna 172RG. Pure and deterministic — it never touche
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `aero.ts` | 435 | Aerodynamics of the C172RG: lift/drag coefficient curves (with a rounded stall peak collapsing to flat-plate behaviour) and the full airframe force/moment build-up from the stability derivatives in config.aircraft.aero. |
-| `aircraft.ts` | 637 | The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config passed to step() selects the ai… |
+| `aircraft.ts` | 781 | The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config passed to step() selects the ai… |
 | `atmosphere.ts` | 40 | International Standard Atmosphere (ISA) density. |
 | `engine.ts` | 148 | Lycoming O-360 + constant-speed propeller, simplified. |
 | `fbw.ts` | 250 | Fly-by-wire (F-16 style), a pure layer between the pilot's controls and the control surfaces. |
 | `flatEnv.ts` | 16 | The default physics environment: flat ground at y = 0 everywhere, all runway, no water, no obstacles, no wind. |
 | `frames.ts` | 105 | The single source of truth for frame conventions (see the header of src/types.ts). |
-| `ground.ts` | 258 | Ground interaction: spring-damper struts at the three wheels, tyre friction (rolling resistance by surface, brakes, cornering, nosewheel steering), the tail skid, and collision detection of the structural points again… |
-| `index.ts` | 42 | Public API of the pure flight-physics module (Cessna 172RG, F-16C — the aircraft is chosen by the config passed to step()). |
+| `ground.ts` | 357 | Ground interaction: spring-damper struts at the three wheels, tyre friction (rolling resistance by surface, brakes, cornering, nosewheel steering), the tail skid, and collision detection of the structural points again… |
+| `index.ts` | 52 | Public API of the pure flight-physics module (Cessna 172RG, F-16C, A-10C, 747-400 and the Bell 206 JetRanger helicopter — the aircraft is chosen by the config passed to step()). |
 | `jet.ts` | 142 | Turbofan with afterburner (F-16: General Electric F110-GE-129), simplified. |
 | `placards.ts` | 22 | Placard speeds the instruments and the physics share, as tiny pure functions with no dependency but the config (the HUD imports this without pulling in the flight model). |
 | `recoil.ts` | 54 | Gun recoil. |
+| `rotor.ts` | 910 | Helicopter flight model: the rotors, the airframe, the drivetrain and the turboshaft, plus the stability assist and the trim solver. |
 | `trim.ts` | 144 | Steady-flight trim solver: finds the angle of attack, engine power and elevator trim that hold a given indicated airspeed on a given flight path hands-off (elevator 0, wings level, no sideslip), using exactly the same… |
 
 ### `src/preview/`
@@ -576,6 +602,7 @@ The code behind the developer preview pages in `preview/`.
 | `aircraft.ts` | 263 | Aircraft model preview: the C172RG on a light-grey apron under a gradient sky environment with a shadow-casting sun. |
 | `airport.ts` | 109 | Airport preview (real renderer + atmosphere + terrain + airport). |
 | `atmosphere.ts` | 330 | Atmosphere preview: sky, sun, haze, clouds, shadows and flare over a test world. |
+| `b206.ts` | 257 | Bell 206B-3 JetRanger model preview: the helicopter on a light apron under a gradient-sky environment with a shadowing sun. |
 | `b747.ts` | 248 | Boeing 747-400 model preview: the jumbo on a light apron under a gradient-sky environment with a shadowing sun. |
 | `cars.ts` | 114 | Vehicle models preview: every model (near LOD in the front row, far LOD behind) on a plain asphalt apron under the real sky, lights and environment map, rendered through the same material as the traffic. |
 | `carsWorld.ts` | 165 | Cars world preview (a copy of the roads preview that exposes the GPU pass timings): the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera. |
@@ -634,20 +661,20 @@ The instruments and the on-screen HUD: steam gauges, compass, warnings, messages
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `controls.ts` | 221 | The Controls page shared by the menu and the H help overlay: every binding in config.controls.keys, grouped Flight · Engine & systems · Weapons · Cameras · Sim, plus the mouse and the jet / A-10 notes. |
+| `controls.ts` | 245 | The Controls page shared by the menu and the H help overlay: every binding in config.controls.keys, grouped Flight · Engine & systems · Weapons · Cameras · Sim, plus the mouse and the jet / A-10 notes. |
 | `gMeter.ts` | 178 | The G meter: a round accelerometer like the one on an aerobatic panel — a needle for the load factor now, orange tell-tale needles that stay at the highest and lowest g since the last reset, red marks at the aircraft'… |
-| `gauges.ts` | 1542 | Canvas-2D steam gauges of the Cessna 172RG, drawn from InstrumentReadings: the six-pack (airspeed, attitude, altimeter, turn coordinator, heading, vertical speed), the tachometer, compact system cells (throttle, flaps… |
-| `gearWarning.ts` | 120 | The 172RG landing-gear warning system, PURE (no DOM, no audio): what the gear position lights show, when the intermittent gear horn sounds, and the squat-switch and gear-speed cautions. |
+| `gauges.ts` | 1866 | Canvas-2D steam gauges of the Cessna 172RG, drawn from InstrumentReadings: the six-pack (airspeed, attitude, altimeter, turn coordinator, heading, vertical speed), the tachometer, compact system cells (throttle, flaps… |
+| `gearWarning.ts` | 122 | The 172RG landing-gear warning system, PURE (no DOM, no audio): what the gear position lights show, when the intermittent gear horn sounds, and the squat-switch and gear-speed cautions. |
 | `glassHud.ts` | 1072 | The airliner "glass" HUD style (the 747, which has no head-up display): a mini Boeing PFD and a mini EICAS drawn on canvases over the 3D view. |
 | `help.ts` | 44 | The help overlay (H): the same grouped Controls page as the menu (src/ui/controls.ts) in a glass sheet over the view. |
-| `hud.ts` | 752 | The HUD overlay: DOM + canvases over the 3D view. |
+| `hud.ts` | 771 | The HUD overlay: DOM + canvases over the 3D view. |
 | `hudGlass.ts` | 487 | The jet HUD on its combiner glass (cockpit view). |
 | `hudStyle.ts` | 148 | The HUD's stylesheet (CSS-in-TS, system fonts only — nothing loads from the network). |
-| `instruments.ts` | 283 | The instrument model: turns the physics state into what the cockpit instruments show, in display units, with the behaviour of the real instruments — pitot-static needles that are smoothed, a VSI that lags, gyro attitu… |
+| `instruments.ts` | 387 | The instrument model: turns the physics state into what the cockpit instruments show, in display units, with the behaviour of the real instruments — pitot-static needles that are smoothed, a VSI that lags, gyro attitu… |
 | `jetHud.ts` | 418 | The F-16's head-up display, drawn on a transparent canvas over the centre of the view: a pitch ladder that rolls with the aircraft (a right bank rotates it counter-clockwise, exactly like the real horizon seen from th… |
 | `mascot.ts` | 162 | "Tater", the mascot of Tater's Flight Sim: a flying potato in brown-leather aviator goggles and a red cape, streaking up and to the right. |
 | `menu.ts` | 300 | The pause menu: a glass panel over the paused sim with Resume, Restart on runway, Start on final approach, the aircraft list, time of day, camera, sound and HUD switches, and the Controls page (the same sheet as the H… |
-| `messages.ts` | 149 | Text of the HUD's messages — landing toast, crash banner, annunciators, start hint and key labels. |
+| `messages.ts` | 169 | Text of the HUD's messages — landing toast, crash banner, annunciators, start hint and key labels. |
 | `picker.ts` | 271 | The aircraft picker: a compact dropdown (upper right of the top bar) listing the fleet with a one-line description each, built as an ARIA listbox so it works from the keyboard (Tab to it, Enter/↓ to open, ↑/↓/Home/End… |
 | `seekerView.ts` | 415 | The Maverick view: a picture-in-picture game camera on the locked target, with the look of the Maverick's black-and-white "white-hot" IR video (it is a camera, not a sensor model — the missiles are arcade). |
 | `topBar.ts` | 80 | The slim branding bar across the top: Tater the mascot and "Tater's Flight Sim" on the left, the aircraft picker and the ☰ menu button on the right. |
@@ -896,6 +923,13 @@ Tests for the 3D aircraft: gear kinematics, prop disc, wreck, geometry anchors.
 | `panel.test.ts` | 155 | The A-10C panel painter (src/aircraft/a10/panel.ts), in node: gauge values from the readings (unit), lamps that follow the gear / AOA / engine, and — property-based — whatever the readings (NaN, infinities, absurd val… |
 | `sidewinders.test.ts` | 82 | The two AIM-9M Sidewinders on the LAU-105 at station 11: one mesh per rail, centred on A10_WEAPONS.airMissiles.stations (where the missiles system launches them), riding with the right wing (they break away with it), … |
 
+### `tests/aircraft/b206/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `anchors.test.ts` | 406 | The JetRanger model agrees with the physics geometry (B206_AIRCRAFT.geometry / .rotorcraft) within 2–3 cm: skid bottoms on the skid contact points, the main rotor hub, mast tilt and radius, the blade tips at rest, the… |
+| `functional.test.ts` | 266 | Functional: the whole JetRanger model built in node — render budget (draw calls, triangles), build time, the fleet entry, crash break-up parts and their exact restore, the wreck and its reset, robustness to bad inputs… |
+
 ### `tests/aircraft/b747/`
 
 | File | Lines | What it is |
@@ -941,6 +975,8 @@ Tests for the sound system (with a fake Web Audio context).
 | `selftest.html` | 17 | Developer preview page. |
 | `selftest.test.ts` | 61 | Functional (node): the self-test machinery on a mock OfflineAudioContext — its timeline of suspend points really drives the synth (the crash's secondary explosions and the reset happen during the render), and the mix … |
 | `system.test.ts` | 152 | Functional: the `audio` system plug-in — engine sound per aircraft (initial aircraft, the onAircraftChange hook, and the frame's def), the crash effects' window events `sim:explosion` / `sim:impact`, reset, and the QA… |
+| `turboshaft.test.ts` | 290 | Functional: the JetRanger's 'turboshaft' voice on the mock AudioContext and the rotor fields of the input tracker — the rotor rates follow NR, slap follows thrust and vortex ring state, the low rotor RPM horn, light-o… |
+| `turboshaftMapping.test.ts` | 207 | Unit + property: the JetRanger's sound mapping (src/audio/turboshaftMapping.ts) is pure and total — blade-passage and tail-rotor rates track NR, blade slap grows with thrust, descent (BVI), vortex ring state and blade… |
 | `visibility.test.ts` | 84 | Tests. |
 | `waves.test.ts` | 192 | Tests. |
 
@@ -951,6 +987,7 @@ Tests for the camera rig: modes, transitions, ground clearance, shake.
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `cameraRig.test.ts` | 467 | Tests. |
+| `rotorVibration.test.ts` | 31 | Tests. |
 | `threeCamera.test.ts` | 44 | Tests. |
 
 ### `tests/combat/`
@@ -1044,6 +1081,7 @@ Whole flights flown by a scripted pilot against the real physics: take-off, turn
 | `crashes.test.ts` | 143 | Missions (d), (f), (g): the ways a flight ends badly, and the reset afterwards. |
 | `keyboard-takeoff.test.ts` | 87 | Play-test bug #2 regression (RECORD.md). |
 | `qa-pilot-747.test.ts` | 52 | The QA pilot's Boeing 747-400 profile (scripts/qa-pilot.js — the calibrated values validated against the 747 flight model, tests/physics/b747-qapilot.test.ts): Vr ~145–150, final at Vref30 + 5 ≈ 132 KIAS with flaps 30… |
+| `qa-pilot-b206.test.ts` | 192 | The in-page QA pilot (scripts/qa-pilot.js) flies the Bell 206B-3 JetRanger headless through the real keyboard pipeline and the real world (tests/functional/qa-pilot.harness.ts): W/S collective, arrows cyclic (through … |
 | `qa-pilot-flare.test.ts` | 167 | The QA pilot's landing (scripts/qa-pilot.js): the flare law as pure functions (unit + fast-check), then whole approaches flown headless by the SAME pilot through the real keyboard pipeline and physics (tests/functiona… |
 | `qa-pilot-gunrun.test.ts` | 63 | Functional (headless, the real physics + the real keyboard pipeline + the pure gun core): the QA pilot's gunRun() — set-up on the attack axis, a long straight run-in lined up on the target, a gentle push-over (positiv… |
 | `qa-pilot.harness.ts` | 264 | Headless harness for scripts/qa-pilot.js: runs the SAME in-page QA pilot against the real physics in node, through the real keyboard pipeline (held keys + key-down edges → updateControls → step at 120 Hz), with a virt… |
@@ -1058,7 +1096,7 @@ Property ("fuzz") tests with fast-check: thousands of random inputs must never b
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `camera.fuzz.test.ts` | 167 | Property tests for the pure camera rig (src/camera/cameraRig.ts): random aircraft trajectories (positions up to ±50 km, any orientation, velocities including zero, occasional teleports), random mouse input, random mod… |
-| `controls.fuzz.test.ts` | 175 | Property tests for the pure control system (src/input/controlSystem.ts): random input-frame sequences — random held key sets (conflicting keys included), random key presses (with and without Shift), random mouse and g… |
+| `controls.fuzz.test.ts` | 176 | Property tests for the pure control system (src/input/controlSystem.ts): random input-frame sequences — random held key sets (conflicting keys included), random key presses (with and without Shift), random mouse and g… |
 | `frames.fuzz.test.ts` | 116 | Property tests for src/physics/frames.ts — the frame conventions every module relies on. |
 | `loop.fuzz.test.ts` | 153 | Property tests for the frame plumbing: the fixed-step accumulator (src/game/loop.ts), the fps meter (src/game/fps.ts) and render interpolation (src/game/interpolate.ts), under random frame-time sequences. |
 | `math.fuzz.test.ts` | 151 | Property tests for src/math (quat.ts, vec3.ts). |
@@ -1079,6 +1117,7 @@ Tests for the particle effects: pooling, fire/smoke simulation, shake.
 | `fxSystemShake.test.ts` | 35 | Tests. |
 | `look.test.ts` | 158 | The look of the effects, as numbers: a fire colour ramp that is always a flame colour (never pink/white-blue), a screen-coverage limiter so nothing swamps the camera, a short fireball that turns into dark smoke, small… |
 | `pool.test.ts` | 194 | Tests. |
+| `rotorWash.test.ts` | 323 | Tests. |
 | `shading.test.ts` | 188 | The particle look, as pure numbers (each has a GLSL twin generated from the same constants): a Planck-chromaticity fire ramp (white-yellow core → deep orange/red edges), per-particle variation from the seed, age erosi… |
 | `shake.test.ts` | 95 | Tests. |
 | `sim.test.ts` | 187 | Tests. |
@@ -1127,6 +1166,9 @@ Tests for every rule of the flight model: lift, drag, thrust, stall, ground, lan
 | `aircraft-state.test.ts` | 187 | Tests. |
 | `atmosphere.test.ts` | 25 | Tests. |
 | `attitude.test.ts` | 148 | Heading, pitch, roll and yaw: the rotational response to the controls. |
+| `b206-fuzz.test.ts` | 146 | Bell 206 JetRanger property tests (fast-check): random control scripts — collective, cyclic, pedals, trim, the engine switch and the stability assist — flown for 30 s from the runway, from a hover, from cruise and fro… |
+| `b206-helpers.ts` | 44 | Shared helpers for the Bell 206B-3 JetRanger tests: its fleet config, a trimmed state, a collective "height hold" pilot and read-outs in the units the flight manual uses. |
+| `b206.test.ts` | 308 | Bell 206B-3 JetRanger III flight model (src/physics/rotor.ts): performance against the flight manual and published data, the characteristic helicopter behaviours (torque reaction, translating tendency, translational l… |
 | `b747-flight.test.ts` | 425 | Boeing 747-400 functional flight tests: scripted pilots fly the fleet config through step() on the runway world and the numbers are checked against the real aircraft (flown light at 220 t, ISA): take-off (flaps 10, Vr… |
 | `b747-fuzz.test.ts` | 142 | Boeing 747-400 property tests (fast-check): random control scripts — column, wheel, rudder, thrust, trim, flaps, gear, brakes, speed brake, engines — flown for 30 s from the runway, from the approach and from random a… |
 | `b747-helpers.ts` | 196 | Shared helpers for the Boeing 747-400 tests (tests/physics/b747*.test.ts): the fleet's 747 config, a flyer on the runway world, small scripted-pilot loops, and a keyboard pilot that flies through the real control syst… |
@@ -1229,6 +1271,7 @@ Tests for the instruments, gauges, HUD layout, gear warning, messages and loadin
 | `geoCtx.ts` | 323 | A geometry-tracking CanvasRenderingContext2D stand-in for the gauge tests: it applies translate/rotate/scale/setTransform/save/restore like a real canvas and records every stroked segment, filled polygon, arc, text an… |
 | `glassHud.fuzz.test.ts` | 126 | Glass HUD fuzz: the layout on any viewport from 640×480 to 4K in every camera mode (on screen, below the top bar, no overlaps with the chip or each other, the centre third clear, messages outside it), and the painters… |
 | `glassHud.test.ts` | 303 | Tests. |
+| `heliInstruments.test.ts` | 508 | Tests. |
 | `hud.jet.test.ts` | 123 | Tests. |
 | `hud.test.ts` | 350 | Tests. |
 | `hudGlass.test.ts` | 161 | The jet HUD on its combiner glass (src/ui/hudGlass.ts): unit (projection + clip maths with real three.js cameras), fuzz (random head-look angles and attitudes never give NaN; everything is drawn under a clip equal to … |

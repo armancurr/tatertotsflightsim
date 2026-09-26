@@ -1,7 +1,8 @@
 /**
  * The aircraft's sound: a fully synthesised WebAudio graph (no sound files).
  *
- *   engine voice (swapped per aircraft: piston.ts = Cessna O-360 + prop, jet.ts = F-16 F110 turbofan)
+ *   engine voice (swapped per aircraft: piston.ts = Cessna O-360 + prop, jet.ts = F-16 F110 turbofan,
+ *                 turbofan.ts = A-10 TF34s, turboshaft.ts = JetRanger Allison 250 + rotors)
  *     ├─ exterior path ─┐
  *   rolling rumble, brake scrub, touchdown one-shots ─┤→ aircraft bus → view LP ×2 + shelf
  *                                                        (muffled cabin / open air, air absorption)
@@ -30,6 +31,8 @@ import { createBuilder, noiseBuffer, type EngineVoice, type Knob, type VoiceOutp
 import { createPistonVoice } from './piston';
 import { createJetVoice } from './jet';
 import { createTurbofanVoice } from './turbofan';
+import { createTurboshaftVoice } from './turboshaft';
+import { TURBOSHAFT } from './turboshaftMapping';
 import { createCombatAudio, type CombatAudio, type CombatAudioApi } from './combat';
 import { createAirAudio, type AirAudio, type AirAudioApi } from './airTargets';
 
@@ -81,6 +84,7 @@ interface Graph {
   scrub: Knob;
   horn: Knob;
   gearHorn: Knob;
+  rotorHorn: Knob;
   fire: Knob;
   fireLP: Knob;
   acFx: GainNode;
@@ -178,6 +182,12 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
   const gearHorn = gain(0);
   chain(ghOsc, ghSpeaker, ghBody, ghGate, gearHorn, cabin);
 
+  // ── Low rotor RPM horn (helicopters): a steady electronic tone through the same kind of cabin speaker ──
+  const rhOsc = osc(b.wave(() => beepWaveform(1024), 14, 'beep'), TURBOSHAFT.hornHz);
+  const rhSpeaker = filter('bandpass', TURBOSHAFT.hornHz * 1.6, 0.6);
+  const rotorHorn = gain(0);
+  chain(rhOsc, rhSpeaker, rotorHorn, cabin);
+
   // ── Fire bed after a crash: low roar with a slow, irregular flutter ──
   const fireSrc = loop(brown);
   const fireLP = filter('lowpass', 650, 0.7);
@@ -211,6 +221,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
     scrub: knob(scrub.gain),
     horn: knob(horn.gain),
     gearHorn: knob(gearHorn.gain),
+    rotorHorn: knob(rotorHorn.gain),
     fire: knob(fire.gain),
     fireLP: knob(fireLP.frequency, 1e-3),
     acFx,
@@ -222,7 +233,7 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
 }
 
 const fin = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
-const isEngine = (k: unknown): k is EngineSound => k === 'piston' || k === 'jet' || k === 'turbofan';
+const isEngine = (k: unknown): k is EngineSound => k === 'piston' || k === 'jet' || k === 'turbofan' || k === 'turboshaft';
 
 export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   const seed = opts.seed ?? 4711;
@@ -255,6 +266,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     hydraulic: 0, aft: 0, engineVoices: 0, crashes: 0, explosions: 0, impacts: 0, pendingExplosions: 0, crashLive: 0,
     turbofan: 0, gun: 0, gunHz: 0, gunDelayS: 0, motor: 0, combatLive: 0, impactsPlayed: 0, booms: 0, launches: 0,
     airVoices: 0, airLevel: 0, airDoppler: 1,
+    turboshaft: 0, rotorPct: 0, slap: 0, slapSharpness: 0, tailRotor: 0, tailHz: 0, gearbox: 0, rotorHorn: 0,
   };
 
   const makeVoice = (g: Graph, kind: EngineSound): EngineVoice =>
@@ -262,7 +274,9 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
       ? createJetVoice(g.ctx, g.voiceOut, g.kit.rnd)
       : kind === 'turbofan'
         ? createTurbofanVoice(g.ctx, g.voiceOut, g.kit.rnd)
-        : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
+        : kind === 'turboshaft'
+          ? createTurboshaftVoice(g.ctx, g.voiceOut, g.kit.rnd)
+          : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
   let combat: CombatAudio | null = null;
   /** Always present; a no-op until the context exists (every call is guarded). */
   const combatApi: CombatAudioApi = {
@@ -432,6 +446,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     g.horn.set(L.horn, t, 0.025);
     L.gearHorn = a.gearWarning === true && !crashed ? A.gearHornVolume : 0;
     g.gearHorn.set(L.gearHorn, t, 0.02);
+    L.rotorHorn = a.lowRotorRpm === true && !crashed ? TURBOSHAFT.hornVolume : 0;
+    g.rotorHorn.set(L.rotorHorn, t, 0.02);
 
     // Touchdown
     const kit = g.kit;

@@ -14,9 +14,9 @@ import { CONFIG, type Config } from '../config';
 import type { AircraftState, CameraMode, Controls, InstrumentReadings } from '../types';
 import {
   drawAirspeed, drawAttitude, drawAltimeter, drawHeading, drawVsi, drawTachometer, drawSystemsStrip, drawCompassTape, drawPanel,
-  systemsStripWidth, type GaugeDrawer,
+  drawDualTach, drawTorque, makeHeliAirspeed, systemsStripWidth, type GaugeDrawer, type StripKind,
 } from './gauges';
-import { annunciationActive, annunciationList, crashText, describeTouchdown, startHint, type AnnunciationId, type MessageLevel } from './messages';
+import { annunciationActive, annunciationList, crashText, describeTouchdown, keyLabel, startHint, type AnnunciationId, type MessageLevel } from './messages';
 import { createHelpOverlay } from './help';
 import { installHudStyle, removeHudStyle } from './hudStyle';
 import { topBarHeight } from './topBar';
@@ -51,6 +51,10 @@ export interface HudLayout {
   right: Rect;
   strip: Rect;
   stripRows: 1 | 2;
+  /** Which system cells the strip holds: the fixed-wing set, or the helicopter's (collective, TRQ, N1, NR, SAS). */
+  stripKind: StripKind;
+  /** Gauges in the right cluster: 3 (heading · VSI · tach), 4 for a helicopter (… dual tach · torque). */
+  rightGauges: number;
   compass: Rect;
   /** False for the jet (its HUD has its own heading tape). */
   compassVisible: boolean;
@@ -75,6 +79,8 @@ const clamp = (x: number, lo: number, hi: number): number => (x < lo ? lo : x > 
  * Pure HUD layout for a viewport (CSS px). `style` 'jet' drops the six-pack and the compass tape and
  * adds the head-up display box in the centre; 'glass' (747) swaps the six-pack, compass and strip for
  * the mini PFD + EICAS blocks of src/ui/glassHud.ts; everything sits below the branding top bar.
+ * A helicopter (steam style, `cfg.aircraft.rotorcraft` set) gets a fourth gauge in the right
+ * cluster (dual tach + torquemeter) and the helicopter's systems strip.
  */
 export function computeHudLayout(width: number, height: number, cfg: Config = CONFIG, mode: HudMode = 'normal', style: HudStyle = 'steam'): HudLayout {
   const w = Number.isFinite(width) && width > 0 ? width : 1024;
@@ -88,19 +94,23 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   const jetStyle = style === 'jet';
   const glassStyle = style === 'glass';
   const clustersVisible = mode !== 'cockpitHidden' && !jetStyle && !glassStyle;
+  const heli = !jetStyle && !glassStyle && cfg.aircraft.rotorcraft != null;
+  const stripKind: StripKind = heli ? 'heli' : 'fixed';
+  const rightGauges = heli ? 4 : 3;
   const margin = Math.round(clamp(w * 0.012, 10, 20));
   const pad = Math.max(4, Math.round(g * 0.07));
   const gap = Math.max(4, Math.round(g * 0.08));
   const cw = 3 * g + 2 * gap + 2 * pad;
+  const cwR = rightGauges * g + (rightGauges - 1) * gap + 2 * pad;
   const ch = g + 2 * pad;
   const cy = h - margin - ch;
   const left: Rect = { x: margin, y: cy, w: cw, h: ch };
-  const right: Rect = { x: w - margin - cw, y: cy, w: cw, h: ch };
+  const right: Rect = { x: w - margin - cwR, y: cy, w: cwR, h: ch };
 
   // Systems strip: one slim row if it fits, else two rows of three, else a row above the clusters.
   const cell0 = Math.round(clamp(g0 * 0.42, 34, 54));
-  const oneRow = systemsStripWidth(1, 1);
-  const twoRow = systemsStripWidth(1, 2);
+  const oneRow = systemsStripWidth(1, 1, stripKind);
+  const twoRow = systemsStripWidth(1, 2, stripKind);
   let strip: Rect;
   let stripRows: 1 | 2 = 1;
   if (!clustersVisible && mode === 'cockpitHidden' && !jetStyle) {
@@ -180,6 +190,8 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     right,
     strip,
     stripRows,
+    stripKind,
+    rightGauges,
     compass,
     compassVisible: !jetStyle && !glassStyle,
     jet,
@@ -325,14 +337,18 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     }
     return { el: c, ctx, w: 0, h: 0, dpr: 1, s0: NaN, s1: NaN, s2: NaN, s3: NaN, dirty: true };
   };
-  const gauges: { slot: Slot; draw: GaugeDrawer; kind: number }[] = [
-    { slot: slot(leftEl, 'airspeed'), draw: drawAirspeed, kind: 0 },
-    { slot: slot(leftEl, 'attitude'), draw: drawAttitude, kind: 1 },
-    { slot: slot(leftEl, 'altimeter'), draw: drawAltimeter, kind: 2 },
-    { slot: slot(rightEl, 'heading'), draw: drawHeading, kind: 3 },
-    { slot: slot(rightEl, 'vsi'), draw: drawVsi, kind: 4 },
-    { slot: slot(rightEl, 'tach'), draw: drawTachometer, kind: 5 },
+  // A helicopter: its own airspeed dial (0–150 kt, no flap/stall arcs), the dual tach (NR + N2) in
+  // the tach slot and a torquemeter (with N1) next to it.
+  const heli = style === 'steam' && cfg.aircraft.rotorcraft != null;
+  const gauges: { slot: Slot; draw: GaugeDrawer; kind: number; col: number }[] = [
+    { slot: slot(leftEl, 'airspeed'), draw: heli ? makeHeliAirspeed(cfg.aircraft.limits.vneKt) : drawAirspeed, kind: 0, col: 0 },
+    { slot: slot(leftEl, 'attitude'), draw: drawAttitude, kind: 1, col: 1 },
+    { slot: slot(leftEl, 'altimeter'), draw: drawAltimeter, kind: 2, col: 2 },
+    { slot: slot(rightEl, 'heading'), draw: drawHeading, kind: 3, col: 0 },
+    { slot: slot(rightEl, 'vsi'), draw: drawVsi, kind: 4, col: 1 },
+    heli ? { slot: slot(rightEl, 'dualTach'), draw: drawDualTach, kind: 6, col: 2 } : { slot: slot(rightEl, 'tach'), draw: drawTachometer, kind: 5, col: 2 },
   ];
+  if (heli) gauges.push({ slot: slot(rightEl, 'torque'), draw: drawTorque, kind: 7, col: 3 });
   const stripSlot = slot(stripEl);
   const compassSlot = slot(compassEl);
   const jetEl = div('fsh-jet', instruments);
@@ -390,6 +406,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   let lastYoke: boolean | null = null;
   let lastTod: string | null = null;
   let lastLight: boolean | null = null;
+  let lastSas: boolean | null = null;
   let hintTime = 0;
   let lastTouchdown: number | null = null;
   let lastCrash: string | null = null;
@@ -453,10 +470,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     place(leftEl, L.left);
     place(rightEl, L.right);
     const b = 1; // glass border
-    gauges.forEach((gs, i) => {
-      const k = i % 3;
-      sizeSlot(gs.slot, L.pad - b + k * (L.gauge + L.gap), L.pad - b, L.gauge, L.gauge, dpr);
-    });
+    for (const gs of gauges) sizeSlot(gs.slot, L.pad - b + gs.col * (L.gauge + L.gap), L.pad - b, L.gauge, L.gauge, dpr);
     place(stripEl, L.strip);
     sizeSlot(stripSlot, 0, 0, L.strip.w - 2 * b, L.strip.h - 2 * b, dpr);
     place(compassEl, L.compass);
@@ -503,6 +517,8 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
           case 2: a = Math.round(r.altitudeFt * 2); break;
           case 3: a = Math.round(r.headingDeg * 20); break;
           case 4: a = Math.round(r.verticalSpeedFpm); break;
+          case 6: a = Math.round((r.rotor?.nrPct ?? 0) * 10); b = Math.round((r.rotor?.n2Pct ?? 0) * 10); break;
+          case 7: a = Math.round((r.rotor?.torquePct ?? 0) * 10); b = Math.round((r.rotor?.n1Pct ?? 0) * 10); break;
           default: a = Math.round(r.rpm / 2); break;
         }
         if (!changed(s, a, b, 0, 0)) continue;
@@ -513,17 +529,14 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     const gearCode = r.gear === 'down' ? 0 : r.gear === 'up' ? 1 : 2;
     const engCode = r.engineStatus === 'RUNNING' ? 0 : r.engineStatus === 'STARTING' ? 1 : r.engineStatus === 'OFF' ? 2 : 3;
     const flags = gearCode + 4 * (r.gearLight === 'green' ? 0 : r.gearLight === 'red' ? 1 : 2) + 16 * (r.brakes ? 1 : 0) + 32 * (r.parkingBrake ? 1 : 0) + 64 * engCode;
-    if (
-      changed(
-        stripSlot,
-        Math.round(r.throttlePct) + 1000 * Math.round(r.trimPct + 100),
-        Math.round(r.flapsDeg * 10) + 10000 * Math.round(r.flapsTargetDeg),
-        flags,
-        Math.round(r.rpm / 10),
-      )
-    ) {
+    const rot = r.rotor;
+    const k0 = rot ? Math.round(rot.collectivePct) + 1000 * Math.round(rot.torquePct) : Math.round(r.throttlePct) + 1000 * Math.round(r.trimPct + 100);
+    const k1 = rot ? Math.round(rot.n1Pct) + 1000 * Math.round(rot.nrPct) : Math.round(r.flapsDeg * 10) + 10000 * Math.round(r.flapsTargetDeg);
+    const k2 = rot ? engCode + 4 * (rot.sas ? 1 : 0) + 8 * (rot.lowRotorRpm ? 1 : 0) : flags;
+    const k3 = rot ? Math.round(rot.n2Pct) : Math.round(r.rpm / 10);
+    if (changed(stripSlot, k0, k1, k2, k3)) {
       const c = begin(stripSlot);
-      if (c) drawSystemsStrip(c, 0, 0, stripSlot.w, stripSlot.h, r, layout.stripRows);
+      if (c) drawSystemsStrip(c, 0, 0, stripSlot.w, stripSlot.h, r, layout.stripRows, layout.stripKind);
     }
     if (layout.compassVisible && changed(compassSlot, Math.round(r.headingDeg * 10), 0, 0, 0)) {
       const c = begin(compassSlot);
@@ -626,6 +639,12 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     const light = typeof info.landingLight === 'boolean' ? info.landingLight : null;
     if (light !== null && lastLight !== null && light !== lastLight) flash(light ? 'Landing light ON' : 'Landing light OFF', 'info', 1.4);
     lastLight = light;
+    // Helicopter stability assist (K): absent = on.
+    const sas = heli ? info.controls.stabilityAssist !== false : null;
+    if (sas !== null && lastSas !== null && sas !== lastSas) {
+      flash(`Stability assist ${sas ? 'ON' : 'OFF'} (${keyLabel(cfg.controls.keys.stabilityAssist?.[0] ?? 'KeyK')})`, sas ? 'info' : 'warn', 1.8);
+    }
+    lastSas = sas;
     const chipDirty = info.cameraMode !== lastCamera || info.mouseYoke !== lastYoke || info.timeOfDay !== lastTod;
     lastCamera = info.cameraMode;
     lastYoke = info.mouseYoke;
@@ -641,7 +660,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       }
     }
 
-    // Annunciators; STALL and GEAR blink.
+    // Annunciators; STALL, GEAR and LOW ROTOR RPM blink.
     const dim = Math.floor(time * cfg.hud.stallBlinkHz * 2) % 2 === 1;
     const gearDim = Math.floor(time * cfg.hud.gearWarning.blinkHz * 2) % 2 === 1;
     for (const a of anns) {
@@ -650,7 +669,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
         a.on = on;
         a.el.hidden = !on;
       }
-      const d = on && ((a.id === 'stall' && dim) || (a.id === 'gearUnsafe' && gearDim));
+      const d = on && (((a.id === 'stall' || a.id === 'lowRotor') && dim) || (a.id === 'gearUnsafe' && gearDim));
       if (d !== a.dim) {
         a.dim = d;
         a.el.classList.toggle('fsh-dim', d);

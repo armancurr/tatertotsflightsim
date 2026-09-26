@@ -8,7 +8,7 @@ import { B747_AIRCRAFT, CONFIG, type Config } from '../config';
 import { keyLabel } from './messages';
 
 export type KeyAction = keyof Config['controls']['keys'];
-export type ControlGroupId = 'flight' | 'engine' | 'weapons' | 'cameras' | 'sim';
+export type ControlGroupId = 'helicopter' | 'flight' | 'engine' | 'weapons' | 'cameras' | 'sim';
 
 export interface ControlRow {
   /** What it does. */
@@ -40,6 +40,7 @@ const LAYOUT: { id: ControlGroupId; title: string; rows: RowSpec[] }[] = [
       { action: 'Rudder left / right', parts: ['yawLeft', '/', 'yawRight'] },
       { action: 'Elevator trim — nose down / up', parts: ['trimNoseDown', '/', 'trimNoseUp'] },
       { action: 'Mouse yoke on / off', parts: ['mouseYoke'] },
+      { action: 'Stability assist on / off (helicopter)', parts: ['stabilityAssist'] },
     ],
   },
   {
@@ -105,11 +106,33 @@ const LAYOUT: { id: ControlGroupId; title: string; rows: RowSpec[] }[] = [
   },
 ];
 
-/** Every binding, grouped. Bindings not in the layout (added to the config later) are appended to Sim. */
+/**
+ * Flying a helicopter (`cfg.aircraft.rotorcraft` set): the same keys, what they do in a JetRanger.
+ * Shown first, as its own block, when the flown aircraft is a helicopter.
+ */
+const HELICOPTER: { id: ControlGroupId; title: string; rows: RowSpec[] } = {
+  id: 'helicopter',
+  title: 'Helicopter',
+  rows: [
+    { action: 'Collective up / down', parts: ['throttleUp', '/', 'throttleDown'], note: () => 'Raise to lift off, lower to descend; watch the torque (100 % max) and rotor RPM' },
+    { action: 'Cyclic — nose down / up', parts: ['pitchDown', '/', 'pitchUp'] },
+    { action: 'Cyclic — left / right', parts: ['rollLeft', '/', 'rollRight'] },
+    { action: 'Pedals — yaw left / right', parts: ['yawLeft', '/', 'yawRight'], note: () => 'Left pedal against the rotor torque as you pull power' },
+    { action: 'Attitude reference — nose down / up', parts: ['trimNoseDown', '/', 'trimNoseUp'] },
+    { action: 'Engine start / stop', parts: ['engine'] },
+    { action: 'Stability assist on / off', parts: ['stabilityAssist'], note: () => 'Off = the raw helicopter: no attitude, heading or hover hold' },
+  ],
+};
+
+/**
+ * Every binding, grouped (a helicopter block first when the aircraft is one). Bindings not in the
+ * layout (added to the config later) are appended to Sim.
+ */
 export function controlGroups(cfg: Config = CONFIG): ControlGroup[] {
   const keys = cfg.controls.keys as Record<string, readonly string[]>;
   const listed = new Set<string>();
-  const groups: ControlGroup[] = LAYOUT.map(({ id, title, rows }) => ({
+  const layout = cfg.aircraft.rotorcraft ? [HELICOPTER, ...LAYOUT] : LAYOUT;
+  const groups: ControlGroup[] = layout.map(({ id, title, rows }) => ({
     id,
     title,
     rows: rows.map(({ action, parts, note }) => {
@@ -144,6 +167,7 @@ export function controlNotes(cfg: Config = CONFIG): string[] {
     `A-10: the tank range is north of the airport — follow the RANGE caret. ${keyLabel(cfg.controls.keys.lockTarget[0])} locks a Maverick on the vehicle nearest the nose, ${keyLabel(cfg.controls.keys.fireMissile[0])} launches it at LOCK; hold ${keyLabel(cfg.controls.keys.fireGun[0])} to fire the gun at the pipper (hit tanks from above or behind).`,
     `F-16 and A-10: point the nose at an enemy aircraft, ${keyLabel(cfg.controls.keys.lockTarget[0])} locks a Sidewinder on it, ${keyLabel(cfg.controls.keys.fireMissile[0])} launches it.`,
     `747: flaps 10 for take-off, rotate at about ${B747_AIRCRAFT.limits.vrKt} kt and ease it off; ${keyLabel(cfg.controls.keys.speedBrake[0])} works the spoilers. Heavy and slow to answer — small inputs, early.`,
+    `JetRanger (helicopter): ${keyLabel(cfg.controls.keys.throttleUp[0])}/${keyLabel(cfg.controls.keys.throttleDown[0])} is the collective, the arrows the cyclic, ${keyLabel(cfg.controls.keys.yawLeft[0])}/${keyLabel(cfg.controls.keys.yawRight[0])} the pedals; ${keyLabel(cfg.controls.keys.stabilityAssist?.[0] ?? 'KeyK')} turns the stability assist off for the raw machine. Keep rotor RPM in the green and torque under 100 %.`,
   ];
 }
 

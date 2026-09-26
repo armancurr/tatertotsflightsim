@@ -23,6 +23,8 @@ export interface GroundInput {
   parkingBrake: boolean;
   rudder: number;
   engineRunning: boolean;
+  /** Helicopters: where each skid contact is stuck (see GroundOutput.skidAnchors). */
+  skidAnchors?: readonly (Vec3 | null)[];
 }
 
 export interface GroundOutput {
@@ -38,6 +40,8 @@ export interface GroundOutput {
   tailScrape: boolean;
   /** Set when this contact destroys the aircraft. */
   crashReason: string | null;
+  /** Helicopters: the skid contacts' stick points after this step (null = not touching). */
+  skidAnchors?: (Vec3 | null)[];
 }
 
 /** Map a structural point that touched the surface to a crash reason. */
@@ -65,9 +69,98 @@ function crashReasonFor(name: string, impactMs: number, gearDown: boolean, cfg: 
     case 'finTop':
     case 'cabinRoof':
       return 'Flipped over';
+    case 'tailRotorTip':
+      return 'Tail rotor strike';
     default:
+      if (name.startsWith('rotorTip')) return 'Main rotor strike';
       return 'Hit terrain';
   }
+}
+
+/**
+ * Skid gear (helicopters): each skid contact is a spring-damper along the surface normal with
+ * isotropic sliding friction (no wheels: the skids grip until pushed, then slide — sliding sideways
+ * with the skid dug in is how a dynamic roll-over starts). Reports [front, left skid, right skid].
+ */
+function skidContacts(inp: GroundInput, env: Environment, cfg: Config, ditchOk: boolean,
+  addForce: (r: Vec3, Fx: number, Fy: number, Fz: number) => void, out: GroundOutput): boolean {
+  const sk = cfg.aircraft.rotorcraft!.skids;
+  const { position: pos, velocity: vel, orientation: q, omegaWorld: w } = inp;
+  const anchors: (Vec3 | null)[] = sk.points.map(() => null);
+  out.skidAnchors = anchors;
+  for (let i = 0; i < sk.points.length; i++) {
+    const b = sk.points[i];
+    const r = bodyToWorld(q, b);
+    const px = pos.x + r.x;
+    const py = pos.y + r.y;
+    const pz = pos.z + r.z;
+    const su = surfaceY(env, px, pz);
+    if (su.wet) {
+      if (py < su.top && !ditchOk) {
+        out.crashReason = 'Ditched in water';
+        return false;
+      }
+      continue;
+    }
+    const n = env.groundNormal ? env.groundNormal(px, pz) : UP;
+    const d = (su.ground - py) * n.y;
+    if (d <= 0) continue;
+    const vx = vel.x + (w.y * r.z - w.z * r.y);
+    const vy = vel.y + (w.z * r.x - w.x * r.z);
+    const vz = vel.z + (w.x * r.y - w.y * r.x);
+    const vn = vx * n.x + vy * n.y + vz * n.z;
+    const c = sk.damper * (vn > 0 ? sk.reboundFactor : 1);
+    let Fn = sk.spring * d - c * vn;
+    if (d > sk.travel) Fn += sk.spring * cfg.aircraft.ground.bottomOutStiffness * (d - sk.travel) - c * vn;
+    // Which skid: [0] front (either front contact), [1] left, [2] right.
+    const slot = b.x < 0 ? 1 : 2;
+    const front = b.z < 0;
+    if (front) out.wheelContact[0] = true;
+    out.wheelContact[slot] = true;
+    out.wheelCompression[slot] = Math.max(out.wheelCompression[slot], d);
+    if (front) out.wheelCompression[0] = Math.max(out.wheelCompression[0], d);
+    if (Fn <= 0) continue;
+    // Stick-slip friction: the contact is stuck to an anchor on the ground by a stiff spring-damper
+    // until that force would exceed μ·N; then it slides (kinetic friction) and the anchor follows.
+    const tvx = vx - n.x * vn;
+    const tvy = vy - n.y * vn;
+    const tvz = vz - n.z * vn;
+    const tv = Math.sqrt(tvx * tvx + tvy * tvy + tvz * tvz);
+    const mu = sk.friction[env.surfaceAt(px, pz)] ?? 0.4;
+    const lim = mu * Fn;
+    const prev = inp.skidAnchors?.[i] ?? null;
+    let ax = px, ay = su.ground, az = pz;
+    if (prev) {
+      ax = prev.x;
+      ay = prev.y;
+      az = prev.z;
+    }
+    let ex = px - ax, ey = py - ay, ez = pz - az;
+    const en = ex * n.x + ey * n.y + ez * n.z;
+    ex -= n.x * en; ey -= n.y * en; ez -= n.z * en;
+    let Fx = -sk.stickStiffness * ex - sk.stickDamping * tvx;
+    let Fy = -sk.stickStiffness * ey - sk.stickDamping * tvy;
+    let Fz = -sk.stickStiffness * ez - sk.stickDamping * tvz;
+    const Fm = Math.sqrt(Fx * Fx + Fy * Fy + Fz * Fz);
+    if (Fm > lim) {
+      // Sliding: kinetic friction against the motion (or the pull of the anchor at a standstill).
+      if (tv > 1e-3) {
+        const k = (-lim * Math.tanh(tv / sk.frictionSmoothing)) / tv;
+        Fx = tvx * k; Fy = tvy * k; Fz = tvz * k;
+      } else {
+        Fx *= lim / Fm; Fy *= lim / Fm; Fz *= lim / Fm;
+      }
+      // The anchor slides along so the spring holds exactly μ·N.
+      const el = Math.sqrt(ex * ex + ey * ey + ez * ez);
+      if (el > 1e-9) {
+        const keep = lim / sk.stickStiffness / el;
+        ax = px - ex * keep; ay = py - ey * keep; az = pz - ez * keep;
+      }
+    }
+    anchors[i] = { x: ax, y: ay, z: az };
+    addForce(r, n.x * Fn + Fx, n.y * Fn + Fy, n.z * Fn + Fz);
+  }
+  return true;
 }
 
 function noContact(): GroundOutput {
@@ -135,8 +228,14 @@ export function groundContacts(inp: GroundInput, env: Environment, cfg: Config =
     tz += r.x * Fy - r.y * Fx;
   };
 
+  // ── Skids (helicopters) ───────────────────────────────────────────────────
+  if (ac.rotorcraft) {
+    if (!skidContacts(inp, env, cfg, ditchOk, addForce, out)) return out;
+    out.onGround = out.wheelContact[1] || out.wheelContact[2];
+  }
+
   // ── Wheels ────────────────────────────────────────────────────────────────
-  if (gearDown) {
+  else if (gearDown) {
     const gs = Math.hypot(vel.x, vel.z);
     const steerFrac = Math.max(gd.steeringMinFraction, clamp(1 - gs / gd.steeringFadeSpeed, 0, 1));
     const steer = clamp(inp.rudder, -1, 1) * ac.surfaces.nosewheelSteerMaxDeg * DEG * steerFrac;

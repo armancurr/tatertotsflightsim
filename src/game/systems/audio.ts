@@ -1,7 +1,7 @@
 /**
- * Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop or
- * F-16 F110 turbofan, swapped on onAircraftChange / the frame's def), wind, horns, tyres, motors,
- * hydraulics and the crash. Listens for the crash effects' window events:
+ * Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop,
+ * F-16 F110, A-10 TF34s or the JetRanger's turboshaft + rotors; swapped on onAircraftChange / the
+ * frame's def), wind, horns, tyres, motors, hydraulics and the crash. Listens for the crash effects' window events:
  *   `sim:explosion` {detail: {position, size}}  and  `sim:impact` {detail: {position, speed}}.
  * QA hooks on window: `runAudioSelfTest()` and `simAudio` {levels, meter, override, resume, selfTest}.
  */
@@ -40,7 +40,7 @@ const mod: SystemModule = {
   order: 90,
   create(ctx) {
     const w = globalThis as unknown as Win;
-    const soundOf = (s: unknown): EngineSound => (s === 'jet' || s === 'turbofan' ? s : 'piston');
+    const soundOf = (s: unknown): EngineSound => (s === 'jet' || s === 'turbofan' || s === 'turboshaft' ? s : 'piston');
     const audio = createAudio({ engine: soundOf(ctx.actions?.currentAircraft?.().sound) });
     const track = createAudioInputTracker();
     // Reused per-frame tracker source (no allocation in update).

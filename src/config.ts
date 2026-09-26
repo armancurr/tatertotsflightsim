@@ -166,6 +166,202 @@ export interface FlapOptions {
   placardKt?: number[];
 }
 
+// ─── Helicopters (owned by src/physics/rotor.ts) ────────────────────────────────────────────────
+// A helicopter is an aircraft whose `rotorcraft` section is set: the physics then flies it with a
+// blade-element / momentum rotor model instead of the wing (src/physics/rotor.ts). Positions are
+// in the BODY frame (origin = CG, +X right, +Y up, −Z nose), metres.
+
+interface P3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Main rotor: blade-element thrust with uniform dynamic inflow, quasi-steady flapping. */
+export interface MainRotorConfig {
+  radius: number;
+  blades: number;
+  /** Blade chord, m. */
+  chord: number;
+  /** Blade section lift-curve slope, per radian. */
+  liftSlope: number;
+  /** Linear blade twist, root to tip, degrees (negative = washout). */
+  twistDeg: number;
+  /** Prandtl tip-loss factor B (the outer 1 − B of the blade makes no lift). */
+  tipLoss: number;
+  /** Hub centre. */
+  hub: P3;
+  /** Mast tilted forward by this much, degrees. */
+  mastTiltDeg: number;
+  /** +1: turns counter-clockwise seen from above (US practice: nose yaws right with power); −1: clockwise. */
+  direction: 1 | -1;
+  /** 100 % rotor speed, rpm. */
+  nominalRpm: number;
+  /** Polar moment of inertia of the rotor + drivetrain (tail rotor included), kg·m². */
+  inertia: number;
+  /** Blade Lock number γ (aerodynamic / inertial flapping forces): sets how fast the disc follows the mast. */
+  lockNumber: number;
+  /** Teetering rotor: the blades are built-in coned by this much, degrees. */
+  preconeDeg: number;
+  /** Flapping stops: the disc can tilt this far from the mast, degrees. */
+  flapStopDeg: number;
+  /** Collective blade pitch at 0.75 R with the lever fully down / fully up, degrees. */
+  collectiveDeg: [number, number];
+  /** Cyclic travel: disc tilt at full stick, fore-aft / lateral, degrees. */
+  cyclicLongDeg: number;
+  cyclicLatDeg: number;
+  /** Blade profile drag: Cd = cd0 · (1 + cdLift · (CT/σ / 0.1)²), plus stall drag. */
+  cd0: number;
+  cdLift: number;
+  /** Induced power factor κ (non-uniform inflow and tip losses: real rotors need ~15 % more than ideal). */
+  inducedPowerFactor: number;
+  /** Retreating-blade stall: CT/σ limit = stallCtSigma − stallMuSlope · μ. */
+  stallCtSigma: number;
+  stallMuSlope: number;
+  /** Dynamic-inflow time constant limits, s (Pitt–Peters τ = 0.849 / (4 λ Ω)). */
+  inflowTauMin: number;
+  inflowTauMax: number;
+}
+
+export interface TailRotorConfig {
+  radius: number;
+  blades: number;
+  chord: number;
+  liftSlope: number;
+  /** Hub centre. */
+  position: P3;
+  /** Unit direction the tail rotor's thrust pushes the tail (body frame). */
+  axis: P3;
+  /** Tail-rotor rpm per main-rotor rpm. */
+  gearRatio: number;
+  /** Blade pitch with the pedals centred, degrees; full right pedal takes `pitchRangeDeg` off, full left adds it. */
+  pitchNeutralDeg: number;
+  pitchRangeDeg: number;
+  cd0: number;
+  /** Fraction of the thrust lost to the fin's blockage. */
+  finBlockage: number;
+}
+
+/** Free-turbine turboshaft with an N2 governor, a transmission torque limit and a freewheel clutch. */
+export interface TurboshaftConfig {
+  /** Thermodynamic (uninstalled) power at sea level, ISA, W: falls with density ratio^densityExponent. */
+  thermoPowerW: number;
+  densityExponent: number;
+  /** Transmission (torquemeter 100 %) limit, W at 100 % NR. */
+  transmissionLimitW: number;
+  /** Maximum continuous power, W. */
+  mcpW: number;
+  /** Gas-producer (N1) time constant, accelerating / decelerating, s. */
+  n1TauUp: number;
+  n1TauDown: number;
+  /** N1 at ground idle (no load) and at thermoPowerW, fractions. */
+  n1Idle: number;
+  n1Max: number;
+  /** Governor: proportional gain (W per rad/s of droop) and integral gain (W per rad). */
+  govKp: number;
+  govKi: number;
+  /** Collective anticipator: W of power per unit collective, added ahead of the droop. */
+  govAnticipator: number;
+  /** Light-off time after the start switch, s. */
+  startTime: number;
+  /** Starter + light-off drives the rotor with this power until the governor takes over, W. */
+  startPowerW: number;
+  /** Drivetrain losses: accessory W + this fraction of the power delivered. */
+  accessoryW: number;
+  lossFraction: number;
+}
+
+/** Fuselage, stabiliser and fin. */
+export interface HeliAirframeConfig {
+  /** Equivalent flat-plate drag area, m², head-on / sideways / from above (download). */
+  dragAreaFront: number;
+  dragAreaSide: number;
+  dragAreaTop: number;
+  /** Where the fuselage drag acts. */
+  dragPoint: P3;
+  /** Fuselage pitch moment per dynamic pressure per radian of α (+ = unstable nose-up), m³. */
+  pitchVolume: number;
+  /** Fuselage yaw moment per dynamic pressure per radian of β (+ = unstable), m³. */
+  yawVolume: number;
+  /** Rotor wash at the fuselage, × vi (it has sped up on the way down). */
+  washFactor: number;
+  /** Horizontal stabiliser and vertical fin: area m², where, incidence (camber) deg, lift slope /rad. */
+  stab: { area: number; position: P3; incidenceDeg: number; liftSlope: number };
+  fin: { area: number; position: P3; incidenceDeg: number; liftSlope: number };
+}
+
+/** Skid landing gear: spring-damper contacts with sliding friction (no wheels, no brakes). */
+export interface SkidConfig {
+  /** Contact points (skid bottoms) with the skids unloaded: [left front, left rear, right front, right rear]. */
+  points: P3[];
+  spring: number;
+  damper: number;
+  /** Damping on rebound = damper × this. */
+  reboundFactor: number;
+  /** Deflection before the cross tubes bottom out, m. */
+  travel: number;
+  /** Sliding friction coefficient per surface. */
+  friction: Record<string, number>;
+  /** Speed scale of the tanh friction smoothing, m/s (small = firm static hold). */
+  frictionSmoothing: number;
+  /** Stick-slip friction: tangential stiffness (N/m) and damping (N·s/m) of a stuck skid contact. */
+  stickStiffness: number;
+  stickDamping: number;
+}
+
+/**
+ * Stability assist (a modern attitude-command / attitude-hold augmentation, off with K for the raw
+ * machine): the cyclic commands pitch and bank attitude, centred it holds them; the pedals command a
+ * yaw rate and hold the heading in the hover, and turn-coordinate in forward flight; below
+ * `hoverHoldKt` with the stick centred it also holds the position over the ground.
+ */
+export interface HeliSasConfig {
+  /** Attitude at full stick, deg; elevator trim moves the pitch reference by ±trimPitchDeg. */
+  pitchCmdDeg: number;
+  rollCmdDeg: number;
+  trimPitchDeg: number;
+  /** Pitch and bank reference with the stick and trim centred (the hover attitude: nose up, left skid low), deg. */
+  pitchBiasDeg: number;
+  rollBiasDeg: number;
+  /** Attitude loop gains: control units per rad, per rad/s, integral per rad·s. */
+  kPitch: number;
+  kQ: number;
+  iPitch: number;
+  kRoll: number;
+  kP: number;
+  iRoll: number;
+  /** Yaw: rate at full pedal (deg/s), gains per rad/s and per rad of heading error, integral. */
+  yawRateCmdDegS: number;
+  kR: number;
+  kHeading: number;
+  iYaw: number;
+  /** Forward flight: pedal per rad of sideslip. */
+  kBeta: number;
+  /** Heading hold → turn coordination between these IAS, kt. */
+  coordinateFromKt: number;
+  coordinateFullKt: number;
+  /** Hover hold: fades in below this ground speed (kt); attitude per m/s of drift (deg), capped (deg). */
+  hoverHoldKt: number;
+  hoverGainDeg: number;
+  hoverMaxDeg: number;
+  /** …and its integral, deg per metre of drift. */
+  hoverIntegralDeg: number;
+  /** Forward flight with the stick centred: hold the heading with up to headingBankMaxDeg of bank, deg per deg of error. */
+  kHeadingBank: number;
+  headingBankMaxDeg: number;
+  /** Integrator limits, control units. */
+  integratorLimit: number;
+}
+
+export interface RotorcraftConfig {
+  rotor: MainRotorConfig;
+  tailRotor: TailRotorConfig;
+  engine: TurboshaftConfig;
+  airframe: HeliAirframeConfig;
+  skids: SkidConfig;
+  sas: HeliSasConfig;
+}
+
 /** Widen a config literal's inferred type with optional keys (so other aircraft may set them). */
 const withOptions = <O>() => <T>(t: T): T & O => t as T & O;
 
@@ -630,6 +826,9 @@ export const CONFIG = {
     /** Fly-by-wire control laws; null = the pilot's controls drive the surfaces directly. */
     fbw: null as FbwConfig | null,
 
+    /** Helicopters: rotors, turboshaft, airframe, skids, stability assist; null = a fixed-wing aircraft. */
+    rotorcraft: null as RotorcraftConfig | null,
+
     limits: {
       vsoKt: 40,
       vs1Kt: 48,
@@ -759,6 +958,8 @@ export const CONFIG = {
       help: ['KeyH'],
       hud: ['KeyI'],
       mouseYoke: ['KeyY'],
+      /** Helicopters: stability assist on/off. */
+      stabilityAssist: ['KeyK'],
       mute: ['KeyM'],
       timeOfDay: ['KeyN'],
     },
@@ -2457,6 +2658,7 @@ function makeF16(): AircraftConfig {
       tailSkidFriction: 0.4,
     },
 
+    rotorcraft: null,
     fbw: {
       maxG: 9,
       minG: -3,
@@ -2823,6 +3025,7 @@ function makeA10(): AircraftConfig {
     },
 
     /** Direct hydraulic controls (the SAS is modelled as damping in the aero derivatives). */
+    rotorcraft: null,
     fbw: null,
 
     limits: {
@@ -3288,6 +3491,7 @@ function makeB747(): AircraftConfig {
     },
 
     /** Conventional hydraulic controls (the yaw damper is modelled as damping in cnR). */
+    rotorcraft: null,
     fbw: null,
 
     limits: {
@@ -3352,3 +3556,270 @@ function makeB747(): AircraftConfig {
 }
 
 export const B747_AIRCRAFT: AircraftConfig = makeB747();
+
+/**
+ * Bell 206B-3 JetRanger III: five-seat light turbine helicopter, Allison 250-C20J turboshaft
+ * (420 shp thermodynamic, 317 shp transmission limit for take-off, 270 shp continuous), two-blade
+ * teetering main rotor turning counter-clockwise seen from above (the nose yaws right with power:
+ * left pedal to hover), two-blade tail rotor on the left of the tail boom, skid gear.
+ *
+ * GEOMETRY IS FIXED (real dimensions: 10.16 m main rotor, 1.65 m tail rotor, 9.50 m fuselage from
+ * the nose to the fin, 2.91 m to the top of the rotor hub, 1.92 m skid tread, 1.97 m stabiliser
+ * span): the 3D model (src/aircraft/b206) and the physics both read it. Body frame: origin = CG,
+ * +X right, +Y up, −Z nose; the skids touch the ground at y = −1.25 unloaded. The pilot flies from
+ * the RIGHT seat, as in the real JetRanger.
+ *
+ * Flight model: src/physics/rotor.ts (blade-element thrust with Pitt–Peters dynamic inflow and a
+ * vortex-ring-state induced-velocity curve, quasi-steady teetering flapping with blowback, coning
+ * and transverse-flow lateral flapping and rate damping, ground effect, a tail rotor on the same
+ * model, fuselage drag and download, stabiliser and fin, retreating-blade stall, rotor-speed
+ * dynamics with a governed free-turbine engine, a freewheel for autorotation). The legacy wing
+ * sections (`aero`, `flaps`, `surfaces`) are unused; `throttle` is the collective lever.
+ * Calibration: src/physics/aircraft.ts header and tests/physics/b206-*.test.ts.
+ */
+function makeB206(): AircraftConfig {
+  const c172 = structuredClone(CONFIG.aircraft);
+  const R = 5.08;
+  return {
+    ...c172,
+    name: 'Bell 206B-3 JetRanger III',
+    registration: 'N206TT',
+    /** Pilot + passenger + ~2/3 fuel (empty 742 kg, max gross 1,451 kg). */
+    mass: 1300,
+    /** After OH-58A estimates (the military JetRanger), scaled to this weight. */
+    inertia: { pitch: 2300, yaw: 1900, roll: 700 },
+    /** Unused by the rotor model (disc area / diameter for code that asks). */
+    wingArea: Math.PI * R * R,
+    wingSpan: 2 * R,
+    meanChord: 0.33,
+    oswald: 0.75,
+    engine: {
+      ...c172.engine,
+      /** Main-rotor rpm drives the tach, the prop-blur and the engine voice. */
+      maxPowerW: 236000,
+      idleRpm: 394,
+      maxRpm: 394,
+      startTime: 4,
+    },
+    flaps: { ...c172.flaps, notchesDeg: [0], rateDegPerSec: 1, vfeKt: 0 },
+    gear: { ...c172.gear, retractable: false, transitTime: 1, vleKt: 999, vloKt: 999, squatSwitch: false, retractDelay: 0 },
+    surfaces: { ...c172.surfaces, nosewheelSteerMaxDeg: 0 },
+    geometry: {
+      ...c172.geometry,
+      length: 9.5,
+      height: 2.91,
+      /** The skids, for code that asks for three wheels: front cross-tube centre and the two rear skid contacts. */
+      noseWheel: { x: 0, y: -1.25, z: -1.3 },
+      leftMainWheel: { x: -0.96, y: -1.25, z: 1.35 },
+      rightMainWheel: { x: 0.96, y: -1.25, z: 1.35 },
+      /** Skid tube radius (the "wheels" are skid bottoms). */
+      mainWheelRadius: 0.04,
+      noseWheelRadius: 0.04,
+      strutTravel: 0.25,
+      /** Main-rotor hub and radius (the "propeller" for code that asks). */
+      propHub: { x: 0, y: 1.5, z: -0.05 },
+      propRadius: R,
+      /** Nose tip. */
+      spinnerTip: { x: 0, y: -0.2, z: -2.6 },
+      /** Right seat, the JetRanger's pilot seat. */
+      pilotEye: { x: 0.33, y: 0.52, z: -1.35 },
+      /** Unused by the rotor model: the rotor hub stands in. */
+      wingRootLeadingEdge: { x: 0, y: 1.5, z: -0.05 },
+      wingRootChord: 0.33,
+      wingTipChord: 0.33,
+      wingTaperStart: R,
+      dihedralDeg: 0,
+      horizontalTail: { x: 0, y: 0.2, z: 4.5, span: 1.97, chord: 0.55 },
+      verticalTailTop: { x: 0, y: 1.55, z: 6.55 },
+      /**
+       * Anything but the skids touching the ground is a crash. The rotor tips droop to 1.2 m above
+       * the CG at rest (a rolled-over JetRanger strikes them first); the stinger under the lower fin
+       * only scrapes on a gentle touch.
+       */
+      structuralPoints: [
+        { name: 'rotorTipFront', x: 0, y: 1.2, z: -0.05 - R },
+        { name: 'rotorTipRear', x: 0, y: 1.2, z: -0.05 + R },
+        { name: 'rotorTipLeft', x: -R, y: 1.2, z: -0.05 },
+        { name: 'rotorTipRight', x: R, y: 1.2, z: -0.05 },
+        { name: 'rotorTipFrontLeft', x: -R * Math.SQRT1_2, y: 1.2, z: -0.05 - R * Math.SQRT1_2 },
+        { name: 'rotorTipFrontRight', x: R * Math.SQRT1_2, y: 1.2, z: -0.05 - R * Math.SQRT1_2 },
+        { name: 'rotorTipRearLeft', x: -R * Math.SQRT1_2, y: 1.2, z: -0.05 + R * Math.SQRT1_2 },
+        { name: 'rotorTipRearRight', x: R * Math.SQRT1_2, y: 1.2, z: -0.05 + R * Math.SQRT1_2 },
+        { name: 'tailRotorTip', x: -0.3, y: 0.55 - 0.825, z: 6.05 },
+        { name: 'tailBumper', x: 0, y: -0.38, z: 6.3 },
+        { name: 'noseBottom', x: 0, y: -0.75, z: -2.35 },
+        { name: 'cabinRoof', x: 0, y: 0.95, z: -0.6 },
+        { name: 'finTop', x: 0, y: 1.55, z: 6.55 },
+        { name: 'leftStab', x: -0.985, y: 0.2, z: 4.5 },
+        { name: 'rightStab', x: 0.985, y: 0.2, z: 4.5 },
+      ],
+    },
+    model: {
+      ...c172.model,
+      /** Rotor blur: the blades fade into the disc between these rotor rpm. */
+      propBlurStartRpm: 90,
+      propBlurFullRpm: 260,
+      landingLight: { x: 0, y: -0.7, z: -2.2, angleDeg: 12, penumbra: 0.4, range: 300, decay: 1.2, intensity: 500, aimDownDeg: 12 },
+    },
+    ground: {
+      ...c172.ground,
+      springMain: 80000,
+      damperMain: 6000,
+      springNose: 80000,
+      damperNose: 6000,
+    },
+    fbw: null,
+    rotorcraft: {
+      rotor: {
+        radius: R,
+        blades: 2,
+        chord: 0.33,
+        liftSlope: 5.7,
+        twistDeg: -10,
+        tipLoss: 0.97,
+        hub: { x: 0, y: 1.5, z: -0.05 },
+        mastTiltDeg: 5,
+        direction: 1,
+        nominalRpm: 394,
+        inertia: 1200,
+        lockNumber: 5,
+        preconeDeg: 2.25,
+        flapStopDeg: 12,
+        collectiveDeg: [2, 16],
+        cyclicLongDeg: 13,
+        cyclicLatDeg: 8,
+        cd0: 0.0085,
+        cdLift: 0.6,
+        inducedPowerFactor: 1.15,
+        stallCtSigma: 0.14,
+        stallMuSlope: 0.13,
+        inflowTauMin: 0.06,
+        inflowTauMax: 0.4,
+      },
+      tailRotor: {
+        radius: 0.825,
+        blades: 2,
+        chord: 0.134,
+        liftSlope: 5.7,
+        position: { x: -0.3, y: 0.55, z: 6.05 },
+        /** Pushes the tail right (nose left) against the counter-clockwise rotor's torque. */
+        axis: { x: 1, y: 0, z: 0 },
+        gearRatio: 2550 / 394,
+        pitchNeutralDeg: 3,
+        pitchRangeDeg: 12,
+        cd0: 0.009,
+        finBlockage: 0.05,
+      },
+      engine: {
+        thermoPowerW: 313000,
+        densityExponent: 1,
+        transmissionLimitW: 236000,
+        mcpW: 201000,
+        n1TauUp: 0.7,
+        n1TauDown: 0.45,
+        n1Idle: 0.63,
+        n1Max: 1.05,
+        govKp: 60000,
+        govKi: 20000,
+        govAnticipator: 150000,
+        startTime: 4,
+        startPowerW: 60000,
+        accessoryW: 3000,
+        lossFraction: 0.04,
+      },
+      airframe: {
+        dragAreaFront: 1.0,
+        dragAreaSide: 5.5,
+        dragAreaTop: 4.0,
+        dragPoint: { x: 0, y: -0.1, z: 0.3 },
+        pitchVolume: 2.5,
+        yawVolume: 2.0,
+        washFactor: 1.3,
+        stab: { area: 1.0, position: { x: 0, y: 0.2, z: 4.5 }, incidenceDeg: -2, liftSlope: 3.5 },
+        fin: { area: 0.95, position: { x: 0, y: 0.55, z: 6.2 }, incidenceDeg: 4, liftSlope: 3.0 },
+      },
+      skids: {
+        points: [
+          { x: -0.96, y: -1.25, z: -1.3 },
+          { x: -0.96, y: -1.25, z: 1.35 },
+          { x: 0.96, y: -1.25, z: -1.3 },
+          { x: 0.96, y: -1.25, z: 1.35 },
+        ],
+        spring: 80000,
+        damper: 6000,
+        reboundFactor: 2,
+        travel: 0.25,
+        /** Steel skid shoes: ~0.55 on pavement, more where they dig in, little on snow. */
+        friction: { runway: 0.55, asphalt: 0.55, grass: 0.55, field: 0.6, dirt: 0.6, sand: 0.65, urban: 0.55, forest: 0.65, rock: 0.55, snow: 0.2, water: 0 },
+        frictionSmoothing: 0.05,
+        stickStiffness: 200000,
+        stickDamping: 5000,
+      },
+      sas: {
+        pitchCmdDeg: 20,
+        rollCmdDeg: 35,
+        trimPitchDeg: 15,
+        pitchBiasDeg: 3.7,
+        rollBiasDeg: -2.9,
+        kPitch: 3.1,
+        kQ: 1.6,
+        iPitch: 1.5,
+        kRoll: 2.7,
+        kP: 0.7,
+        iRoll: 1.5,
+        yawRateCmdDegS: 40,
+        kR: 0.9,
+        kHeading: 1.7,
+        iYaw: 0.8,
+        kBeta: 1.5,
+        coordinateFromKt: 30,
+        coordinateFullKt: 50,
+        hoverHoldKt: 12,
+        hoverGainDeg: 1.5,
+        hoverMaxDeg: 8,
+        hoverIntegralDeg: 0.4,
+        kHeadingBank: 1,
+        headingBankMaxDeg: 6,
+        integratorLimit: 0.8,
+      },
+    },
+    limits: {
+      ...c172.limits,
+      vsoKt: 0,
+      vs1Kt: 0,
+      vrKt: 0,
+      vxKt: 45,
+      vyKt: 52,
+      vaKt: 100,
+      vnoKt: 110,
+      vneKt: 130,
+      gLimitPos: 3,
+      gLimitNeg: 0.5,
+      structuralFailureG: 3.8,
+      /** Teetering rotor: pushing into negative g lets the hub hit the mast (mast bumping). */
+      structuralFailureNegG: -0.5,
+      overspeedFailureFactor: 1.25,
+      maxAngularRate: 6,
+    },
+    stall: { ...c172.stall },
+    landing: {
+      ...c172.landing,
+      butterFpm: 60,
+      smoothFpm: 180,
+      firmFpm: 360,
+      /** Skid gear: ~6 ft/s is a hard-landing inspection, ~10 ft/s spreads the cross tubes. */
+      hardFpm: 600,
+      /** Touching down steeper than this is a roll-over; nose-down past minPitch digs the skid toes in. */
+      maxBankDeg: 20,
+      minPitchDeg: -15,
+      minAirborneTime: 1.5,
+    },
+    spawn: {
+      ...c172.spawn,
+      runwayStartOffset: 60,
+      /** Shift+R: 60 kt on a ~6° approach to the numbers. */
+      approach: { distance: 1500, height: 160, speedKt: 60, flapsNotch: 0, throttle: 0.45, aimPointM: 50 },
+    },
+  };
+}
+export const B206_AIRCRAFT: AircraftConfig = makeB206();

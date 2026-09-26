@@ -140,6 +140,47 @@ Cessna's; the F-16, A-10 and 747 use the same machinery with their own numbers.
 Calibration results against the pilot's handbook are in the comment block at the top of
 `src/physics/aircraft.ts`.
 
+### 5b. Helicopters (`rotor.ts`)
+
+An aircraft whose config has a `rotorcraft` section (the Bell 206B-3 JetRanger) goes through the
+same `step()` — air data, ground contacts, flight phases, crash rules and the rigid-body
+integration are shared — but `rotor.ts` replaces the wing (`aero.ts`) and the engine:
+
+- **Main rotor:** blade-element thrust with linear twist and uniform inflow, referenced to the
+  tip-path plane; the induced velocity is a state (Pitt–Peters dynamic inflow) relaxing toward
+  momentum theory (Glauert), blended at low in-plane speed with an empirical curve through the
+  **vortex-ring state** (thrust loss and buffet in slow, steep descents). **Ground effect**
+  (Hayden's fit to flight data) and **translational lift** fall out of the inflow. The disc's tilt
+  (quasi-steady teetering flapping) is the cyclic plus blowback, the lateral flapping from coning
+  and the transverse-flow inflow gradient, and the lag and cross-coupling from the body rates; a
+  teetering rotor has no hub moment, so control power fades with thrust (low g). Past a CT/σ that
+  falls with speed the retreating blade stalls (pitch-up, roll left, drag). Torque = CT·λ + profile
+  (with an induced-power factor κ = 1.15).
+- **Tail rotor:** the same thrust/inflow/VRS model on the pedals, gear-driven; its power loads the
+  drivetrain.
+- **Airframe:** fuselage drag (front/side/top areas) in the rotor wash (hover download), unstable
+  fuselage pitch/yaw moments, a stabiliser that meets the rotor wake below ~25 kt and a cambered
+  fin that unloads the tail rotor in cruise.
+- **Drivetrain and turboshaft:** rotor speed is a state (`I·dΩ/dt = Qshaft − Qrotor`); the fuselage
+  reacts the shaft torque (the nose yaws right with power; left pedal to hover). An N2 governor
+  (P + I + collective anticipator) commands the Allison 250's power through a gas-generator lag,
+  limited by density; it can over-torque, and it caps the torque while running the rotor up on
+  the ground. A **freewheel** lets the rotor overrun the engine: shut it down (E) and the rotor
+  autorotates, its speed set by the collective.
+- **Skids (`ground.ts`):** four spring-damper contacts with stick-slip (anchored) friction, so a
+  parked helicopter doesn't creep under rotor torque and a skid pinned while sliding sideways rolls
+  it over (**dynamic roll-over** → "Main rotor strike"). Rotor tips and the tail rotor are
+  structural points; negative g past −0.5 is mast bumping.
+- **Stability assist (`stabilityAssist` in `rotor.ts`, K):** between the pilot and the blades —
+  attitude command / attitude hold on the cyclic, heading hold (hover) or sideslip-nulling turn
+  coordination (forward flight) on the pedals, and a position hold in the hover with the stick
+  centred. It engages as the skids get light (half the weight on the rotor). Off, the controls drive the blades directly.
+- **Trim (`solveRotorTrim`):** Newton on all six force/moment balances (collective, cyclic, pedals,
+  pitch, bank), marching up from the hover; used by Shift+R and teleports (speed 0 = a hover).
+
+`Controls.throttle` is the collective; `AircraftState.rotor` carries the rotor, engine and assist
+state (the HUD, the audio, the model and `window.sim.rotor` read it).
+
 ## 6. Controls, cameras and the loop
 
 - **Controls (`src/input`)** — pure `updateControls(state, inputFrame, dt)`. Keys move the yoke
@@ -297,7 +338,7 @@ Current systems (order): loading (0, the start-up veil), camerafx (1, speed-depe
 view), crash (2, the break-up director), terrain (10), water (20), airport (30), roads (40),
 ships (44), cars (45), airTraffic (46), towns (50), vegetation (60), grass (61), targets (65, the
 range vehicles), airTargets (66, the enemy aircraft), weapons (70), missiles (71), fx (80),
-combatfx (85), audio (90), hud (100), weaponsHud (101), gmeter (102), menu (105). A system that
+rotorWash (81, a helicopter's downwash), combatfx (85), audio (90), hud (100), weaponsHud (101), gmeter (102), menu (105). A system that
 throws is isolated and logged; the rest keep running. `?no=vegetation,towns` in the URL switches
 systems off (handy for profiling; `window.sim.systems()` lists the names), and each system's CPU
 time appears in `window.sim.perf.systems`. [docs/ADDING_LAND_FEATURES.md](docs/ADDING_LAND_FEATURES.md)
@@ -309,7 +350,7 @@ the same wiring file.
 ## 9b. The fleet (src/fleet) — more than one aircraft
 
 Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`, `a10`,
-`b747`),
+`b747`, `b206`),
 names, a **full config** (the same shape as `CONFIG`, with its own `aircraft` and `weapons` sections
 and optional camera overrides — the physics, cameras, instruments and weapons just receive it),
 which HUD it uses (`steam` gauges or a `jet` head-up display), which engine sound (`piston`, `jet`
@@ -325,6 +366,7 @@ restarts on the runway, and every system hears `onAircraftChange(def, model)`.
 | `f16` | F-16C Fighting Falcon | jet | jet | M61A1, 2 × AGM-65, 2 × AIM-9 (`F16_WEAPONS`) |
 | `a10` | A-10C Thunderbolt II | jet | turbofan | GAU-8/A, 4 × AGM-65, 2 × AIM-9 (`A10_WEAPONS`) |
 | `b747` | Boeing 747-400 (flown light, ~220 t) | steam | turbofan | none |
+| `b206` | Bell 206B-3 JetRanger III (helicopter, `rotorcraft` config) | steam (dual tach, torquemeter) | turboshaft | none |
 
 **To add an aircraft:** (1) add its section to `src/config.ts` with the same shape as
 `CONFIG.aircraft` — geometry first, because the physics contact points and the 3D model share it;
@@ -395,13 +437,20 @@ wingtip Sidewinders and Mavericks on their rails, gun port) with its cockpit and
 glass. `src/aircraft/a10/` builds the A-10C (straight wing, twin fins, podded TF34s, the GAU-8's
 seven barrels that spin, decelerons, stores) with a detailed cockpit: three-piece windscreen,
 glareshield, armament panel, live instruments and MFCD pages, stick and throttles, ACES II seat.
-`src/aircraft/b747/` is the Boeing 747-400. Each jet's anchor tests hold the model to its
+`src/aircraft/b747/` is the Boeing 747-400. `src/aircraft/b206/` is the Bell 206 JetRanger
+helicopter: its main rotor spins at the physics' rotor rpm (blurring into a disc) and tilts with the
+tip-path plane, the blades feather with the collective, the tail rotor spins at the gear ratio, and
+the cockpit (flown from the right seat) has the cyclic, collective and pedals moving with the
+controls the rotor actually sees. Each jet's anchor tests hold the model to its
 geometry within 3 cm, and the gun muzzle and missile stations to `config.weapons`.
 
 ## 11. Instruments, HUD, audio and effects
 
 - **Instruments (`src/ui/instruments.ts`, pure)** — readings in display units with real-instrument
-  behaviour (the VSI lags, needles are smoothed), plus the stall warning and gear lights.
+  behaviour (the VSI lags, needles are smoothed), plus the stall warning and gear lights. A
+  helicopter gets `readings.rotor` instead of a stall warning: NR and N2 (they split on the dual
+  tach when the engine quits and the rotor autorotates), N1, torque, collective, the stability
+  assist, and the LOW ROTOR RPM / OVERTORQUE / VORTEX RING / RETREATING BLADE STALL annunciators.
 - **Gear warning (`src/ui/gearWarning.ts`, pure)** — like the real 172RG: gear not down and locked
   in flight with the power back or flaps ≥ 20° → intermittent horn + flashing GEAR; handle up on
   the ground → "GEAR — SQUAT SWITCH" caution; gear-speed cautions.
@@ -419,8 +468,11 @@ geometry within 3 cm, and the gun muzzle and missile stations to `config.weapons
   prop (firing frequency from RPM, uneven cylinders, prop buzz, exhaust), the F-16's F110
   turbofan (turbine whine at the HP blade-pass rate from N2 %, fan buzz-saw, jet roar, afterburner
   rumble + crackle + light-off whoomph, cockpit intake howl and ECS, hydraulic whine for gear and
-  speed brake, directivity, distance and Doppler) and the high-bypass TF34 turbofans (the A-10,
-  also used for the 747). Combat sound: the GAU-8's "BRRRT" heard late from outside at the speed
+  speed brake, directivity, distance and Doppler), the high-bypass TF34 turbofans (the A-10,
+  also used for the 747) and the JetRanger's turboshaft (`turboshaft.ts`: main-rotor beat at the
+  blade-passage rate from NR, blade slap that sharpens with thrust, flares, tight turns, the vortex
+  ring state and blade stall, the 85 Hz tail-rotor buzz, the Allison 250's compressor whine from N1,
+  start-up and spool-down, gearbox whine, and the steady low-rotor-RPM horn). Combat sound: the GAU-8's "BRRRT" heard late from outside at the speed
   of sound, impacts and explosions. Audio is suspended while the tab is hidden. Also wind, stall and gear horns, tyres, motors,
   and a layered crash (boom, crunch, metal tearing, debris, scraping, fireball, secondary
   explosions — randomised, or driven by the crash effects' `sim:explosion` / `sim:impact` window
@@ -430,7 +482,10 @@ geometry within 3 cm, and the gun muzzle and missile stations to `config.weapons
   `node scripts/audio-check.mjs <url>` runs it in Chrome for Testing and meters the live output.
 - **Effects (`src/fx`)** — pooled GPU particles for the crash fireball (blackbody colours), a
   smoke column that drifts with the wind, burning debris and embers, and tyre smoke/dust/spray on
-  touchdown; sprites that would cover too much of the screen fade out.
+  touchdown; sprites that would cover too much of the screen fade out. A helicopter's **rotor
+  wash** (`rotorWash.ts`, pure core + the `rotorWash` system) throws up dust, grass flecks, snow or
+  spray where its wake meets the surface (strength from thrust × induced velocity, fading with
+  height and blown back with speed), with a ripple ring on water.
 
 ## 12. `window.sim` — the page's state for tools
 
@@ -444,7 +499,7 @@ headingDeg, speedKt})`, `setTimeOfDay(i)`, `selectAircraft(id)`, `fleet()`, `deb
 `list()` of every target), `systems()` (the system names) and `timeOfDay`. Browser tests and the
 QA pilot read it instead of reading pixels. URL options: `?spawn=x,z,aglFt,hdg,kt` (or
 `?spawn=range`), `&rwy=36|18|03|21`, `&cam=`, `&tod=`, `&pause=1`, `&no=`,
-`&aircraft=c172rg|f16|a10|b747`, `&veil=0`, `&quality=auto|low|medium|high`,
+`&aircraft=c172rg|f16|a10|b747|b206`, `&veil=0`, `&quality=auto|low|medium|high`,
 `&clouds=volumetric|billboard|off`, `&cloudshadows=0`, `&tt=<s>` (traffic clock).
 
 ## 13. Testing
