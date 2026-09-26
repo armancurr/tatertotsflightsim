@@ -2,7 +2,7 @@
  * Contracts of the aircraft model (src/aircraft). No three.js here so pure code
  * (tests, animation mapping) can import it.
  */
-import type { CameraMode, InstrumentReadings, RotorState } from '../types';
+import type { CameraMode, InstrumentReadings, RotorState, VesselState } from '../types';
 
 export interface AircraftLights {
   nav: boolean;
@@ -60,6 +60,11 @@ export interface AircraftVisualState {
    * assist, thrust). `propRpm` is the main-rotor rpm. Absent/null for fixed-wing aircraft.
    */
   rotor?: RotorState | null;
+  /**
+   * Boats and ships: engines, propellers (rpm, thrust, pod / rudder angles), trim tabs, planing.
+   * Absent/null for aircraft.
+   */
+  vessel?: VesselState | null;
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */

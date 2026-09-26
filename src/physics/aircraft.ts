@@ -2,7 +2,8 @@
  * The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state
  * machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config
  * passed to step() selects the airframe, the engine type (piston / jet) and fly-by-wire, or, for a
- * helicopter (`rotorcraft`), the rotor model in ./rotor.ts in place of the wing and engine.
+ * helicopter (`rotorcraft`), the rotor model in ./rotor.ts in place of the wing and engine, or, for
+ * a boat or ship (`watercraft`), the hull model in ./hull.ts in place of everything (phase 'afloat').
  * Pure and deterministic: step() never mutates its inputs and never touches the renderer or the DOM.
  *
  * ─── Calibration: Cessna 172RG (1100 kg, ISA, no wind; fixed 1/120 s step) ───
@@ -170,6 +171,7 @@ import { FLAT_ENV } from './flatEnv';
 import { solveTrim, type TrimRequest } from './trim';
 import { gunRecoil } from './recoil';
 import { initialRotorState, solveRotorTrim, stepRotorcraft, trimmedRotorState } from './rotor';
+import { createVesselState, stepVessel } from './hull';
 
 const DEG = Math.PI / 180;
 const ZERO: Vec3 = Object.freeze({ x: 0, y: 0, z: 0 });
@@ -285,6 +287,11 @@ const windAt = (env: Environment, p: Vec3, t: number): Vec3 => (env.wind ? env.w
 export function createInitialState(env: Environment = FLAT_ENV, cfg: Config = CONFIG, runway?: RunwayFrame | null): AircraftState {
   const ac = cfg.aircraft;
   if (ac.rotorcraft) return createInitialRotorcraftState(env, cfg, runway ?? runwayFrame(cfg));
+  if (ac.watercraft) {
+    // A vessel has no runway: it floats where it's put (the app starts it at its berth, src/world/port.ts).
+    const rw = runway ?? runwayFrame(cfg);
+    return createVesselState(env, cfg, { x: rw.threshold.x, z: rw.threshold.z, headingDeg: rw.headingDeg }).state;
+  }
   const geo = ac.geometry;
   const gd = ac.ground;
   const rw = runway ?? runwayFrame(cfg);
@@ -458,6 +465,11 @@ export function createTrimmedState(
   cfg: Config = CONFIG,
 ): { state: AircraftState; controls: Controls } {
   if (cfg.aircraft.rotorcraft) return createTrimmedRotorcraftState(req, env, cfg);
+  if (cfg.aircraft.watercraft) {
+    // A vessel underway: the altitude is ignored (it floats), the speed is through the water.
+    const v = createVesselState(env, cfg, { x: req.x ?? 0, z: req.z ?? 0, headingDeg: req.headingDeg ?? 0, speedKt: req.iasKt });
+    return { state: v.state, controls: { ...defaultControls(), ...v.controls } };
+  }
   const tr = solveTrim(req, cfg);
   const heading = req.headingDeg ?? 0;
   const gamma = (req.flightPathDeg ?? 0) * DEG;
@@ -517,6 +529,7 @@ export function createApproachState(env: Environment = FLAT_ENV, cfg: Config = C
 export function approachControls(cfg: Config = CONFIG): Controls {
   const req = approachRequest(cfg.world.airport.elevation, cfg);
   if (cfg.aircraft.rotorcraft) return createTrimmedRotorcraftState(req, FLAT_ENV, cfg).controls;
+  if (cfg.aircraft.watercraft) return defaultControls();
   return controlsFor(req, solveTrim(req, cfg));
 }
 
@@ -575,6 +588,8 @@ function stepOnce(state: AircraftState, raw: Controls, dt: number, env: Environm
     s.time = time;
     return s;
   }
+  // Boats and ships: the hull model (./hull.ts) does everything.
+  if (cfg.aircraft.watercraft) return stepVessel(state, raw, dt, env, cfg);
   const ac = cfg.aircraft;
   const pilot = sanitize(raw, cfg);
   // Fly-by-wire: the pilot's stick/pedals become surface commands (the nosewheel still follows the pedals).

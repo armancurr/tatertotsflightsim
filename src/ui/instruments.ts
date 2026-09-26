@@ -8,9 +8,14 @@
  *
  * Robust by construction: every reading is finite and clamped to the range the
  * gauge can show, whatever garbage the state holds (tests fuzz it).
+ *
+ * Vessels (`cfg.aircraft.watercraft` set) also get `readings.vessel` (the helm: speed through the
+ * water and over the ground, both tachs, lever / gear, drives, tabs, trim, heel, depth), and their
+ * aircraft readings are kept harmless: airspeed = speed through the water, no stall, no overspeed,
+ * gear 'down' with no light and no gear warnings, flaps 0.
  */
 import { CONFIG, M_TO_FT, MS_TO_FPM, MS_TO_KT, RAD_TO_DEG, DEG_TO_RAD, type Config } from '../config';
-import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings, RotorReadings } from '../types';
+import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings, MarineGear, RotorReadings, VesselReadings } from '../types';
 import { stallAlphaRad, simStateLabel } from '../physics';
 import { gearWarning } from './gearWarning';
 
@@ -88,6 +93,9 @@ export interface InstrumentModel {
    * rotor, decaying on its own once the freewheel has let go (engine off / failed).
    */
   n2Free: number;
+  /** Vessels: smoothed speed through the water (signed) and over the ground, kt. */
+  stw: number;
+  sog: number;
 }
 
 /** Engine shaft power above which the turboshaft is driving the rotor (the freewheel is engaged), W. */
@@ -126,7 +134,7 @@ function approach(cur: number, target: number, tau: number, dt: number): number 
 }
 
 export function createInstrumentModel(_cfg: Config = CONFIG): InstrumentModel {
-  return { initialized: false, lastTime: 0, ias: 0, alt: 0, hdg: 0, vsi: 0, turn: 0, ball: 0, rpm: 0, nr: 0, n2: 0, n1: 0, trq: 0, n2Free: 0 };
+  return { initialized: false, lastTime: 0, ias: 0, alt: 0, hdg: 0, vsi: 0, turn: 0, ball: 0, rpm: 0, nr: 0, n2: 0, n1: 0, trq: 0, n2Free: 0, stw: 0, sog: 0 };
 }
 
 export function gearStateFromPos(gearPos: number): GearState {
@@ -250,6 +258,10 @@ export function updateInstruments(
   const rpmT = clamp(fin(state.engine.rpm), 0, L.maxRpm);
   const heli = cfg.aircraft.rotorcraft != null;
   const rg = heli ? rawRotorGauges(state, cfg) : null;
+  const wc = cfg.aircraft.watercraft ?? null;
+  const vessel = wc ? state.vessel : undefined;
+  const stwT = clamp(fin(vessel?.speedMs ?? d.ias) * MS_TO_KT, -MAX_VESSEL_KT, MAX_VESSEL_KT);
+  const sogT = clamp(fin(d.groundSpeed) * MS_TO_KT, 0, MAX_VESSEL_KT);
 
   const time = fin(state.time, m.lastTime);
   const snap = !m.initialized || time < m.lastTime - 1e-6;
@@ -262,6 +274,8 @@ export function updateInstruments(
     m.turn = turnT;
     m.ball = ballT;
     m.rpm = rpmT;
+    m.stw = stwT;
+    m.sog = sogT;
     if (rg) {
       m.nr = rg.nrPct;
       m.n2Free = rg.driving || state.engine.running ? Math.min(rg.nrPct, rg.driving ? 130 : N2_GOVERNED_PCT) : 0;
@@ -282,6 +296,8 @@ export function updateInstruments(
     m.turn = approach(m.turn, turnT, h.turnTau, step);
     m.ball = approach(m.ball, ballT, h.ballTau, step);
     m.rpm = approach(m.rpm, rpmT, h.needleTau, step);
+    m.stw = approach(m.stw, stwT, h.needleTau, step);
+    m.sog = approach(m.sog, sogT, h.needleTau, step);
     if (rg) {
       // N2: locked to NR through the freewheel while the engine drives; governed at 100 % when the
       // rotor overruns a running engine; spinning down on its own with the engine off (needle split).
@@ -304,16 +320,16 @@ export function updateInstruments(
   const airborne = state.phase === 'airborne';
   // No stall warning on a helicopter: body α means nothing in a hover (the air comes from above).
   const stallWarning =
-    !heli && airborne && (state.stalled || alpha >= stallAlphaRad(flapsDeg, cfg) - cfg.aircraft.stall.warningMarginDeg * DEG_TO_RAD);
+    !heli && !wc && airborne && (state.stalled || alpha >= stallAlphaRad(flapsDeg, cfg) - cfg.aircraft.stall.warningMarginDeg * DEG_TO_RAD);
   // On a helicopter the throttle lever is the collective: throttle % reads collective %.
   const throttlePct = clamp(fin(controls.throttle) * 100, 0, 100);
   const onGround = state.onGround === true;
   // Fixed gear (skids) has no handle: it is always "down".
-  const gearHandleDown = cfg.aircraft.gear.retractable === false || controls.gearDown !== false;
+  const gearHandleDown = wc != null || cfg.aircraft.gear.retractable === false || controls.gearDown !== false;
   const tas = clamp(fin(d.tas), 0, 2000);
   const vsMs = clamp(fin(d.verticalSpeed), -2000, 2000);
   const flightPathDeg = tas > 1 ? Math.asin(clamp(vsMs / tas, -1, 1)) * RAD_TO_DEG : 0;
-  const gw = gearWarning(
+  const gw = wc ? NO_GEAR_WARNING : gearWarning(
     { onGround, crashed: state.phase === 'crashed', gear, handleDown: gearHandleDown, throttlePct, flapsDeg, iasKt: iasT, aglFt: fin(d.altitudeAGL) * M_TO_FT },
     cfg,
   );
@@ -358,7 +374,83 @@ export function updateInstruments(
     flightPathDeg,
   };
   if (rg) out.rotor = rotorReadings(m, state, controls, rg.nrPct);
+  if (wc) {
+    const v = vesselReadings(m, state, controls, cfg);
+    out.vessel = v;
+    // Nothing aircraft-specific may fire on a boat: the "airspeed" is the log's speed through the
+    // water, the tach the busier engine, the throttle the lever's travel either way.
+    out.airspeedKt = Math.abs(v.speedKt);
+    out.rpm = Math.max(0, ...v.rpm);
+    out.throttlePct = Math.abs(v.leverPct);
+    out.stallWarning = false;
+    out.overspeed = false;
+    out.gear = 'down';
+    out.gearLight = 'off';
+    out.flapsDeg = 0;
+    out.flapsTargetDeg = 0;
+    out.aoaDeg = 0;
+    out.trimPct = -v.tabsPct;
+  }
   return out;
+}
+
+/** Speed readouts of a vessel are clamped to ±this, kt. */
+const MAX_VESSEL_KT = 99;
+/** The depth sounder's range, m: deeper reads as null ("deep water"). */
+export const SOUNDER_RANGE_M = 200;
+const NO_GEAR_WARNING = { horn: false, gearUnsafe: false, squatSwitch: false, overspeed: false, lights: 'off' as const };
+
+/** The gearbox the helm lever selects: inside the neutral detent → neutral, else ahead / astern. */
+export function leverGear(lever: number, detent: number): MarineGear {
+  const x = fin(lever);
+  const d = Math.max(0, fin(detent, 0.08));
+  if (Math.abs(x) < d || x === 0) return 'neutral';
+  return x > 0 ? 'ahead' : 'astern';
+}
+
+/** The depth under the keel the sounder shows, m (null = out of range / no bottom). */
+export function sounderDepth(depthUnderKeel: number | undefined | null): number | null {
+  if (typeof depthUnderKeel !== 'number' || !Number.isFinite(depthUnderKeel) || depthUnderKeel > SOUNDER_RANGE_M) return null;
+  return Math.max(0, depthUnderKeel);
+}
+
+/**
+ * The helm's instruments from the vessel state (defaults when the physics has not produced one
+ * yet): one tach and load per propulsor (port first), the lever and the gear the first drive is
+ * in, its steering angle, tabs, trim, heel (= roll, starboard down +), sounder and flags.
+ */
+export function vesselReadings(m: InstrumentModel, state: AircraftState, controls: Controls, cfg: Config = CONFIG): VesselReadings {
+  const wc = cfg.aircraft.watercraft;
+  const v = state.vessel;
+  const lever = clamp(fin(controls.throttle), -1, 1);
+  const props = Array.isArray(v?.propulsors) ? v.propulsors : [];
+  const count = Math.max(1, props.length || wc?.propulsors.length || 1);
+  const rpm: number[] = [];
+  const loadPct: number[] = [];
+  const engineRpm = clamp(fin(state.engine?.rpm), 0, 5000);
+  for (let i = 0; i < count; i++) {
+    const p = props[i];
+    rpm.push(p ? clamp(fin(p.rpm), 0, 5000) : engineRpm);
+    loadPct.push(p ? clamp(fin(p.load) * 100, 0, 150) : 0);
+  }
+  const first = props[0];
+  const gear: MarineGear = first && (first.gear === 'ahead' || first.gear === 'neutral' || first.gear === 'astern') ? first.gear : leverGear(lever, wc?.neutralDetent ?? 0.08);
+  return {
+    speedKt: m.stw,
+    sogKt: m.sog,
+    rpm,
+    loadPct,
+    leverPct: lever * 100,
+    gear,
+    steerDeg: clamp(fin(first?.steerDeg ?? 0), -90, 90),
+    tabsPct: clamp(fin(v?.tabs ?? 0) * 100, 0, 100),
+    trimDeg: clamp(fin(v?.trimDeg ?? 0), -45, 45),
+    heelDeg: wrap180(fin(state.derived?.rollDeg)),
+    depthM: sounderDepth(v?.depthUnderKeel),
+    planingPct: clamp(fin(v?.planing ?? 0) * 100, 0, 100),
+    moored: v ? v.mooring != null : false,
+    aground: v?.aground === true,
+  };
 }
 
 /** The helicopter's rotor instruments from the (already advanced) model. */

@@ -242,3 +242,58 @@ drop NaN, Inf and negative taps, checked on the bits because fast-math compilers
 The exposure feedback loop can't keep a NaN. Tests: a repo-wide lint (no `pow()` of a bare varying)
 and browser e2e tests for the repro and for a forced NaN. Lesson: any full-screen blur turns one bad
 pixel into a visible block, so every post pass that reads the scene must sanitise its input.
+
+## 2026-09-26 — Watercraft: the Princess V50 and the port (branch `feat/watercraft-princess-v50`)
+
+The owner asked for a physics-based waterways mode, starting with one yacht but built to scale to
+small boats and to cruise ships and battleships, with a port the vessels start from the way aircraft
+start on the runway. Choices confirmed with the owner: the **Princess V50** (15.5 m, 14.2 t, twin
+Volvo IPS 600, 34 kt) as the first vessel; a **hybrid, calibrated** hull model; the **helicopter
+pattern** (a `watercraft` config section and `src/physics/hull.ts`, not an Aircraft→Vehicle rename
+yet); a berth start, marina collision and an open-sea start.
+
+- **Physics (`src/physics/hull.ts`).** Column buoyancy from the station table against the same
+  Gerstner sea the renderer draws; Savitsky planing lift; ITTC-57 friction + a residuary table;
+  Clarke's manoeuvring derivatives + cross-flow drag; governed diesels on propellers with KT/KQ
+  curves; pods and rudders as foils; trim tabs; mooring lines; contacts against the sea bed and
+  structures. Calibration table in the file's header (34.4 kt at 3,500 rpm, 3.7° running trim).
+- **What calibration taught.** (1) With plain Savitsky lift the hull never left displacement mode:
+  at zero trim Savitsky gives zero lift. The trim must include the wetted bottom's *rocker* (the
+  forefoot meets the water at an angle), which fades as the bow lifts clear. (2) Full hydrostatic
+  buoyancy at speed pinned the trim at ~1.5°; at planing speed most of it becomes dynamic pressure
+  (the transom runs dry; Savitsky's hydrostatic term ∝ 1/Cv²), so it fades with Froude number.
+  (3) A flat "hump moment" porpoised and flew the boat; it was replaced by the hull's own Kelvin wave
+  (zero mean over the waterline) — self-limiting, and it also gives ships their squat. (4) With the
+  buoyancy faded the planing hull lost its roll stiffness and capsized: the lift acts at the wet
+  bottom's immersion centroid, shifted toward the side leading into a skid, so the hull also banks
+  *into* its turns like a real deep-V. (5) Porpoising at planing speed needed the pitch damping of
+  lift spread along the bottom (−dL/dτ · q · Lw² / 12U). (6) The turbo reached full boost only near
+  max rpm, starving the hump; real turbodiesels are on boost from ~60 % rpm under load.
+- **The sea clock.** The drawn sea ran on wall-clock time and the physics on sim time: they are one
+  now — `vessel.seaTime` in the state, `SystemFrame.waveTime` for every system.
+- **Agents (shared tree, file-disjoint):** the 3D model + generic hull loft (`src/vessels/`), the
+  marine helm HUD and readings (`src/ui/marineHud.ts`), the marine diesel + water voice
+  (`src/audio/marineDiesel.ts`), and the port (`src/world/port.ts`: a new visitors' pontoon and berth
+  in Port Chateau reserved from traffic, the harbour as physics obstacles, the player's wake and
+  spray).
+- **Known limits / next:** the marina isn't sheltered — the shader draws the open sea's waves inside
+  the breakwaters, so a moored boat rocks a few degrees (the physics must match what is drawn;
+  sheltering needs the shader and the physics together). A crashed vessel stops in place (no
+  sinking yet). Bigger vessels need their own docks (see `docs/ADDING_A_VESSEL.md`).
+- **The wake, redone (owner's review: "frigid and low quality").** The first wake was paint on flat
+  alpha ribbons over the sea: grey slabs with hard edges. It is now part of the sea surface: a
+  world-aligned half-float **wake map** following the boat (`src/world/water/wakeMap.ts`, texel-
+  snapped so it never swims) is redrawn each frame from the hull's track with an analytic
+  **Kelvin field** (`src/world/water/wakeField.ts`: stationary-phase transverse and diverging waves,
+  the Rabaud–Moisy narrowing at planing speed, a hull filter, Stokes-sharpened crests, quarter waves,
+  rooster and transom hollow), plus white water, churn and slick. The sea shader bends its normals
+  from the map's slopes (the crests catch the sky and the sun), lifts the surface near the camera,
+  and lights the foam with its own foam model (lace from warped cellular noise). A debug overlay of
+  the map showed why the V first didn't read: at planing speed only one broad crest per side survived
+  and a 138 m transverse wave made a shapeless mound — fixed by a wider cusp, sharper crests, crest
+  foam streaks and a stronger long-wave hull filter. The first amplitudes (0.36 × beam, ×2 at the
+  cusp) made 3 m walls at the hump; real ones are ~0.5 m (0.11 × beam), and the vertex lift is now
+  only applied where the sea grid resolves the wake's waves (≲ 60 m from the camera; the normals
+  carry them beyond). Spray: soft droplet clusters in a low sheet along the chines instead of 1-px
+  dots. Cost: the map pass ≈ 0.12 ms GPU. (`?waterGpu=1` itself logs WebGL query errors, with or
+  without a boat — a pre-existing clash with another timer query; left for later.)

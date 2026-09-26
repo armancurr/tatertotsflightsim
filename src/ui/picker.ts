@@ -5,6 +5,8 @@
  * simulator; with the list closed it lets flying keys through, and it drops focus after mouse use
  * so arrows and Space go back to flying. Pointer events only on the widget.
  *
+ * Vessels (items with `kind: 'vessel'`) are listed after the aircraft under a "Vessels" heading.
+ *
  * Also the saved-choice helpers (localStorage, every access guarded — private windows and blocked
  * storage throw): the choice is restored at start-up unless the URL names an aircraft.
  */
@@ -14,6 +16,13 @@ export interface PickerItem {
   name: string;
   shortName: string;
   description: string;
+  /** 'vessel' for boats and ships (absent = an aircraft): grouped under a "Vessels" heading. */
+  kind?: 'aircraft' | 'vessel';
+}
+
+/** Aircraft first, then vessels (each group in fleet order). */
+export function orderPickerItems<T extends PickerItem>(items: readonly T[]): T[] {
+  return [...items.filter((i) => i.kind !== 'vessel'), ...items.filter((i) => i.kind === 'vessel')];
 }
 
 export interface PickerOptions {
@@ -39,7 +48,8 @@ let pickerUid = 0;
 
 export function createAircraftPicker(doc: Document, opts: PickerOptions): AircraftPicker {
   const uid = ++pickerUid;
-  const items = opts.items.slice();
+  const items = orderPickerItems(opts.items);
+  const grouped = items.some((i) => i.kind === 'vessel') && items.some((i) => i.kind !== 'vessel');
   let current = opts.current;
   let active = Math.max(0, items.findIndex((i) => i.id === current));
   let open = false;
@@ -67,7 +77,14 @@ export function createAircraftPicker(doc: Document, opts: PickerOptions): Aircra
   const listId = `tfs-picker-${uid}`;
   list.id = listId;
   button.setAttribute('aria-controls', listId);
-  const options: HTMLElement[] = items.map((it) => {
+  const options: HTMLElement[] = items.map((it, i) => {
+    if (grouped && it.kind === 'vessel' && items[i - 1]?.kind !== 'vessel') {
+      const head = doc.createElement('li');
+      head.setAttribute('role', 'presentation');
+      head.className = 'tfs-picker-group';
+      head.textContent = 'Vessels';
+      list.appendChild(head);
+    }
     const li = doc.createElement('li');
     li.setAttribute('role', 'option');
     li.id = `${listId}-${it.id}`;

@@ -17,6 +17,7 @@ import {
   WATER_OPAQUE_FRAGMENT,
   WATER_REFLECT_PARS,
 } from './shaders';
+import { WAKE_MAP_UNIFORMS } from './wakeMap';
 
 export type WaterKind = 'sea' | 'lake' | 'river';
 
@@ -142,7 +143,7 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
   // lakes and rivers mirror the land around them (the sea keeps its sky reflection)
   if (kind !== 'sea') material.defines.WATER_REFLECT = '';
   material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, shared, uniforms);
+    Object.assign(shader.uniforms, shared, uniforms, kind === 'sea' ? WAKE_MAP_UNIFORMS : {});
     let v = shader.vertexShader;
     v = replaceOnce(v, '#include <common>', `#include <common>\n${WATER_VERTEX_PARS}`);
     v = replaceOnce(v, '#include <begin_vertex>', `#include <begin_vertex>\n${WATER_BEGIN_VERTEX}`);
@@ -158,6 +159,6 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
     f = replaceOnce(f, '#include <opaque_fragment>', WATER_OPAQUE_FRAGMENT);
     shader.fragmentShader = f;
   };
-  material.customProgramCacheKey = () => `water3-${kind}`;
+  material.customProgramCacheKey = () => `water4-${kind}`;
   return { kind, material, uniforms };
 }

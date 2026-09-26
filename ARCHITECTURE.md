@@ -181,6 +181,45 @@ integration are shared — but `rotor.ts` replaces the wing (`aero.ts`) and the 
 `Controls.throttle` is the collective; `AircraftState.rotor` carries the rotor, engine and assist
 state (the HUD, the audio, the model and `window.sim.rotor` read it).
 
+### 5c. Boats and ships (`hull.ts`)
+
+A config with a `watercraft` section (the Princess V50) is handed whole to `stepVessel()` in
+`hull.ts`: a vessel has no wing, gear or runway, and its phase is `'afloat'` (or `'crashed'`). One
+model covers every size — a battleship would be a different station table and different numbers:
+
+- **The hull is a table of stations** (`hull.stations`: keel, chine, deck edge; bow → stern) that
+  the physics resamples into a grid of vertical **columns** and the 3D model lofts
+  (`src/vessels/hullLoft.ts`) — what floats is what you see.
+- **Buoyancy:** each column's wet part displaces water (ρ g V at its centroid) against the **same
+  Gerstner sea the renderer draws** (`src/world/water/waves.ts`, with the shader's shoaling),
+  sampled on a coarse grid over the hull at the vessel's wave clock. Heave, pitch, roll, righting
+  moment and riding the waves come from the shape. Columns also feel linear + quadratic vertical
+  damping relative to the moving surface.
+- **The hull's own wave:** a Kelvin transverse wave (λ = 2πU²/g, crest at the bow, zero mean) added
+  to the surface the columns see: near Fn 0.5 its trough sits under the stern — the hump trim of a
+  planing hull, the sinkage and trim of a ship.
+- **Planing (Savitsky):** dynamic lift ½ρV²B²C_Lβ from the running trim (flow angle + the wet
+  bottom's rocker) and the wetted length/beam, at Savitsky's centre of pressure, laterally at the
+  wet bottom's immersion centroid shifted toward the side leading into a skid (so a V-bottom banks
+  into its turns), with the pitch damping of the lift spread along the bottom. At planing speed
+  most of the hydrostatic pressure turns into this lift (the transom runs dry).
+- **Resistance:** ITTC-57 friction × form factor on the live wetted surface; a residuary Cr(Fn)
+  table (the hump); windage. **Manoeuvring:** Clarke's linear derivatives from the live length,
+  draft, beam and block coefficient, strip cross-flow drag, added mass by immersion.
+- **Propulsion:** per propulsor, a governed marine diesel (torque rise, turbo lag) on a shaft whose
+  speed comes from the torque balance with a propeller's KT(J)/KQ(J) curves; pods turn the thrust
+  line, shaft drives have a rudder in the slipstream; the leg or rudder is also a foil. Trim tabs,
+  a helm lever through neutral into astern, mooring lines at the berth.
+- **Contacts:** points round the hull against the sea bed and the shore (`groundHeight`) and
+  structures (`obstacleTop`: the marina's pontoons, quays and moored boats); a hard or fast hit
+  holes the hull; lying past 75° capsizes it.
+
+The **sea clock** is shared: the vessel carries `vessel.seaTime` and the app hands it to every
+system as `SystemFrame.waveTime`, so the water is drawn at exactly the time the hull floats on (the
+sea pauses with the sim while a vessel is driven). The port — the reserved visitors' berth in the
+Port Chateau marina and an open-sea start — is `src/world/port.ts`; `R` goes back to the berth,
+`Shift+R` starts underway offshore.
+
 ## 6. Controls, cameras and the loop
 
 - **Controls (`src/input`)** — pure `updateControls(state, inputFrame, dt)`. Keys move the yoke
@@ -350,7 +389,7 @@ the same wiring file.
 ## 9b. The fleet (src/fleet) — more than one aircraft
 
 Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`, `a10`,
-`b747`, `b206`),
+`b747`, `b206`, and the yacht `v50`),
 names, a **full config** (the same shape as `CONFIG`, with its own `aircraft` and `weapons` sections
 and optional camera overrides — the physics, cameras, instruments and weapons just receive it),
 which HUD it uses (`steam` gauges or a `jet` head-up display), which engine sound (`piston`, `jet`
@@ -367,6 +406,12 @@ restarts on the runway, and every system hears `onAircraftChange(def, model)`.
 | `a10` | A-10C Thunderbolt II | jet | turbofan | GAU-8/A, 4 × AGM-65, 2 × AIM-9 (`A10_WEAPONS`) |
 | `b747` | Boeing 747-400 (flown light, ~220 t) | steam | turbofan | none |
 | `b206` | Bell 206B-3 JetRanger III (helicopter, `rotorcraft` config) | steam (dual tach, torquemeter) | turboshaft | none |
+| `v50` | Princess V50 motor yacht (`kind: 'vessel'`, `watercraft` config) | marine (helm display) | marineDiesel | none |
+
+A **vessel** is a fleet entry too (`kind: 'vessel'`, a `watercraft` config section, the model under
+`src/vessels/<name>/`): the picker lists it under "Vessels", it starts at its berth instead of a
+runway, and [docs/ADDING_A_VESSEL.md](docs/ADDING_A_VESSEL.md) walks through adding one (a
+runabout, a ferry, a cruise ship, a warship).
 
 **To add an aircraft:** (1) add its section to `src/config.ts` with the same shape as
 `CONFIG.aircraft` — geometry first, because the physics contact points and the 3D model share it;

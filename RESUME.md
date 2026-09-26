@@ -23,6 +23,12 @@ Last updated: 2026-09-23 · release candidate for open-sourcing · `main` is the
   calibrated 6-DOF flight model, 3D model, realistic cockpit (the 747: a glass flight deck with live
   PFD/ND/EICAS) and HUD style (steam gauges, jet HUD drawn on the combiner glass, airliner glass).
   Take off, fly, stall, spin, crash (break-up + fireball), reset with R, land (rated butter … hard).
+- **A vessel** (branch `feat/watercraft-princess-v50`): the **Princess V50** motor yacht
+  (`?aircraft=v50`) starts moored at a visitors' berth in the Port Chateau marina (R) or underway
+  offshore (Shift+R). A hull model for any boat or ship (`src/physics/hull.ts`: buoyancy on the
+  drawn Gerstner sea, Savitsky planing, Clarke manoeuvring, propellers and pods), a helm HUD, a
+  marine diesel voice, wake and spray. Next: harbour sheltering (shader + physics together), more
+  vessels (`docs/ADDING_A_VESSEL.md`), docks for big ships, sinking wrecks.
 - **Two runways**: 36/18 and the crosswind 03/21 at 30° (`?rwy=36|18|03|21`), a busy GA airport.
 - **Combat** (F-16, A-10): real ballistic guns (hold Q), and **arcade** missiles — T locks what you
   point at, Z fires a Maverick at a vehicle or a Sidewinder at an aircraft (scripted flight, deliberately

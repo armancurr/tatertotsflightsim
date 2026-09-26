@@ -46,6 +46,49 @@ export interface AudioInputs {
   rotor?: RotorAudioInputs;
   /** Optional (helicopters): the low rotor RPM horn is sounding (see lowRotorRpmHorn in turboshaftMapping.ts). Default false. */
   lowRotorRpm?: boolean;
+  /** Optional (boats and ships): engines, propulsors and the hull in the water (absent on aircraft). */
+  vessel?: VesselAudioInputs;
+}
+
+/** One marine engine + gearbox + propeller as the sound engine sees it (from VesselState.propulsors). */
+export interface MarineEngineAudioInputs {
+  /** Engine rpm. */
+  rpm: number;
+  /** Engine torque, fraction of rated (the load gauge; > 1 briefly on the torque rise). */
+  load: number;
+  /** Turbo boost: available-torque fraction 0..1 (the turbo spools with it). */
+  boost: number;
+  /** Gearbox: +1 ahead, 0 neutral, −1 astern. */
+  gear: number;
+  /** Propeller speed, rev/s (signed). */
+  propRps: number;
+  /** Propeller thrust, N (+ ahead). */
+  thrustN: number;
+}
+
+/**
+ * A boat's engines and hull as the sound engine sees them (from AircraftState.vessel, see
+ * createAudioInputTracker). Physical units; the 'marineDiesel' voice (marineMapping.ts) makes the sound.
+ */
+export interface VesselAudioInputs {
+  /** Engines port first; only the first `engineCount` entries are valid (a reused fixed pool). */
+  engines: MarineEngineAudioInputs[];
+  engineCount: number;
+  /** Speed through the water, m/s (+ ahead). */
+  speedMs: number;
+  /** Planing lift as a fraction of the weight, 0..~1. */
+  planing: number;
+  /** Running trim, deg (+ bow up). */
+  trimDeg: number;
+  /** Touching the bottom, the shore or a structure. */
+  aground: boolean;
+  /** Vertical speed of the hull relative to the water surface under it, m/s (+ rising; smoothed). */
+  heaveMs: number;
+  /** Body pitch and roll rates, rad/s (the hull working in the waves). */
+  pitchRate: number;
+  rollRate: number;
+  /** Still on the mooring lines at the berth. */
+  moored: boolean;
 }
 
 /**
@@ -91,7 +134,7 @@ export interface AudioSystem {
   update(a: AudioInputs, dt: number): void;
   setMuted(m: boolean): void;
   readonly muted: boolean;
-  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'), the JetRanger's Allison 250 + rotors ('turboshaft'). */
+  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'), the JetRanger's Allison 250 + rotors ('turboshaft'), the Princess V50's D6 diesels + IPS drives + hull ('marineDiesel'). */
   setEngine(kind: EngineSound): void;
   readonly engine: EngineSound;
   /** An explosion near the wreck (the crash effects' `sim:explosion`); size 0..1, distance from the camera, m. */
@@ -188,6 +231,27 @@ export interface AudioLevels {
   gearbox: number;
   /** Low rotor RPM horn level (0 when silent). */
   rotorHorn: number;
+  // ── Marine diesels + hull (1 while the 'marineDiesel' voice plays; it reuses firingHz / cycleHz = the port
+  //    engine's firing and cycle rates, bladeHz = propeller blade passage, exhaust, mechanical = clatter,
+  //    prop, starter; all 0 for the other voices) ──
+  marine: number;
+  /** Audible engine rpm (port; follows the run-down after a stop). */
+  marineRpm: number;
+  /** Mean engine load 0..1 and the turbo whistle's level and pitch, Hz. */
+  engineLoad: number;
+  turbo: number;
+  turboHz: number;
+  /** Water rushing along the hull, the planing skim, the displacement wash; 0..1. */
+  hullRush: number;
+  skim: number;
+  wash: number;
+  /** Hull slaps per second (expected rate) and the slaps played since start. */
+  slapRate: number;
+  hullSlaps: number;
+  /** Grinding on the bottom (aground) 0..1. */
+  grind: number;
+  /** Gearbox shifts heard since start (ahead / neutral / astern). */
+  gearClunks: number;
   // ── Combat ──
   /** Gun gate (1 while rounds leave the barrel), its fundamental (firing rate, Hz), the exterior delay d / c (s). */
   gun: number;

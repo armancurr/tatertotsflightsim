@@ -17,14 +17,17 @@
  *   ?tod=0..3                                time-of-day preset
  *   ?pause=1                                 start paused (the world still streams and renders)
  *   ?no=terrain,water,…                      switch systems off (see src/game/systems)
- *   ?aircraft=c172rg|f16|a10|b747|b206       which aircraft to fly (src/fleet)
+ *   ?aircraft=c172rg|f16|a10|b747|b206|v50   which aircraft (or vessel) to fly (src/fleet)
  *   ?spawn=range                             start 4 km short of the target range, 1,500 ft, 250 kt
+ *   ?spawn=sea                               a vessel: start underway on the open sea (Shift+R); an aircraft: over it
+ *   ?spawn=berth                             a vessel: start moored at its berth in the marina (the default; R)
  *   ?rwy=36|18|03|21                         start lined up on that runway end (R resets there too)
  */
 import * as THREE from 'three';
 import { CONFIG, FT_TO_M } from '../config';
 import type { AircraftState, CameraMode, Controls } from '../types';
-import { createInitialState, createApproachState, approachControls, createTrimmedState, step } from '../physics';
+import { createInitialState, createApproachState, approachControls, createTrimmedState, createVesselState, step } from '../physics';
+import { playerBerth, seaStart } from '../world/port';
 import { runwayEndFrame } from '../world/runway';
 import { createEnvironment } from '../world/environment';
 import { createRenderer } from '../render/renderer';
@@ -94,7 +97,21 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   // ── Simulation state ──────────────────────────────────────────────────────
   // ?rwy=36|18|03|21: start (and reset with R) lined up on that runway end
   const startRunway = runwayEndFrame(params.get('rwy'));
-  let state: AircraftState = createInitialState(env, ac, startRunway);
+  // The sea's wave clock (SystemFrame.waveTime): runs with the frame clock while an aircraft flies;
+  // while a vessel is driven it follows the vessel's physics wave clock, so the hull floats on
+  // exactly the waves that are drawn (and the sea pauses with the sim).
+  let seaClock = 0;
+  const isVessel = () => ac.aircraft.watercraft != null;
+  /** A vessel's start: moored at its berth (R), or underway on the open sea (Shift+R). */
+  const vesselStart = (where: 'berth' | 'sea'): { state: AircraftState; controls: Partial<Controls> } => {
+    if (where === 'berth') {
+      const b = playerBerth();
+      return createVesselState(env, ac, { x: b.x, z: b.z, headingDeg: b.headingDeg, moored: true, seaTime: seaClock });
+    }
+    const p = seaStart();
+    return createVesselState(env, ac, { x: p.x, z: p.z, headingDeg: p.headingDeg, speedKt: 22, seaTime: seaClock });
+  };
+  let state: AircraftState = isVessel() ? vesselStart(params.get('spawn') === 'sea' ? 'sea' : 'berth').state : createInitialState(env, ac, startRunway);
   let prev: AircraftState = state;
   let controlState = createControlState();
   const camParam = params.get('cam') as CameraMode | null;
@@ -141,9 +158,16 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   });
 
   resetTo = (which: 'runway' | 'approach') => {
-    state = which === 'runway' ? createInitialState(env, ac, startRunway) : createApproachState(env, ac);
+    if (isVessel()) {
+      // A vessel: R = back to the berth (moored, engines idling), Shift+R = underway on the open sea.
+      const v = vesselStart(which === 'runway' ? 'berth' : 'sea');
+      state = v.state;
+      controlState = resetControls(controlState, v.controls);
+    } else {
+      state = which === 'runway' ? createInitialState(env, ac, startRunway) : createApproachState(env, ac);
+      controlState = resetControls(controlState, which === 'approach' ? approachControls(ac) : undefined);
+    }
     prev = state;
-    controlState = resetControls(controlState, which === 'approach' ? approachControls(ac) : undefined);
     camRig = snapCamera(camRig);
     loop.reset();
     aircraft.restoreBreakupParts?.();
@@ -178,7 +202,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       env,
       ac,
     );
-    state = trimmed.state;
+    state = trimmed.state.vessel ? { ...trimmed.state, vessel: { ...trimmed.state.vessel, seaTime: seaClock } } : trimmed.state;
     prev = state;
     controlState = resetControls(controlState, trimmed.controls);
     camRig = snapCamera(camRig);
@@ -205,7 +229,19 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   });
 
   const spawn = params.get('spawn');
-  if (spawn === 'range') {
+  if (spawn === 'sea' || spawn === 'berth') {
+    // a vessel already started there; an aircraft goes over the open sea
+    if (!isVessel() && spawn === 'sea') {
+      const p = seaStart();
+      teleport({ x: p.x, z: p.z, aglFt: 1500, headingDeg: p.headingDeg, speedKt: def.id === 'c172rg' ? 110 : ac.aircraft.rotorcraft ? 100 : 250 });
+    }
+  } else if (isVessel()) {
+    // ?spawn=x,z,…: a vessel starts underway there (the height is ignored; the speed is through the water)
+    if (spawn && spawn !== 'range') {
+      const [x, z, , hdg, kt] = spawn.split(',').map(Number);
+      if (Number.isFinite(x) && Number.isFinite(z)) teleport({ x, z, headingDeg: Number.isFinite(hdg) ? hdg : 0, speedKt: Number.isFinite(kt) ? kt : 0 });
+    }
+  } else if (spawn === 'range') {
     // 4 km short of the target range, pointing at it (set by the targets system; falls back to north).
     const r = combat.range ?? { x: 0, z: -7000, headingDeg: 0 };
     const h = (r.headingDeg * Math.PI) / 180;
@@ -296,6 +332,11 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
       });
       alpha = r.alpha;
     }
+    if (state.vessel && prev.vessel && state.phase !== 'crashed') {
+      seaClock = prev.vessel.seaTime + (state.vessel.seaTime - prev.vessel.seaTime) * alpha;
+    } else if (!paused) {
+      seaClock += frameDt;
+    }
     const pose = interpolatePose(prev, state, alpha);
     aircraft.root.position.set(pose.position.x, pose.position.y, pose.position.z);
     aircraft.root.quaternion.set(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
@@ -328,6 +369,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.stores = combat.status.stores;
     visual.airStores = combat.status.airStores;
     visual.rotor = state.rotor ?? null;
+    visual.vessel = state.vessel ?? null;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.
@@ -358,7 +400,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     focus.copy(aircraft.root.position);
     atmosphere.update(camera, frameDt, focus);
     const fps = fpsStats(fpsMeter);
-    const sysFrame = { state, controls, controlState, camera, dt: frameDt, time: clock.time, paused, cameraMode: camRig.mode, fps, readings, def, aircraft };
+    const sysFrame = { state, controls, controlState, camera, dt: frameDt, time: clock.time, waveTime: seaClock, paused, cameraMode: camRig.mode, fps, readings, def, aircraft };
     systems.update(sysFrame);
 
     renderer.render(scene, camera);

@@ -47,10 +47,10 @@ export interface Quat {
 }
 
 /** Coarse phase of the flight, owned by the physics state machine. */
-export type FlightPhase = 'ground' | 'airborne' | 'landed' | 'crashed';
+export type FlightPhase = 'ground' | 'airborne' | 'landed' | 'crashed' | 'afloat';
 
 /** What `window.sim.state` reports: the phase, with 'stalled' layered on top while airborne. */
-export type SimStateLabel = 'ground' | 'airborne' | 'stalled' | 'landed' | 'crashed';
+export type SimStateLabel = 'ground' | 'airborne' | 'stalled' | 'landed' | 'crashed' | 'afloat';
 
 export type SurfaceType =
   | 'runway'
@@ -248,6 +248,62 @@ export interface RotorState {
   fy: number;
 }
 
+/** Gearbox of one propulsor. */
+export type MarineGear = 'ahead' | 'neutral' | 'astern';
+
+/** One propulsor's engine, gearbox, propeller and steering this step (src/physics/hull.ts). */
+export interface PropulsorState {
+  /** Engine rpm (the tach); the propeller turns at rpm / gearRatio when in gear. */
+  rpm: number;
+  /** Propeller speed, rev/s (signed: − astern). */
+  n: number;
+  gear: MarineGear;
+  /** Propeller thrust along the drive, N (+ ahead). */
+  thrust: number;
+  /** Steering angle of the pod / rudder, deg (+ = turns the bow to starboard). */
+  steerDeg: number;
+  /** Engine torque as a fraction of the rated torque (the load gauge), and the turbo's available-torque fraction 0..1. */
+  load: number;
+  boost: number;
+}
+
+/**
+ * Boats and ships: hull, engines and propulsors (src/physics/hull.ts). Present only on vessels
+ * (`watercraft` config). On a vessel `Controls.throttle` is the helm lever (−1 full astern … +1 full
+ * ahead, neutral around 0), rudder / aileron steer, elevatorTrim < 0 lowers the trim tabs.
+ */
+export interface VesselState {
+  /** The sea's wave clock, s: the hull floats on the Gerstner sea at this time (the drawn sea runs on it too). */
+  seaTime: number;
+  propulsors: PropulsorState[];
+  /** Trim tabs 0 (up) … 1 (fully down). */
+  tabs: number;
+  /** Mooring lines to the berth (the berth point and heading), or null once cast off. */
+  mooring: { x: number; z: number; headingDeg: number } | null;
+  /** Speed through the water, m/s (+ ahead), and leeway (drift) angle, deg (+ = moving to starboard). */
+  speedMs: number;
+  leewayDeg: number;
+  /** Running trim: the hull's bow-up attitude, deg (what the helm's trim indicator shows). */
+  trimDeg: number;
+  /** Dynamic (planing) lift as a fraction of the weight: 0 afloat on buoyancy … ~1 fully planing. */
+  planing: number;
+  /** Wetted length (m) and wetted surface (m²) this step. */
+  wettedLength: number;
+  wettedArea: number;
+  /** Displaced volume this step, m³. */
+  displacedVolume: number;
+  /** Total water resistance this step (N) — the sum the propellers push against. */
+  resistance: number;
+  /** Water depth under the keel (m; Infinity over deep water / no bottom in reach). */
+  depthUnderKeel: number;
+  /** Touching the bottom, the shore or a structure this step. */
+  aground: boolean;
+  /** Seconds heeled past the capsize angle. */
+  capsizeTime: number;
+  /** The surface level under the CG (sea level + the waves), m MSL. */
+  surfaceY: number;
+}
+
 export interface AircraftState {
   /** Seconds since the last reset. */
   time: number;
@@ -280,6 +336,8 @@ export interface AircraftState {
   derived: DerivedData;
   /** Helicopters only: rotor, drivetrain and turboshaft state. */
   rotor?: RotorState;
+  /** Boats and ships only: hull, engines, propulsors. */
+  vessel?: VesselState;
 }
 
 /** Everything the instruments/HUD need, already in display units. Produced by src/ui/instruments.ts. */
@@ -323,6 +381,34 @@ export interface InstrumentReadings {
   aircraftId?: string;
   /** Helicopters: rotor and turboshaft instruments. */
   rotor?: RotorReadings;
+  /** Boats and ships: the helm's instruments. */
+  vessel?: VesselReadings;
+}
+
+/** The helm of a boat or ship (src/ui/instruments.ts from VesselState). */
+export interface VesselReadings {
+  /** Speed through the water and over the ground, knots. */
+  speedKt: number;
+  sogKt: number;
+  /** Engine rpm per engine (port first), and the load (torque) per engine, %. */
+  rpm: number[];
+  loadPct: number[];
+  /** Helm lever −100 (full astern) … +100 (full ahead), and the gearbox it selects. */
+  leverPct: number;
+  gear: MarineGear;
+  /** Drive / rudder angle, deg (+ bow to starboard). */
+  steerDeg: number;
+  /** Trim tabs 0..100 % down. */
+  tabsPct: number;
+  /** Running trim (bow up +) and heel (starboard down +), deg. */
+  trimDeg: number;
+  heelDeg: number;
+  /** Depth under the keel, m (null = deep water, beyond the sounder's range). */
+  depthM: number | null;
+  /** 0..100 % of the weight carried by planing lift. */
+  planingPct: number;
+  moored: boolean;
+  aground: boolean;
 }
 
 /** Helicopter instruments (dual tach, torquemeter, N1, collective, warnings). */

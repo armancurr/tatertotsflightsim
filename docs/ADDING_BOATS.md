@@ -6,6 +6,11 @@ double-ended ferry across the bay, a container ship, a tanker, and a marina full
 at Port Chateau. This guide shows how to add another boat on a new route, and how to add a new
 kind of vessel.
 
+This is the **traffic** — boats that follow routes. To add a boat the player **drives** (physics,
+helm, berth), see [ADDING_A_VESSEL.md](ADDING_A_VESSEL.md). The marina's structures (and the moored
+traffic boats) are solid for the player's hull: `src/world/traffic/harbourObstacles.ts` builds them
+from the same dimensions the model draws.
+
 ## How it fits together
 
 | Layer | File | What it does |
@@ -52,7 +57,10 @@ angle).
 
 - every 20 m along the path, the water under the bow, stern, centre and both sides must be at
   the route's level and at least `MIN_DEPTH[kind]` deep (a tanker needs 16 m, a launch 0.7 m);
-- every route except the launch keeps 120 m from the marina's pontoons and breakwaters.
+- every route except the launch keeps 120 m from the marina's pontoons and breakwaters;
+- no route, the launch included, comes within 25 m of the **visitors' berth** — the berth
+  reserved for the player's own boat (`playerBerth()` in `src/world/port.ts`), which the moored
+  traffic never fills either.
 
 A route that fails is dropped and its id goes into `plan.rejected`, and the tests require that
 list to be empty. They also require that no two routes ever come within 60 m of each other

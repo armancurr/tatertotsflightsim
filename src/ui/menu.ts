@@ -12,7 +12,7 @@ import { CONFIG, type Config } from '../config';
 import type { CameraMode } from '../types';
 import { buildControlsSheet } from './controls';
 import { mascotSvg } from './mascot';
-import type { PickerItem } from './picker';
+import { orderPickerItems, type PickerItem } from './picker';
 
 export interface MenuHost {
   reset(which: 'runway' | 'approach'): void;
@@ -108,11 +108,12 @@ export function createMenu(doc: Document, host: MenuHost, cfg: Config = CONFIG):
 
   const primary = mk('div', 'tfs-primary', main);
   const resumeBtn = button('tfs-btn tfs-go', ICON.play, 'Resume', primary, () => close(true));
-  button('tfs-btn', ICON.restart, 'Restart on runway', primary, () => {
+  // A vessel restarts at its berth or underway on the open sea (same host calls; labels in refresh()).
+  const runwayBtn = button('tfs-btn', ICON.restart, 'Restart on runway', primary, () => {
     host.reset('runway');
     close(true);
   });
-  button('tfs-btn', ICON.approach, 'Start on final approach', primary, () => {
+  const approachBtn = button('tfs-btn', ICON.approach, 'Start on final approach', primary, () => {
     host.reset('approach');
     close(true);
   });
@@ -123,13 +124,17 @@ export function createMenu(doc: Document, host: MenuHost, cfg: Config = CONFIG):
   cards.setAttribute('role', 'radiogroup');
   cards.setAttribute('aria-label', 'Aircraft');
   const cardEls: HTMLButtonElement[] = [];
-  for (const it of host.fleet()) {
+  for (const it of orderPickerItems(host.fleet())) {
     const c = mk('button', 'tfs-card', cards);
     c.type = 'button';
     c.setAttribute('role', 'radio');
     c.dataset.aircraft = it.id;
     const b = mk('b', '', c);
     b.textContent = it.name;
+    if (it.kind === 'vessel') {
+      c.dataset.kind = 'vessel';
+      mk('em', 'tfs-tag', b).textContent = 'BOAT';
+    }
     const d = mk('span', '', c);
     d.textContent = it.description;
     c.addEventListener('click', () => {
@@ -211,6 +216,12 @@ export function createMenu(doc: Document, host: MenuHost, cfg: Config = CONFIG):
 
   function refresh(): void {
     const cur = host.currentAircraft();
+    const vessel = host.fleet().some((i) => i.id === cur && i.kind === 'vessel');
+    const setLabel = (b: HTMLButtonElement, t: string) => {
+      if (b.lastChild && b.lastChild.textContent !== t) b.lastChild.textContent = t;
+    };
+    setLabel(runwayBtn, vessel ? 'Back to the berth' : 'Restart on runway');
+    setLabel(approachBtn, vessel ? 'Start on the open sea' : 'Start on final approach');
     for (const c of cardEls) c.setAttribute('aria-checked', c.dataset.aircraft === cur ? 'true' : 'false');
     const tod = host.getTimeOfDay();
     todBtns.forEach((b, i) => b.setAttribute('aria-pressed', i === tod ? 'true' : 'false'));

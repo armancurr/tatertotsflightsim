@@ -17,6 +17,7 @@
  */
 import { CONFIG } from '../config';
 import type { AudioInputs, AudioLevels } from './types';
+import { zeroMarineLevels } from './marineMapping';
 import { createBuilder, retireGraph, type EngineVoice, type VoiceFrame, type VoiceOutputs } from './builder';
 import {
   TURBOSHAFT as T, emptyTurboshaftInput, emptyTurboshaftMix, lightOff, rotorDirectivity, turboshaftInputs, turboshaftMix,
@@ -277,6 +278,7 @@ export function createTurboshaftVoice(ctx: BaseAudioContext, out: VoiceOutputs, 
       L.whistle = 0;
       L.gear = 0;
       L.flap = 0;
+      zeroMarineLevels(L);
 
       let shots = 0;
       const n1 = crashed ? 0 : mi.n1;

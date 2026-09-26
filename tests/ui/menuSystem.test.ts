@@ -45,7 +45,7 @@ function frame(over: Partial<SystemFrame> = {}): SystemFrame {
   return {
     state: makeState(), controls: makeControls(),
     controlState: { mouseYoke: false, landingLight: false } as SystemFrame['controlState'],
-    camera: {} as SystemFrame['camera'], dt: 1 / 60, time: 1, paused: false, cameraMode: 'chase',
+    camera: {} as SystemFrame['camera'], dt: 1 / 60, time: 1, waveTime: 1, paused: false, cameraMode: 'chase',
     fps: { fps: 60, avg: 60, min: 60, onePercentLow: 60, longFrames: 0, frames: 60 },
     readings: makeReadings(), def: FLEET[0], aircraft: {} as SystemFrame['aircraft'],
     ...over,

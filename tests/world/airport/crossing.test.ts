@@ -184,7 +184,7 @@ describe('spawning on every runway end (functional)', () => {
     const env = createEnvironment();
     for (const d of ['36', '18', '3', '21']) {
       const fr = runwayEndFrame(d)!;
-      for (const def of FLEET) {
+      for (const def of FLEET.filter((f) => f.kind !== 'vessel')) {
         let s = createInitialState(env, def.config, fr);
         expect(s.phase).toBe('ground');
         for (let i = 0; i < 120 * 3; i++) s = step(s, { ...defaultControls(), parkingBrake: true }, 1 / 120, env, def.config);

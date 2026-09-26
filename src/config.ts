@@ -372,6 +372,164 @@ export interface RotorcraftConfig {
   sas: HeliSasConfig;
 }
 
+// ─── Watercraft (owned by src/physics/hull.ts) ──────────────────────────────────────────────────
+// A boat or ship is an "aircraft" whose `watercraft` section is set: the physics then floats and
+// drives it with the hull model in src/physics/hull.ts instead of the wing (the helicopter pattern).
+// One model for every size: the hull is a table of stations, the buoyancy is sampled from that
+// shape against the same Gerstner waves the sea is drawn with, and the resistance, planing lift,
+// manoeuvring derivatives and propellers all scale from it — a battleship is different numbers.
+// Positions are in the BODY frame (origin = CG, +X starboard, +Y up, −Z bow), metres.
+
+/**
+ * One transverse section of the hull. Between the keel and the chine the bottom is a straight V
+ * (the deadrise); from the chine to the deck edge the topsides are straight (flare when
+ * deckHalf > chineHalf). A round-bilge displacement hull uses a small deadrise and a chine at the
+ * turn of the bilge. Stations run bow → stern (z ascending); the model lofts the same table.
+ */
+export interface HullStation {
+  /** Station position along the hull, body z (m; − = toward the bow). */
+  z: number;
+  /** Keel (centreline bottom) height, body y (m). */
+  keelY: number;
+  /** Chine half-breadth (m) and height (body y, m). */
+  chineHalf: number;
+  chineY: number;
+  /** Deck edge (gunwale / sheer line) half-breadth and height. */
+  deckHalf: number;
+  deckY: number;
+}
+
+export interface HullConfig {
+  /** 'planing' (dynamic lift after Savitsky) or 'displacement' (buoyancy only). */
+  kind: 'planing' | 'displacement';
+  stations: HullStation[];
+  /** Buoyancy grid: columns along the length and across each half-beam (the physics resamples the stations). */
+  gridLong: number;
+  gridTrans: number;
+  /** Wave sampling grid over the hull (world samples of the Gerstner sea, interpolated between). */
+  waveSamplesLong: number;
+  waveSamplesTrans: number;
+  /** Form factor (1 + k) on the ITTC-57 friction line. */
+  formFactor: number;
+  /** Residuary (wave-making) resistance coefficient on the wetted surface vs the length Froude number: [Fn, Cr] pairs, ascending. */
+  residuary: [number, number][];
+  /**
+   * The hull's own wave (Kelvin transverse waves, wavelength 2πU²/g, a crest at the bow) along the
+   * hull: amplitude selfWave × (B/L) × U²/2g, faded in between Froude numbers 0.25–0.4 and out between
+   * selfWaveFadeFn[0]–[1]. Near Fn 0.5 its first trough lies under the stern: the stern settles, the
+   * bow rises — the hump trim of a planing hull, and the sinkage and trim of a ship at speed.
+   */
+  selfWave: number;
+  selfWaveFadeFn: [number, number];
+  /** Scale on Savitsky's dynamic planing lift coefficient (0 = off; displacement hulls). */
+  planingLift: number;
+  /** Largest trim angle (deg) the planing lift uses (the curve is only fitted to ~15°). */
+  planingMaxTrimDeg: number;
+  /**
+   * Fraction of the hydrostatic (buoyancy) pressure lost at planing speed, faded in between Froude
+   * numbers 0.5 and 1.5: the transom runs dry and the aft bottom's pressure becomes dynamic
+   * (Savitsky's hydrostatic lift term falls as 1/Cv²). 0 for displacement hulls.
+   */
+  planingBuoyancyLoss: number;
+  /**
+   * Vertical (heave / pitch / roll) damping per wetted column: linear (1/s, × ρ A √(g·beam)) and
+   * quadratic (× ρ A) on the column's vertical speed relative to the surface — the radiation and
+   * viscous damping a hull-shaped column feels.
+   */
+  dampingLinear: number;
+  dampingQuadratic: number;
+  /** Extra roll damping (bilge keels, chines, spray rails): N·m·s/rad per (ρ g ∇ beam). */
+  rollDamping: number;
+  /** Cross-flow drag coefficient of the hull's side (sway / yaw) and the scale on Clarke's linear manoeuvring derivatives. */
+  crossFlowCd: number;
+  clarkeScale: number;
+  /** Added mass as a fraction of the mass (surge, sway, heave) and of the inertia (roll, pitch, yaw). */
+  addedMass: { surge: number; sway: number; heave: number; roll: number; pitch: number; yaw: number };
+}
+
+/**
+ * A marine diesel driving one propulsor (each propulsor has its own engine; the helm's single
+ * lever drives them all). Rpm is ENGINE rpm; the propeller turns at rpm / gearRatio.
+ */
+export interface MarineEngineConfig {
+  /** Rated power (W) at maxRpm, and the torque rise at low rpm (peak torque / rated torque). */
+  maxPowerW: number;
+  torqueRise: number;
+  idleRpm: number;
+  maxRpm: number;
+  /** Engine rpm per propeller revolution. */
+  gearRatio: number;
+  /** Rotating inertia at the PROPELLER shaft (engine + gear + prop + entrained water), kg·m². */
+  shaftInertia: number;
+  /** Governor: torque per rpm of error (N·m per engine rpm) and turbo lag (time constant of the available torque, s). */
+  governorGain: number;
+  turboLagS: number;
+  /** Seconds of cranking before it runs (E starts / stops it). */
+  startTime: number;
+}
+
+/**
+ * A propeller and what steers it. 'pod' = a steerable drive leg (Volvo IPS, azipods): the whole
+ * thrust line turns with the helm. 'shaft' = a fixed shaft with a rudder behind the propeller (the
+ * rudder gets the propeller's slipstream). Thrust / torque follow a linear open-water curve:
+ * KT = kt0 (1 − J / j0T), KQ = kq0 (1 − J / j0Q), J = Va / (n D).
+ */
+export interface PropulsorConfig {
+  type: 'pod' | 'shaft';
+  /** Propeller disc centre, body frame. */
+  position: P3;
+  /** Thrust-line inclination, deg (+ = the thrust tilted up: it lifts the stern — the drive's shaft angle). */
+  thrustAngleDeg: number;
+  diameter: number;
+  kt0: number;
+  j0T: number;
+  kq0: number;
+  j0Q: number;
+  /** Wake fraction w (Va = V (1 − w)) and the thrust deduction t (hull resistance added by the propeller's suction). */
+  wakeFraction: number;
+  thrustDeduction: number;
+  /** Astern thrust as a fraction of ahead thrust at the same rpm. */
+  asternEfficiency: number;
+  /** Steering: largest angle (deg) at rest and at `highSpeedKt` (drives limit steering at speed), and the slew rate (deg/s). */
+  maxSteerDeg: number;
+  highSpeedSteerDeg: number;
+  highSpeedKt: number;
+  steerRateDegPerSec: number;
+  /** The drive leg (pod) or rudder as a foil: lateral area (m²), lift slope (/rad), stall angle (deg), centre (body). */
+  foilArea: number;
+  foilLiftSlope: number;
+  foilStallDeg: number;
+  foilCentre: P3;
+}
+
+export interface WatercraftConfig {
+  hull: HullConfig;
+  engine: MarineEngineConfig;
+  propulsors: PropulsorConfig[];
+  /**
+   * Trim tabs / interceptors at the transom (null = none): each tab's area (m²), the lift
+   * coefficient at full deflection, where they act, and how fast they move (fraction per second).
+   * Controls.elevatorTrim below 0 (nose-down trim, the [ key) puts them down.
+   */
+  trimTabs: { area: number; clFull: number; positions: P3[]; ratePerSec: number } | null;
+  /** Superstructure windage: frontal and side areas (m²), drag coefficients, centre of effort (body). */
+  windage: { frontArea: number; sideArea: number; cdFront: number; cdSide: number; centre: P3 };
+  /** |lever| below this = neutral (gearbox disengaged). Controls.throttle is the lever, −1 (full astern) … +1. */
+  neutralDetent: number;
+  /** Astern rpm is limited to this fraction of full rpm. */
+  asternRpmFraction: number;
+  /** Mooring lines at the berth (until the lever is first put in gear): springs (N/m, N·m/rad) and dampers. */
+  mooring: { stiffness: number; damping: number; yawStiffness: number; yawDamping: number };
+  /**
+   * Contacts with the seabed, the shore and structures (marina pontoons, quays): points around the
+   * hull (the physics adds them from the stations) pushed out by a spring-damper with friction.
+   * A normal impact faster than crashSpeedMs holes the hull; lying past capsizeRollDeg for capsizeTimeS is a capsize.
+   */
+  contact: { stiffness: number; damping: number; friction: number; crashSpeedMs: number; capsizeRollDeg: number; capsizeTimeS: number };
+  /** Water density, kg/m³ (sea water 1025). */
+  waterDensity: number;
+}
+
 /** Widen a config literal's inferred type with optional keys (so other aircraft may set them). */
 const withOptions = <O>() => <T>(t: T): T & O => t as T & O;
 
@@ -838,6 +996,9 @@ export const CONFIG = {
 
     /** Helicopters: rotors, turboshaft, airframe, skids, stability assist; null = a fixed-wing aircraft. */
     rotorcraft: null as RotorcraftConfig | null,
+
+    /** Boats and ships: hull, engines, propulsors (src/physics/hull.ts); null = an aircraft. */
+    watercraft: null as WatercraftConfig | null,
 
     limits: {
       vsoKt: 40,
@@ -2678,6 +2839,7 @@ function makeF16(): AircraftConfig {
     },
 
     rotorcraft: null,
+    watercraft: null,
     fbw: {
       maxG: 9,
       minG: -3,
@@ -3045,6 +3207,7 @@ function makeA10(): AircraftConfig {
 
     /** Direct hydraulic controls (the SAS is modelled as damping in the aero derivatives). */
     rotorcraft: null,
+    watercraft: null,
     fbw: null,
 
     limits: {
@@ -3511,6 +3674,7 @@ function makeB747(): AircraftConfig {
 
     /** Conventional hydraulic controls (the yaw damper is modelled as damping in cnR). */
     rotorcraft: null,
+    watercraft: null,
     fbw: null,
 
     limits: {
@@ -3842,3 +4006,184 @@ function makeB206(): AircraftConfig {
   };
 }
 export const B206_AIRCRAFT: AircraftConfig = makeB206();
+
+/**
+ * Princess V50 (Princess Yachts, Plymouth): a 50 ft hardtop sports yacht on a deep-V planing hull,
+ * twin Volvo Penta IPS 600 pod drives (D6-435: 2 × 320 kW / 435 hp at 3,500 rpm).
+ *
+ * Published: LOA 15.49 m, beam 4.11 m, draft 1.14 m (to the props), 14.2 t half-load displacement,
+ * 32 kt cruise, 34 kt top speed, fuel 1,325 l. GEOMETRY IS FIXED (hull contract): the stations
+ * below are the hull the physics floats AND the hull the 3D model lofts (src/vessels/v50). Body
+ * frame: origin = CG, +X starboard, +Y up, −Z bow; transom at z = +5.5, stem at z = −8.7, swim
+ * platform to z = +6.3, bow pulpit to −9.2 (15.5 m overall). Deadrise 19° at the transom.
+ *
+ * The legacy wing sections (`aero`, `flaps`, `surfaces`, `ground`) are unused; `throttle` is the
+ * helm's lever (−1 full astern … +1 full ahead), rudder / aileron steer the pods, [ / ] the trim tabs.
+ * Calibration: src/physics/hull.ts header and tests/physics/v50*.test.ts.
+ */
+function makeV50(): AircraftConfig {
+  const c172 = structuredClone(CONFIG.aircraft);
+  const stations: HullStation[] = [
+    { z: -8.7, keelY: 0.1, chineHalf: 0, chineY: 0.1, deckHalf: 0.05, deckY: 1.15 },
+    { z: -7.8, keelY: -0.55, chineHalf: 0.55, chineY: -0.05, deckHalf: 0.95, deckY: 1.12 },
+    { z: -6.6, keelY: -0.95, chineHalf: 1.05, chineY: -0.35, deckHalf: 1.5, deckY: 1.08 },
+    { z: -5.0, keelY: -1.15, chineHalf: 1.45, chineY: -0.5, deckHalf: 1.85, deckY: 1.03 },
+    { z: -3.0, keelY: -1.24, chineHalf: 1.72, chineY: -0.62, deckHalf: 2.02, deckY: 1.0 },
+    { z: -1.0, keelY: -1.26, chineHalf: 1.8, chineY: -0.66, deckHalf: 2.055, deckY: 0.98 },
+    { z: 1.5, keelY: -1.25, chineHalf: 1.8, chineY: -0.64, deckHalf: 2.05, deckY: 0.96 },
+    { z: 4.0, keelY: -1.23, chineHalf: 1.76, chineY: -0.62, deckHalf: 2.0, deckY: 0.95 },
+    { z: 5.5, keelY: -1.22, chineHalf: 1.72, chineY: -0.62, deckHalf: 1.96, deckY: 0.95 },
+  ];
+  const pod = (x: number): PropulsorConfig => ({
+    type: 'pod',
+    position: { x, y: -1.35, z: 3.9 },
+    thrustAngleDeg: 6,
+    /** Twin counter-rotating props, as one equivalent disc. */
+    diameter: 0.5,
+    kt0: 0.604,
+    j0T: 1.45,
+    kq0: 0.143,
+    j0Q: 1.6,
+    wakeFraction: 0.03,
+    thrustDeduction: 0.04,
+    asternEfficiency: 0.6,
+    maxSteerDeg: 26,
+    highSpeedSteerDeg: 8,
+    highSpeedKt: 30,
+    steerRateDegPerSec: 40,
+    foilArea: 0.2,
+    foilLiftSlope: 3.5,
+    foilStallDeg: 22,
+    foilCentre: { x, y: -1.15, z: 3.75 },
+  });
+  return {
+    ...c172,
+    name: 'Princess V50',
+    registration: 'TATER TOT',
+    /** Half load: 14.2 t. */
+    mass: 14200,
+    /** Hull + superstructure as a solid of the hull's proportions (k ≈ 0.36 B, 0.27 L). */
+    inertia: { pitch: 180000, yaw: 195000, roll: 30000 },
+    wingArea: 0,
+    wingSpan: 4.11,
+    meanChord: 14.2,
+    oswald: 0.75,
+    engine: {
+      ...c172.engine,
+      /** Engine rpm drives the tach and the engine voice (one engine's numbers; there are two). */
+      maxPowerW: 320000,
+      idleRpm: 700,
+      maxRpm: 3500,
+      startTime: 2.5,
+    },
+    flaps: { ...c172.flaps, notchesDeg: [0], rateDegPerSec: 1, vfeKt: 0 },
+    gear: { ...c172.gear, retractable: false, transitTime: 1, vleKt: 999, vloKt: 999, squatSwitch: false, retractDelay: 0 },
+    surfaces: { ...c172.surfaces, nosewheelSteerMaxDeg: 0 },
+    geometry: {
+      ...c172.geometry,
+      length: 15.49,
+      height: 4.6,
+      /** Unused by the hull model (code that asks for three wheels gets the keel and the pods). */
+      noseWheel: { x: 0, y: -1.24, z: -3 },
+      leftMainWheel: { x: -0.65, y: -1.6, z: 3.9 },
+      rightMainWheel: { x: 0.65, y: -1.6, z: 3.9 },
+      mainWheelRadius: 0.25,
+      noseWheelRadius: 0.25,
+      strutTravel: 0,
+      /** The port pod's propeller (code that asks for "the propeller"). */
+      propHub: { x: -0.65, y: -1.35, z: 3.9 },
+      propRadius: 0.25,
+      /** The stem head. */
+      spinnerTip: { x: 0, y: 1.15, z: -8.7 },
+      /** At the helm: starboard side of the saloon, seated. */
+      pilotEye: { x: 0.72, y: 1.6, z: -1.6 },
+      wingRootLeadingEdge: { x: 0, y: 1, z: 0 },
+      wingRootChord: 0,
+      wingTipChord: 0,
+      wingTaperStart: 0,
+      dihedralDeg: 0,
+      horizontalTail: { x: 0, y: 0, z: 5.5, span: 0, chord: 0 },
+      /** The hardtop's radar arch. */
+      verticalTailTop: { x: 0, y: 3.35, z: 0.8 },
+      /** The hull model has its own contacts (src/physics/hull.ts); nothing here. */
+      structuralPoints: [],
+    },
+    model: { ...c172.model },
+    fbw: null,
+    rotorcraft: null,
+    watercraft: {
+      hull: {
+        kind: 'planing',
+        stations,
+        gridLong: 28,
+        gridTrans: 6,
+        waveSamplesLong: 5,
+        waveSamplesTrans: 3,
+        formFactor: 1.05,
+        residuary: [
+          [0, 0],
+          [0.2, 0.0015],
+          [0.35, 0.006],
+          [0.5, 0.012],
+          [0.6, 0.011],
+          [0.75, 0.006],
+          [0.95, 0.002],
+          [1.2, 0.0005],
+          [1.6, 0],
+        ],
+        selfWave: 0.75,
+        selfWaveFadeFn: [0.75, 1.15],
+        planingLift: 1.15,
+        planingMaxTrimDeg: 12,
+        planingBuoyancyLoss: 0.85,
+        dampingLinear: 0.18,
+        dampingQuadratic: 0.35,
+        rollDamping: 0.02,
+        crossFlowCd: 0.9,
+        clarkeScale: 1,
+        addedMass: { surge: 0.05, sway: 0.4, heave: 0.6, roll: 0.25, pitch: 0.6, yaw: 0.3 },
+      },
+      engine: {
+        maxPowerW: 320000,
+        torqueRise: 1.15,
+        idleRpm: 700,
+        maxRpm: 3500,
+        gearRatio: 1.82,
+        shaftInertia: 3.5,
+        governorGain: 2.5,
+        turboLagS: 0.8,
+        startTime: 2.5,
+      },
+      propulsors: [pod(-0.65), pod(0.65)],
+      trimTabs: {
+        area: 0.12,
+        clFull: 0.35,
+        positions: [
+          { x: -1.25, y: -0.78, z: 5.5 },
+          { x: 1.25, y: -0.78, z: 5.5 },
+        ],
+        ratePerSec: 0.25,
+      },
+      windage: { frontArea: 11, sideArea: 32, cdFront: 0.6, cdSide: 0.9, centre: { x: 0, y: 1.3, z: -0.5 } },
+      neutralDetent: 0.08,
+      asternRpmFraction: 0.6,
+      mooring: { stiffness: 6000, damping: 12000, yawStiffness: 300000, yawDamping: 400000 },
+      contact: { stiffness: 400000, damping: 60000, friction: 0.35, crashSpeedMs: 4.5, capsizeRollDeg: 75, capsizeTimeS: 4 },
+      waterDensity: 1025,
+    },
+    limits: {
+      ...c172.limits,
+      vsoKt: 0,
+      vs1Kt: 0,
+      vrKt: 0,
+      vxKt: 0,
+      vyKt: 0,
+      vaKt: 0,
+      vnoKt: 32,
+      vneKt: 40,
+      maxAngularRate: 4,
+    },
+    spawn: { ...c172.spawn, runwayStartOffset: 0 },
+  };
+}
+export const V50_AIRCRAFT: AircraftConfig = makeV50();

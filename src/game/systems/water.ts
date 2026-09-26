@@ -22,7 +22,7 @@ const mod: SystemModule = {
       update(f) {
         env.timeOfDay = ctx.atmosphere.timeOfDay;
         env.viewportHeight = ctx.renderer.domElement.height;
-        water.update(f.camera, f.time, ctx.atmosphere.sunDirection, env);
+        water.update(f.camera, f.waveTime, ctx.atmosphere.sunDirection, env);
       },
       stats: () => water.stats(),
       dispose: () => water.dispose(),

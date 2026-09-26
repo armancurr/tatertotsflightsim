@@ -33,7 +33,10 @@
  * irregular edges; clear water upstream → olive-brown sediment downstream;
  * flow lanes (calm/rippled streaks advected downstream) that show the current
  * from altitude; riffles; rapids whitewater as standing waves + moving streaks.
- * Sea: a turbid plume off the river mouth.
+ * Sea: a turbid plume off the river mouth, and the player boat's wake from the wake map
+ * (wakeMap.ts / wakeField.ts: wave height → vertex lift near the camera and the normal by finite
+ * differences, so the Kelvin crests catch the sky and the sun; white water as lace-broken foam in
+ * the sea's own foam lighting; churned, aerated water paler and rougher; a calm slick behind).
  */
 import { LAND, MARCH, PROFILE, RIVER_OPTICS, glsl3, glslF } from './shading';
 
@@ -50,6 +53,8 @@ uniform float uWaveGain;
   uniform sampler2D uBathyN;
   uniform vec4 uBathyNXf;
   uniform float uDispRange;
+  uniform sampler2D uWakeMap;
+  uniform vec4 uWakeXf;
 #endif
 #ifdef WATER_RIVER
   attribute vec2 aAcross;
@@ -98,6 +103,15 @@ export const WATER_BEGIN_VERTEX = /* glsl */ `
         d.y += b.x * sin( th ) * w;
       }
       transformed += d;
+      // the player's wake (wakeMap.ts): its waves lift the surface near the camera
+      if ( uWakeXf.w > 0.5 ) {
+        vec2 wu = ( wp0.xz - uWakeXf.xy ) * uWakeXf.z;
+        vec2 we = min( wu, 1.0 - wu );
+        float wedge = clamp( min( we.x, we.y ) / 0.06, 0.0, 1.0 );
+        // only where the grid (spacing ≈ 0.045 × distance) resolves the wake's short waves; beyond, the normal carries them
+        float wres = 1.0 - smoothstep( 25.0, 60.0, length( wp0.xz - cameraPosition.xz ) );
+        if ( wedge > 0.0 && wres > 0.0 ) transformed.y += textureLod( uWakeMap, wu, 0.0 ).r * wedge * wedge * ( 3.0 - 2.0 * wedge ) * near * wres;
+      }
     }
   #endif
   #ifdef WATER_RIVER
@@ -159,6 +173,9 @@ uniform vec4 uBathyNXf;    // x0, z0, 1/extent, valid
 uniform sampler2D uBathyF;
 uniform vec4 uBathyFXf;
 #ifdef WATER_SEA
+  uniform sampler2D uWakeMap; // player wake: R height (m), G foam, B churn, A slick
+  uniform vec4 uWakeXf;       // x0, z0, 1/extent, active
+  uniform vec2 uWakeTexel;    // texel (m), 1/res
   uniform vec2 uSurf;      // zone width (m), breaker period (s)
   uniform vec4 uMouth;     // river mouth x, z, plume radius (m), strength
 #endif
@@ -394,6 +411,37 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
   float crest = 0.0;
   wGerstner( p, fw, ng, lost, crest );
 
+  // ── the player's wake (wake map): its wave slopes, white water, churn and slick ──
+  float wkFoam = 0.0;
+  float wkChurn = 0.0;
+  float wkSlick = 0.0;
+  #ifdef WATER_SEA
+    if ( uWakeXf.w > 0.5 ) {
+      vec2 wu = ( pw - uWakeXf.xy ) * uWakeXf.z;
+      vec2 we = min( wu, 1.0 - wu );
+      float wedge = wSat( min( we.x, we.y ) / 0.06 );
+      if ( wedge > 0.0 ) {
+        wedge = wedge * wedge * ( 3.0 - 2.0 * wedge );
+        vec4 wc0 = textureLod( uWakeMap, wu, 0.0 );
+        float tx = uWakeTexel.y;
+        float hx1 = textureLod( uWakeMap, wu + vec2( tx, 0.0 ), 0.0 ).r;
+        float hx0 = textureLod( uWakeMap, wu - vec2( tx, 0.0 ), 0.0 ).r;
+        float hz1 = textureLod( uWakeMap, wu + vec2( 0.0, tx ), 0.0 ).r;
+        float hz0 = textureLod( uWakeMap, wu - vec2( 0.0, tx ), 0.0 ).r;
+        vec2 grad = vec2( hx1 - hx0, hz1 - hz0 ) / ( 2.0 * uWakeTexel.x );
+        grad = clamp( grad, vec2( -1.5 ), vec2( 1.5 ) );
+        // slopes the pixel can resolve go into the normal, the rest into roughness
+        float wres = 1.0 - smoothstep( 2.0 * uWakeTexel.x, 8.0 * uWakeTexel.x, fw );
+        ng.x -= grad.x * wedge * wres;
+        ng.z -= grad.y * wedge * wres;
+        lost += 0.5 * dot( grad, grad ) * wedge * ( 1.0 - wres );
+        wkFoam = wSat( wc0.g ) * wedge;
+        wkChurn = wSat( wc0.b ) * wedge;
+        wkSlick = wSat( wc0.a ) * wedge;
+      }
+    }
+  #endif
+
   // ── depth / shore (sea, lakes) ──
   float depth = 60.0;
   float foam = 0.0;
@@ -450,6 +498,10 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     d2 = wDetail( p, uDetailL2, uDetailOff.zw, v2 );
     sd = ( d1.xy + d2.xy ) * slick * uWaveGain;
     dvar = ( v1 + v2 ) * slick * slick * uWaveGain * uWaveGain;
+    // the wake's slick: the turbulence has flattened the ripples; churned water is rough and broken
+    float wkCalm = 1.0 - 0.7 * wkSlick * ( 1.0 - wkChurn );
+    sd *= wkCalm;
+    dvar = dvar * wkCalm * wkCalm + 0.02 * wkChurn;
   #endif
   vec3 n = normalize( vec3( ng.x - sd.x, ng.y, ng.z - sd.y ) );
 
@@ -469,6 +521,13 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     float wc = smoothstep( uWhitecap.x, uWhitecap.y, crest + 0.12 * d1.z + 0.25 * ( slick - 1.0 ) ) * uWhitecap.z;
     wc *= smoothstep( 4.0, 12.0, depth );
     foam = max( foam, wc * foamTex );
+    // the wake's white water: the lace in the map, broken up finer here (bubbles, the tile's ripples)
+    float wkMicro = mix( 0.5, wNoise( pw * 2.7 ) * 0.6 + wNoise( pw * 6.3 + 1.7 ) * 0.4, 1.0 - smoothstep( 0.08, 0.35, fw ) );
+    float wkF = wkFoam * ( 0.55 + 0.5 * foamTex + 0.5 * wkMicro );
+    foam = max( foam, smoothstep( 0.08, 0.75, wkF ) * ( 0.6 + 0.4 * wkFoam ) );
+    // aerated water under the churn: pale turquoise, glowing with scattered light
+    deep = mix( deep, vec3( 0.03, 0.12, 0.12 ), wkChurn * ( 1.0 - 0.5 * wkFoam ) );
+    absorb = mix( absorb, vec3( 0.3, 0.07, 0.07 ), wkChurn );
     // the river's sediment plume off the mouth
     float plume = uMouth.w * exp( - length( pw - uMouth.xy ) / uMouth.z ) * ( 0.5 + 0.5 * wNoise( pw / 170.0 + vec2( uTime * 0.008, 0.0 ) ) );
     deep = mix( deep, ${glsl3(O.turbidDeep)}, plume );

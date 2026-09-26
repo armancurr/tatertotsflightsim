@@ -1,17 +1,20 @@
 /**
- * The fleet registry: every aircraft the player can choose. To add an aircraft: give it a config
- * section in `src/config.ts` (same shape as `CONFIG.aircraft`), a model folder under
- * `src/aircraft/` with a factory returning an `AircraftModelHandle`, and one entry below.
+ * The fleet registry: every aircraft (and vessel) the player can choose. To add an aircraft: give
+ * it a config section in `src/config.ts` (same shape as `CONFIG.aircraft`), a model folder under
+ * `src/aircraft/` with a factory returning an `AircraftModelHandle`, and one entry below. A vessel
+ * is the same with a `watercraft` section, `kind: 'vessel'` and a model under `src/vessels/`
+ * (docs/ADDING_A_VESSEL.md).
  */
-import { CONFIG, F16_AIRCRAFT, F16_WEAPONS, A10_AIRCRAFT, A10_WEAPONS, B747_AIRCRAFT, B206_AIRCRAFT, type Config } from '../config';
+import { CONFIG, F16_AIRCRAFT, F16_WEAPONS, A10_AIRCRAFT, A10_WEAPONS, B747_AIRCRAFT, B206_AIRCRAFT, V50_AIRCRAFT, type Config } from '../config';
 import { createAircraft } from '../aircraft';
 import { createF16Model } from '../aircraft/f16';
 import { createA10Model } from '../aircraft/a10';
 import { createB747Model } from '../aircraft/b747';
 import { createB206Model } from '../aircraft/b206';
+import { createV50Model } from '../vessels/v50';
 import type { AircraftDef } from './types';
 
-export type { AircraftDef, AircraftModelHandle, BreakupPart, HudStyle, EngineSound } from './types';
+export type { AircraftDef, AircraftModelHandle, BreakupPart, HudStyle, EngineSound, VehicleKind } from './types';
 
 const C172: AircraftDef = {
   id: 'c172rg',
@@ -112,8 +115,32 @@ const B206: AircraftDef = {
   createModel: () => createB206Model(),
 };
 
-/** In menu order. */
-export const FLEET: readonly AircraftDef[] = [C172, F16, A10, B747, B206];
+const v50Config: Config = {
+  ...CONFIG,
+  aircraft: V50_AIRCRAFT,
+  // The helm lever: ~4 s from neutral to full ahead on the keyboard.
+  controls: { ...CONFIG.controls, throttleRate: 0.25 },
+  camera: {
+    ...CONFIG.camera,
+    chase: { ...CONFIG.camera.chase, distance: 28, height: 7 },
+    orbit: { ...CONFIG.camera.orbit, distance: 30 },
+  },
+};
+
+const V50: AircraftDef = {
+  kind: 'vessel',
+  id: 'v50',
+  name: 'Princess V50',
+  shortName: 'V50',
+  description: '50 ft sports yacht on twin Volvo IPS 600 pods — starts moored in the marina; planes at ~15 kt, tops out ~34 kt.',
+  config: v50Config,
+  hud: 'marine',
+  sound: 'marineDiesel',
+  createModel: () => createV50Model(),
+};
+
+/** In menu order (the picker lists vessels after the aircraft). */
+export const FLEET: readonly AircraftDef[] = [C172, F16, A10, B747, B206, V50];
 
 export const DEFAULT_AIRCRAFT_ID = C172.id;
 

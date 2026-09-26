@@ -2,13 +2,15 @@
  * The aircraft's sound: a fully synthesised WebAudio graph (no sound files).
  *
  *   engine voice (swapped per aircraft: piston.ts = Cessna O-360 + prop, jet.ts = F-16 F110 turbofan,
- *                 turbofan.ts = A-10 TF34s, turboshaft.ts = JetRanger Allison 250 + rotors)
+ *                 turbofan.ts = A-10 TF34s, turboshaft.ts = JetRanger Allison 250 + rotors,
+ *                 marineDiesel.ts = Princess V50 twin D6 diesels + IPS drives + the hull in the water)
  *     ├─ exterior path ─┐
  *   rolling rumble, brake scrub, touchdown one-shots ─┤→ aircraft bus → view LP ×2 + shelf
  *                                                        (muffled cabin / open air, air absorption)
  *                                                        → distance → master
  *     └─ cabin path (horns, motors, whistle, intake howl, ECS, hydraulics) → cabin bus → master
  *   wind (pink band-pass sweeping with airspeed + hiss) → wind LP (duller in the cabin) → master
+ *     (a vessel: apparent wind at a much lower level; no tyres, touchdowns, stall / gear horns)
  *   crash layer (impact, metal, debris, scraping, explosions, impacts, crackles) + fire bed → fx bus → master
  *   combat (gun, impacts, missiles, booms) and the enemy aircraft's engines (airTargets.ts) → master
  *   master (volume × mute × pause) → glue compressor → limiter → soft clipper → destination
@@ -33,6 +35,8 @@ import { createJetVoice } from './jet';
 import { createTurbofanVoice } from './turbofan';
 import { createTurboshaftVoice } from './turboshaft';
 import { TURBOSHAFT } from './turboshaftMapping';
+import { createMarineDieselVoice } from './marineDiesel';
+import { marineWindScale } from './marineMapping';
 import { createCombatAudio, type CombatAudio, type CombatAudioApi } from './combat';
 import { createAirAudio, type AirAudio, type AirAudioApi } from './airTargets';
 
@@ -233,7 +237,8 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
 }
 
 const fin = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
-const isEngine = (k: unknown): k is EngineSound => k === 'piston' || k === 'jet' || k === 'turbofan' || k === 'turboshaft';
+const isEngine = (k: unknown): k is EngineSound =>
+  k === 'piston' || k === 'jet' || k === 'turbofan' || k === 'turboshaft' || k === 'marineDiesel';
 
 export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   const seed = opts.seed ?? 4711;
@@ -267,6 +272,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     turbofan: 0, gun: 0, gunHz: 0, gunDelayS: 0, motor: 0, combatLive: 0, impactsPlayed: 0, booms: 0, launches: 0,
     airVoices: 0, airLevel: 0, airDoppler: 1,
     turboshaft: 0, rotorPct: 0, slap: 0, slapSharpness: 0, tailRotor: 0, tailHz: 0, gearbox: 0, rotorHorn: 0,
+    marine: 0, marineRpm: 0, engineLoad: 0, turbo: 0, turboHz: 0, hullRush: 0, skim: 0, wash: 0, slapRate: 0, hullSlaps: 0,
+    grind: 0, gearClunks: 0,
   };
 
   const makeVoice = (g: Graph, kind: EngineSound): EngineVoice =>
@@ -276,7 +283,9 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
         ? createTurbofanVoice(g.ctx, g.voiceOut, g.kit.rnd)
         : kind === 'turboshaft'
           ? createTurboshaftVoice(g.ctx, g.voiceOut, g.kit.rnd)
-          : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
+          : kind === 'marineDiesel'
+            ? createMarineDieselVoice(g.ctx, g.voiceOut, g.kit.rnd)
+            : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
   let combat: CombatAudio | null = null;
   /** Always present; a no-op until the context exists (every call is guarded). */
   const combatApi: CombatAudioApi = {
@@ -394,6 +403,8 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     const tau = A.rampTau;
     const exterior = a.cameraMode !== 'cockpit';
     const crashed = !!a.crashed;
+    // A boat: no tyres, touchdowns, stall or gear horns; the wind is the apparent wind over the deck.
+    const marine = v.kind === 'marineDiesel';
 
     // Master
     L.master = masterGain(muted, paused);
@@ -428,30 +439,30 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
 
     // Airflow
     const ias = fin(a.airspeedKt, 0);
-    L.wind = windGain(ias);
+    L.wind = windGain(ias) * (marine ? marineWindScale(exterior) : 1);
     g.wind.set(L.wind * A.windVolume, t, tau);
     g.windBP.set(windCenterHz(ias), t, tau);
     g.hiss.set(Math.pow(L.wind, 1.5) * A.windVolume * 0.3, t, tau);
 
     // Ground
     const gs = fin(a.groundSpeedKt, 0);
-    L.rolling = rollingGain(gs, !!a.onGround, a.surface);
-    L.scrub = brakeScrubGain(fin(a.brake, 0), gs, a.surface, !!a.onGround);
+    L.rolling = marine ? 0 : rollingGain(gs, !!a.onGround, a.surface);
+    L.scrub = marine ? 0 : brakeScrubGain(fin(a.brake, 0), gs, a.surface, !!a.onGround);
     g.roll.set(L.rolling * A.rollingVolume * 1.5, t, tau);
     g.rollLP.set(rollingCutoffHz(gs, a.surface), t, tau);
     g.scrub.set(L.scrub * A.rollingVolume * 0.4, t, tau);
 
     // Horns
-    L.horn = stallHornOn(!!a.stallWarning, ias, crashed) ? A.stallHornVolume : 0;
+    L.horn = !marine && stallHornOn(!!a.stallWarning, ias, crashed) ? A.stallHornVolume : 0;
     g.horn.set(L.horn, t, 0.025);
-    L.gearHorn = a.gearWarning === true && !crashed ? A.gearHornVolume : 0;
+    L.gearHorn = !marine && a.gearWarning === true && !crashed ? A.gearHornVolume : 0;
     g.gearHorn.set(L.gearHorn, t, 0.02);
-    L.rotorHorn = a.lowRotorRpm === true && !crashed ? TURBOSHAFT.hornVolume : 0;
+    L.rotorHorn = !marine && a.lowRotorRpm === true && !crashed ? TURBOSHAFT.hornVolume : 0;
     g.rotorHorn.set(L.rotorHorn, t, 0.02);
 
     // Touchdown
     const kit = g.kit;
-    if (a.touchdownFpm !== null && a.touchdownFpm !== undefined && !crashed) {
+    if (!marine && a.touchdownFpm !== null && a.touchdownFpm !== undefined && !crashed) {
       const i = touchdownIntensity(a.touchdownFpm);
       if (i > 0) {
         playTouchdown(kit, g.acFx, t, i, a.surface);

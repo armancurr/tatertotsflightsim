@@ -38,7 +38,7 @@ const mod: SystemModule = {
     let tod = -1;
 
     const fleetItems = (): PickerItem[] =>
-      actions.fleet().map((d) => ({ id: d.id, name: d.name, shortName: d.shortName, description: d.description }));
+      actions.fleet().map((d) => ({ id: d.id, name: d.name, shortName: d.shortName, description: d.description, kind: d.kind ?? 'aircraft' }));
     const currentId = () => actions.currentAircraft().id;
     const select = (id: string) => {
       saveAircraftChoice(store, cfg.menu.storageKey, id);
