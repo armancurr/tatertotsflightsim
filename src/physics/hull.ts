@@ -64,11 +64,104 @@
  *   Grounding: dead slow onto a 1 : 10 beach   aground, no damage, backs off astern; at > 17 kt: holed
  *   Pontoon: at 2 kt held off it; at 20 kt     holed
  *   step() cost (node)                         ~35 µs (28 × 12 buoyancy columns, 15 wave samples, 47 contacts)
+ *
+ * ─── Calibration: USS Iowa (BB-61) (1980s full load 58,400 t; 4 shafts, 212,000 shp; calm sea) ───
+ * Checked by tests/physics/iowa.test.ts and iowa-fuzz.test.ts (config: makeIowa() in src/config.ts).
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Displacement / LWL / draft (keel)          58,400 t (56,976 m³) / 262.0 m / 11.27 m   58,400 t / 262.13 m / 11.33 m
+ *   Block coefficient (on 262.1 × 32.97 × 11.33)  0.585                              ~0.59
+ *   Static trim, calm                          0.00°                                 level
+ *   Roll period / GM (from the period)         16.7 s / 2.82 m                       — / 2.82 m (9.26 ft)
+ *   Rights from a 30° heel                     < 3° within 150 s                     positive stability
+ *   Default sea (12 kt wind), stopped          pitch σ < 0.5°, roll σ < 1.5°         steady platform
+ *   Full ahead (lever 1)                       32.5 kt, 4,900 turbine rpm (202 shaft rpm), load 0.97–1.0, trim −0.09°   33 kt (normal load), ~202 rpm
+ *   Full ahead from rest                       10 kt in 49 s, 20 kt in 96 s, 30 kt in 179 s   —
+ *   Slow ahead, lever 0.2                      9.3 kt at 1,240 turbine rpm (51 shaft rpm)     5–10 kt
+ *   Full astern from rest                      16.4 kt astern                        (astern turbines ~¼ power)
+ *   Crash stop from 30 kt (full astern)        stopped in 241 s, head reach 1.53 km  "kilometres"
+ *   Hard over at 30 kt (35°)                   tactical diameter 811 m, advance 770 m, heels 4.9° outward, 30 → 19 kt   744 m (814 yd)
+ *   Hard over at 20 kt                         tactical diameter 810 m, heels 2.5° outward   695 m (760 yd)
+ *   Grounding: dead slow onto a 1 : 20 bank    aground, no damage, backs off astern; at 20 kt: holed
+ *   Pier: at ~4 kt held off it; at 10 kt       holed
+ *   step() cost (node)                         ~160 µs (64 × 16 buoyancy columns, 27 wave samples, 177 contacts)
+ * Notes: one MarineEngineConfig per shaft stands for its turbine set (engine rpm = nominal HP-turbine
+ * rpm through a 24.3 : 1 gear); the two inboard shafts carry the rudders (31.6 m² each), the outboard
+ * shafts only a small strut foil; the turning circle comes out ~9 % wider than published (the rudder
+ * area is the real 340 ft², the rest is the generic Clarke / cross-flow hull, tuned to crossFlowCd 0.1,
+ * clarkeScale 1.3). createVesselState() trims its lever on the surge acceleration with the shafts
+ * held at the lever's rpm, so a 22 kt start holds 22 kt (lever ~0.58); the Iowa tests still set their
+ * levers from the propeller law.
+ * ─── Calibration: MS Tater Star (Fantasy-class cruise ship, 40,000 t, 2 × 14 MW shafts + rudders, 6 tunnel thrusters; calm sea) ───
+ * Checked by tests/physics/cruise.test.ts and cruise-fuzz.test.ts. Published: Carnival Fantasy class (see makeCruise()).
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Displacement / waterline length / draft   40,000 t (39,024 m³) / 235 m / 7.86 m  (est.) / ~225 m / 7.75–7.80 m
+ *   Static trim, calm                          −0.06° (level)                        level
+ *   Roll period (GM ≈ 1.8 m)                   20.9 s; from 20° the first swing back to −6.9°   ~20 s
+ *   Full ahead: top speed                      22.5 kt at 600 rpm (rated), load 0.99  22.3 kt (trials), 21 kt service
+ *   …gathering way from rest                   10 kt in ~2 min, 20 kt in ~5.4 min    —
+ *   Service 21 kt                              lever 0.85, 527 rpm                   21 kt
+ *   Slow ahead, lever 0.2 / dead slow          8.9 kt at 226 rpm / 6.8 kt             harbour speeds
+ *   Full astern from rest                      ~13 kt astern                         —
+ *   Crash stop from 21 kt (full astern)        stopped in ~5.5 min, track reach ~5.8 L (1.5 km)   IMO ≤ 15 L
+ *   Hard over at 21 kt (35°)                   90° in ~113 s, steady circle ~4.0 L (1,030 m), heels 7° outward, 21 → 10.5 kt   ~3–4 L, heels out
+ *   Hard over at 6 kt                          circle ~1.75 L (the propeller race on the rudders)
+ *   Tunnel thrusters at 0 kt (← / →)          90° in ~94 s, ~1.1 °/s steady, drifts ~40 m in 5 min   turns on the spot
+ *   …at 15 kt                                  nothing (faded out by 5 kt)            useless above ~5 kt
+ *   Default sea (12 kt wind), 21 kt            pitch / roll < 1°                     a 260 m ship shrugs it off
+ *   Grounding at 15 kt / a quay at 8 kt        holed (crashSpeedMs 1 m/s)            —
+ *   step() cost (node)                         ~105 µs (52 × 16 buoyancy columns, 27 wave samples, 205 contacts)
+ *
+ * Tunnel thrusters (propulsor type 'thruster'): athwartships thrust at the tunnel, driven by the
+ * aileron axis (+ = bow to starboard: bow units push to starboard, stern units to port), faded by
+ * thrusterEffect(speed) and slewed at their electric rate; off with the engines. On a vessel that
+ * has any, the rudder axis alone steers the rudders / pods (without, rudder + aileron as before).
+ *
+ * ─── Sea-Doo work: waterjets ('jet' propulsors, stepJet), strip planing, the rider, righting ─────
+ * A waterjet is an axial pump on the crankshaft: flow Q = k (n − n_slip) (× the intake's immersion and
+ * a cavitation factor: suction head 10.3 m + Va²/2g against an NPSH ∝ n²), Vj = Q / A_nozzle; the pump
+ * absorbs ½ ρ Q (Vj² − Va²) / η, so the engine's torque balance sets the rpm (power-limited, no KT/KQ);
+ * the gross thrust ρ Q Vj acts along the steered, trimmed (VTS) nozzle — or is turned forward and down
+ * by the iBR bucket — and the inlet swallows the water's momentum (ρ Q Va, and sideways when skidding).
+ * No flow, no steering: at idle only the off-throttle assist (OTAS: the ECU holds ~5,000 rpm when the
+ * throttle is released at speed with the bars over) steers; the GPS limiter holds 58 kt; sucking air
+ * off a crest the ECU cuts to ~4,200 rpm. A short, light, fast hull (hull.planingModel 'strips') gets
+ * strip-theory planing (Zarnick added-mass momentum + cross-flow drag per strip and panel, Garme's
+ * transom fade), radiation damping of heave, a little planing yaw damping, V-panel side forces acting
+ * high, and a transom that leads going astern. The rider leans (a moment of their weight, balancing
+ * like a skier toward the coordinated bank plus the carve asked for), is thrown off by a hard nose-in,
+ * and after a capsize swims round and rolls the craft upright (config `righting`) — no wreck.
+ *
+ * ─── Calibration: Sea-Doo RXP-X 325 (490 kg with rider, Rotax 1630 ACE 242 kW, calm sea) ─────────
+ * Checked by tests/physics/seadoo.test.ts and seadoo-fuzz.test.ts.
+ *
+ *   Quantity                                   Measured                              Real / target
+ *   ─────────────────────────────────────────  ────────────────────────────────────  ───────────────────
+ *   Displacement / waterline length / draft   0.478 m³ / 2.88 m / 0.28 m (keel 0.31 m under)   490 kg loaded
+ *   Static trim                                +0.5° (stern a touch down)            level-ish
+ *   Full throttle from rest: on the plane      0.8 s (bow up 10° at ~12 kt)          "planes almost instantly"
+ *   0–30 mph / 0–60 mph                        2.3 s / 3.5 s (the pump cavitates off the line)   — / 3.4 s (maker; 4.6 s measured 3–62 mph)
+ *   Top speed (GPS limiter)                    57.7 kt at ~6,400 rpm, trim ~0.4°, mild porpoising   ~58 kt (67 mph) governed
+ *   …limiter off                               74 kt at the 8,000 rpm limiter        (the power is there)
+ *   Lever 0.3 / 0.5 / 0.7                      16 / 35 / 52 kt at 3,300 / 4,650 / 6,000 rpm
+ *   Full reverse (iBR)                         5.3 kt astern                          ~5 mph
+ *   iBR brake from 40 kt                       stopped (< 2 kt) in 35 m, 3.8 s        "30 % shorter" than coasting
+ *   Full helm (← : full lean) at 16 / 21 / 26 / 39 kt   circle ~70 / ~115 / ~160 / ~275 m, banked 12–14° into the turn   much tighter on the real ski
+ *   Full throttle + full helm from rest        a banked, accelerating carve to 58 kt; no capsize
+ *   Idle in neutral, bars over                 < 15° of turn in 6 s (the idle creep)   no steering at idle
+ *   Capsized (170° heel), nearly stopped       rolled upright over 3.0 s, rider back on at 4.5 s, engine restarts
+ *   Flat landing from 1.5 m at 45 kt           lands and runs on, rider aboard; nose-in at 50 kt: a spill
+ *   Beach at ~4 kt / at 45 kt                  beached, no damage / holed
+ *   Idling (lever 0.15) out of the marina      casts off and idles out through the default sea (fleet test)
+ *   step() cost (node)                         ~40–60 µs (20 × 10 columns, 6 wave samples, 34 contacts)
  */
 import { CONFIG, MS_TO_KT, type Config, type HullStation, type PropulsorConfig, type WatercraftConfig } from '../config';
-import type { AircraftState, Controls, DerivedData, EngineState, Environment, MarineGear, PropulsorState, Quat, Vec3, VesselState } from '../types';
+import type { AircraftState, Controls, DerivedData, EngineState, Environment, MarineGear, PropulsorState, Quat, RiderState, Vec3, VesselState } from '../types';
 import { clamp, moveToward, smoothstep, wrap180 } from '../math/vec3';
-import { qIntegrateBody } from '../math/quat';
+import { qIntegrateBody, qSlerp } from '../math/quat';
 import { bodyToWorld, eulerFromQuat, pqrFromOmega, quatFromEuler, worldToBody } from './frames';
 import { airDensity } from './atmosphere';
 import { getSeaSpectrum, type WaveSpectrum } from '../world/water/waves';
@@ -264,7 +357,7 @@ export function hullGeometry(wc: WatercraftConfig, mass: number): HullGeom {
       contacts.push({ x: s.deckHalf, y: s.deckY, z });
     } else contacts.push({ x: 0, y: s.deckY, z });
   }
-  for (const p of wc.propulsors) contacts.push({ x: p.position.x, y: p.position.y - p.diameter / 2, z: p.position.z });
+  for (const p of wc.propulsors) if (p.type !== 'thruster') contacts.push({ x: p.position.x, y: p.position.y - p.diameter / 2, z: p.position.z });
 
   const nl = Math.max(2, Math.round(h.waveSamplesLong));
   const ntw = Math.max(1, Math.round(h.waveSamplesTrans));
@@ -467,6 +560,216 @@ function foilCl(alpha: number, slope: number, stallDeg: number): number {
   return Math.sign(alpha) * post;
 }
 
+// ─── Strip planing (Sea-Doo work: hull.planingModel 'strips') ────────────────────────────────────
+
+/** Cross-flow drag coefficient of a V section (Zarnick). */
+const STRIP_CROSSFLOW_CD = 1.0;
+
+
+const stripCache = new WeakMap<HullGeom, { chineHalf: Float64Array; tanBeta: Float64Array; keelY: Float64Array; deckY: Float64Array }>();
+
+/** Each buoyancy strip's chine half-breadth, tan(deadrise), keel and deck height (cached per hull geometry). */
+function stripGeom(geo: HullGeom, stations: readonly HullStation[]): { chineHalf: Float64Array; tanBeta: Float64Array; keelY: Float64Array; deckY: Float64Array } {
+  let g = stripCache.get(geo);
+  if (!g) {
+    const n = geo.strips;
+    g = { chineHalf: new Float64Array(n), tanBeta: new Float64Array(n), keelY: new Float64Array(n), deckY: new Float64Array(n) };
+    for (let i = 0; i < n; i++) {
+      const st = stationAt(stations, geo.stripZ[i]);
+      g.chineHalf[i] = Math.max(0.02, st.chineHalf);
+      g.tanBeta[i] = st.chineHalf > 1e-3 ? Math.max(0.05, (st.chineY - st.keelY) / st.chineHalf) : 1;
+      g.keelY[i] = st.keelY;
+      g.deckY[i] = st.deckY;
+    }
+    stripCache.set(geo, g);
+  }
+  return g;
+}
+
+// ─── Waterjets (Sea-Doo work: PropulsorConfig.type 'jet') ─────────────────────────────────────────
+
+/** What stepJet needs from the step (plain values; no allocation beyond a few small vectors). */
+interface JetStep {
+  q: Quat;
+  pos: Vec3;
+  /** Body velocity and body angular velocity. */
+  vb: Vec3;
+  w: Vec3;
+  level: number | null;
+  sea: SeaPatch;
+  geo: HullGeom;
+  rho: number;
+  dt: number;
+  running: boolean;
+  starting: boolean;
+  c: Controls;
+  wc: WatercraftConfig;
+  speedKt: number;
+  helm: number;
+  W: Wrench;
+}
+
+/** The iBR bucket position where the ahead and astern components of the jet cancel (the neutral detent). */
+export function jetNeutralBucket(pc: PropulsorConfig): number {
+  const j = pc.jet;
+  if (!j) return 0;
+  return 1 / (1 + j.reverseEfficiency * Math.cos(j.reverseAngleDeg * DEG));
+}
+
+/**
+ * One waterjet for one step (see WaterjetConfig): the ECU's rpm command (throttle, iBR, off-throttle
+ * assist, GPS speed limiter, ventilation cut), the engine's torque balance against the pump
+ * (P = ½ ρ Q (Vj² − Va²) / η, Q = k (n − n_slip)), the gross jet thrust ρ Q Vj along the steered, trimmed nozzle
+ * — or turned forward and down by the bucket — at the nozzle, the inlet momentum drag ρ Q Va at the
+ * grate, and the fixed keel fin / sponsons as a foil. Adds its forces to x.W; returns the new state.
+ */
+function stepJet(pc: PropulsorConfig, ps: PropulsorState, x: JetStep): PropulsorState {
+  const j = pc.jet!;
+  const eng = x.wc.engine;
+  const { q, vb, w, dt, c, rho } = x;
+  const gr = Math.max(1e-6, eng.gearRatio);
+  const prevJet = ps.jet;
+  // Handlebars → nozzle (+ swings the jet to starboard: the stern goes to port, the bow to starboard).
+  const steerDeg = moveToward(ps.steerDeg, x.helm * maxSteerAt(pc, x.speedKt), pc.steerRateDegPerSec * dt);
+  const sd = steerDeg * DEG;
+  // VTS nozzle trim (+ = jet aimed down: lifts the stern).
+  const trimDeg = moveToward(prevJet?.trimDeg ?? pc.thrustAngleDeg, pc.thrustAngleDeg - c.elevatorTrim * j.trimRangeDeg, 12 * dt);
+  const surfAt = (p: { x: number; z: number }) => (x.level === null ? -Infinity : x.level + patchAt(x.geo, x.sea.h, p.x, p.z));
+  // Intake: water over the grate (its suction draws the surface down a little: full flow until the
+  // grate is within ~3 cm of the surface, air only once it's ~3 cm clear): ventilation.
+  // (the grate is ~25 cm wide: heeled, its low edge stays in the water)
+  const inW = bodyToWorld(q, j.inlet);
+  const gx = bodyToWorld(q, { x: 0.12, y: 0.12 * 0.4, z: 0 });
+  const inletDepth = surfAt(j.inlet) - (x.pos.y + inW.y - Math.abs(gx.y));
+  const imm = clamp((inletDepth + 0.03) / 0.06, 0, 1);
+  const nzW = bodyToWorld(q, pc.position);
+  const nozzleClear = x.pos.y + nzW.y - pc.diameter / 2 > surfAt(pc.position);
+
+  // ── The ECU: rpm command and the bucket ──
+  const cmd = leverCommand(c.throttle, x.wc);
+  const bN = jetNeutralBucket(pc);
+  let rpmCmd = cmd.rpm;
+  let bucketT = cmd.gear === 'ahead' ? 0 : cmd.gear === 'astern' ? 1 : x.speedKt < 4 ? bN : 0;
+  if (c.brake > 0.05) {
+    // iBR brake: the bucket drops and the ECU raises the rpm to push against the flow.
+    bucketT = 1;
+    rpmCmd = Math.max(rpmCmd, eng.idleRpm + (eng.maxRpm * j.brakeRpmFraction - eng.idleRpm) * clamp(c.brake, 0, 1));
+  } else if (cmd.gear === 'neutral' && Math.abs(x.helm) >= j.otas.helm && x.speedKt >= j.otas.minKt) {
+    // Off-throttle assist: throttle released, bars hard over at speed → enough flow to steer.
+    rpmCmd = Math.max(rpmCmd, j.otas.rpm);
+  }
+  // GPS speed limiter: pull the rpm back through a 3 kt band at the limit.
+  const over = clamp((x.speedKt - (j.speedLimitKt - 1.5)) / 3, 0, 1);
+  if (over > 0) rpmCmd = Math.min(rpmCmd, eng.maxRpm * (1 - 0.45 * over));
+  // Ventilation protection: sucking air, the ECU cuts the rpm (the note drops in the air).
+  const ventilation = 1 - imm;
+  if (ventilation > 0.6) rpmCmd = Math.min(rpmCmd, j.ventRpm);
+  const bucket = moveToward(prevJet?.bucket ?? bN, bucketT, j.bucketRatePerSec * dt);
+
+  // ── Pump and engine ──
+  const vIn = { x: vb.x + (w.y * j.inlet.z - w.z * j.inlet.y), z: vb.z + (w.x * j.inlet.y - w.y * j.inlet.x) };
+  const Va = Math.max(0, -vIn.z) * j.inletRecovery;
+  const nMax = eng.maxRpm / gr / 60;
+  const qRated = eng.maxPowerW / (TAU * nMax);
+  // (a fresh state starts the engine at idle)
+  let n = x.running && !prevJet ? eng.idleRpm / gr / 60 : Math.max(0, ps.n);
+  // cavitation: available suction head (atmosphere + ram) against what the impeller needs (∝ n²)
+  const cavOf = (nn: number) => clamp((10.3 + (Va * Va) / 19.62) / Math.max(1e-6, j.npshAtMaxRpm * (nn / nMax) ** 2), 0.55, 1);
+  const flowOf = (nn: number) => j.pumpFlowPerRev * Math.max(0, nn - j.slipRps) * imm * cavOf(nn);
+  const pumpTorque = (nn: number) => {
+    const Q = flowOf(nn);
+    const Vj = Q / j.nozzleArea;
+    const P = (0.5 * rho * Q * Math.max(0, Vj * Vj - Va * Va)) / j.pumpEfficiency;
+    // + bearing / seal / air-pumping friction (~1.5 % of rated torque at full speed)
+    return P / (TAU * Math.max(nn, 1)) + 0.015 * qRated * (nn / nMax);
+  };
+  let boost = ps.boost;
+  let load = 0;
+  const Qp = pumpTorque(n);
+  if (x.running) {
+    const engRpm = n * 60 * gr;
+    const curve = eng.torqueRise + (1 - eng.torqueRise) * clamp((engRpm - eng.idleRpm) / (eng.maxRpm - eng.idleRpm), 0, 1);
+    boost = moveToward(boost, clamp(0.1 + (0.9 * (engRpm - eng.idleRpm)) / (0.7 * (eng.maxRpm - eng.idleRpm)), 0.1, 1), dt / Math.max(0.02, eng.turboLagS));
+    const qAvail = qRated * curve * (0.4 + 0.6 * boost);
+    const qGov = Qp + eng.governorGain * (rpmCmd - engRpm) * gr;
+    const Qe = engRpm > eng.maxRpm * 1.02 ? 0 : clamp(qGov, 0, qAvail);
+    load = Qe / qRated;
+    n += ((Qe - Qp) / eng.shaftInertia / TAU) * dt;
+    const nIdle = eng.idleRpm / gr / 60;
+    if (n < nIdle * 0.98) n = moveToward(n, nIdle, nIdle * 4 * dt);
+  } else {
+    // stopped (the pump drags it down) or cranking on the starter
+    const target = x.starting ? 300 / gr / 60 : 0;
+    // (compression and the pump stop it within a second or so)
+    n = Math.max(0, moveToward(n - (Qp / eng.shaftInertia / TAU) * dt, target, ((x.starting ? 1500 : 5000) / gr / 60) * dt));
+    boost = moveToward(boost, 0, dt / Math.max(0.02, eng.turboLagS));
+  }
+  n = Math.max(0, n);
+  const rpm = n * 60 * gr;
+
+  // ── Thrust ──
+  const Q = flowOf(n);
+  const Vj = Q / j.nozzleArea;
+  const mdot = rho * Q;
+  const Tg = mdot * Vj;
+  const Di = mdot * Va;
+  const ct = Math.cos(trimDeg * DEG);
+  const st = Math.sin(trimDeg * DEG);
+  const ra = j.reverseAngleDeg * DEG;
+  const er = j.reverseEfficiency;
+  // force on the hull (body): ahead along the nozzle; the bucket turns the jet forward and down (the
+  // force astern and up), keeping its sideways component (steering still works in reverse)
+  const fx = Tg * (-Math.sin(sd) * ct * (1 - bucket) - Math.sin(sd) * Math.cos(ra) * er * bucket);
+  const fy = Tg * (st * (1 - bucket) + Math.sin(ra) * er * bucket);
+  const fz = Tg * (-Math.cos(sd) * ct * (1 - bucket) + Math.cos(ra) * er * bucket);
+  x.W.add(bodyToWorld(q, { x: fx, y: fy, z: fz }), nzW);
+  // the inlet swallows the water's momentum: ahead (the ram drag) and sideways when skidding
+  if (mdot > 0) x.W.add(bodyToWorld(q, { x: -mdot * vIn.x, y: 0, z: Di }), inW);
+  const thrust = -fz - Di;
+
+  // ── Fixed grip surfaces (they don't steer): a stubby, hull-bound surface doesn't stall so much as
+  // turn into a plate across the flow — lift slope × sin α cos α plus Hoerner's cross-flow 1.2 sin α |sin α|
+  const grip = (rf: { x: number; y: number; z: number }, area: number, imm: number) => {
+    const vfx = vb.x + (w.y * rf.z - w.z * rf.y);
+    const vfz = vb.z + (w.x * rf.y - w.y * rf.x);
+    const V2 = vfx * vfx + vfz * vfz;
+    if (!(imm > 0) || V2 <= 0.01) return;
+    const alpha = Math.atan2(vfx, Math.abs(vfz));
+    const sa = Math.sin(alpha);
+    const cl = pc.foilLiftSlope * sa * Math.cos(alpha) + 1.2 * sa * Math.abs(sa);
+    const qd = 0.5 * rho * V2 * area * imm;
+    const V = Math.sqrt(V2);
+    // lift ⟂ the flow, against the sideslip (half as effective going astern); a little drag along the flow
+    const px = vfz / V;
+    const pz = -vfx / V;
+    const Lf = cl * qd * (vfz <= 0 ? 1 : -0.5);
+    const Df = (0.012 + 0.1 * cl * cl) * qd;
+    x.W.add(bodyToWorld(q, { x: px * Lf - (vfx / V) * Df, y: 0, z: pz * Lf - (vfz / V) * Df }), bodyToWorld(q, rf));
+  };
+  // the pump housing's keel, intake and ride plate: at foilCentre, gripping while the keel under it is wet
+  {
+    const rf = pc.foilCentre;
+    const kW = bodyToWorld(q, { x: rf.x, y: stationAt(x.wc.hull.stations, rf.z).keelY, z: rf.z });
+    grip(rf, pc.foilArea, clamp((surfAt(rf) - (x.pos.y + kW.y)) / 0.06, 0, 1));
+  }
+  // the sponsons: a fin on each side of the aft chines, just clear of the water on the plane — banked
+  // into a turn the low one digs in and holds the stern (why the RXP-X's are adjustable)
+  if (j.sponsons) {
+    const sp = j.sponsons;
+    for (const side of [-1, 1]) {
+      const rs = { x: side * sp.x, y: sp.y, z: sp.z };
+      const sW = bodyToWorld(q, rs);
+      grip(rs, sp.area, clamp((surfAt(rs) - (x.pos.y + sW.y) + 0.5 * sp.depth) / sp.depth, 0, 1));
+    }
+  }
+
+  const gear: MarineGear = !x.running ? 'neutral' : bucket < bN - 0.2 ? 'ahead' : bucket > bN + 0.15 ? 'astern' : 'neutral';
+  return {
+    rpm, n, gear, thrust, steerDeg, load, boost,
+    jet: { bucket, trimDeg, flow: Q, jetSpeed: Vj, ventilation, nozzleClear },
+  };
+}
+
 // ─── State creation ────────────────────────────────────────────────────────────────────────────
 
 export interface VesselStart {
@@ -504,7 +807,14 @@ function baseVesselState(wc: WatercraftConfig, seaTime: number, mooring: VesselS
     touching: false,
     capsizeTime: 0,
     surfaceY: 0,
+    ...(wc.rider ? { rider: newRider() } : {}),
+    ...(wc.righting ? { righting: 0 } : {}),
   };
+}
+
+/** Sea-Doo: a rider sitting square on the seat. */
+function newRider(): RiderState {
+  return { lean: 0, foreAft: 0, aboard: true, off: null, offTime: 0 };
 }
 
 const settleCache = new WeakMap<WatercraftConfig, Map<number, { dy: number; pitchDeg: number }>>();
@@ -593,15 +903,41 @@ function vesselDerived(pos: Vec3, vel: Vec3, q: Quat, w: Vec3, loadFactor: numbe
   };
 }
 
-function vesselEngine(v: VesselState, running: boolean, starting: boolean, startTimer: number, failed: boolean): EngineState {
+function vesselEngine(v: VesselState, running: boolean, starting: boolean, startTimer: number, failed: boolean, wc?: WatercraftConfig): EngineState {
   const ps = v.propulsors;
   let load = 0;
   let thrust = 0;
-  for (const p of ps) {
-    load += p.load;
-    thrust += p.thrust;
+  let k = 0;
+  for (let i = 0; i < ps.length; i++) {
+    if (wc?.propulsors[i]?.type === 'thruster') continue; // tunnel thrusters: not the engines
+    load += ps[i].load;
+    thrust += ps[i].thrust;
+    k++;
   }
-  return { running, starting, startTimer, failed, power: ps.length ? clamp(load / ps.length, 0, 1.2) : 0, rpm: ps.length ? ps[0].rpm : 0, thrust, afterburner: 0 };
+  return { running, starting, startTimer, failed, power: k ? clamp(load / k, 0, 1.2) : 0, rpm: ps.length ? ps[0].rpm : 0, thrust, afterburner: 0 };
+}
+
+// ─── Tunnel thrusters (type 'thruster'; the cruise-ship work) ───────────────────────────────────
+
+/** A tunnel thruster's effectiveness at a speed through the water: full below 1 kt, nothing from `fadeKt`. */
+export function thrusterEffect(speedKt: number, fadeKt: number): number {
+  return 1 - smoothstep(Math.min(1, 0.2 * fadeKt), Math.max(0.5, fadeKt), Math.abs(speedKt));
+}
+
+/**
+ * One tunnel thruster this step: athwartships thrust at its tunnel, driven by the helm's aileron axis
+ * (+ = turn the bow to starboard: a bow thruster pushes to starboard, a stern thruster to port), faded
+ * out with speed, following the helm at its electric rate, off with the engines (the gensets) or out of
+ * the water. PropulsorState.thrust = the body-x force (N, + to starboard), load = |thrust| / max, n a
+ * nominal impeller speed (rev/s) for the model.
+ */
+function stepThruster(pc: PropulsorConfig, ps: PropulsorState, aileron: number, running: boolean, speedKt: number, imm: number, dt: number): PropulsorState {
+  const th = pc.thruster ?? { maxThrustN: 0, fadeKt: 5, ratePerSec: 0.25 };
+  const side = pc.position.z <= 0 ? 1 : -1;
+  const target = running ? clamp(aileron, -1, 1) * side * th.maxThrustN * thrusterEffect(speedKt, th.fadeKt) * imm : 0;
+  const thrust = moveToward(Number.isFinite(ps.thrust) ? ps.thrust : 0, target, th.ratePerSec * th.maxThrustN * dt);
+  const f = th.maxThrustN > 0 ? thrust / th.maxThrustN : 0;
+  return { rpm: 0, n: 6 * f, gear: 'neutral', thrust, steerDeg: 0, load: Math.abs(f), boost: 0 };
 }
 
 /**
@@ -628,7 +964,7 @@ export function createVesselState(env: Environment, cfg: Config, start: VesselSt
     velocity: { x: 0, y: 0, z: 0 },
     orientation,
     angularVelocity: { x: 0, y: 0, z: 0 },
-    engine: vesselEngine(vessel, true, false, 0, false),
+    engine: vesselEngine(vessel, true, false, 0, false, wc),
     flapsDeg: 0,
     gearPos: 1,
     phase: 'afloat',
@@ -654,19 +990,43 @@ export function createVesselState(env: Environment, cfg: Config, start: VesselSt
   const target = kt / MS_TO_KT;
   const h = quatFromEuler(heading, 0, 0);
   const fwd = bodyToWorld(h, { x: 0, y: 0, z: -1 });
-  state = { ...state, velocity: { x: fwd.x * target, y: 0, z: fwd.z * target }, vessel: { ...vessel, mooring: null } };
-  let lever = clamp(0.3 + 0.7 * (kt / 34), 0.15, 1);
+  let lever = clamp(0.3 + 0.7 * (kt / Math.max(34, cfg.aircraft.limits.vnoKt)), 0.15, 1);
+  // the shafts start turning at the lever's rpm with the turbos / steam up (a heavy ship's plant takes
+  // longer than the pre-run to spool from idle)
+  const cmd = leverCommand(lever, wc);
+  const spun = vessel.propulsors.map((p, i) =>
+    wc.propulsors[i].type === 'thruster' ? p : { ...p, gear: cmd.gear, rpm: cmd.rpm, n: cmd.rpm / wc.engine.gearRatio / 60, boost: 1 },
+  );
+  state = { ...state, velocity: { x: fwd.x * target, y: 0, z: fwd.z * target }, vessel: { ...vessel, propulsors: spun, mooring: null } };
   const dt = cfg.sim.fixedDt;
   const cfgCalm: Config = { ...cfg, world: { ...cfg.world, seaLevel: level + 12345 } }; // never "the sea": no waves
-  for (let i = 0; i < Math.round(25 / dt); i++) {
+  // The helmsman trims the lever on the surge ACCELERATION with the speed held at the target, so the
+  // shafts, the trim and the squat settle at that speed whatever the vessel's size: a jet ski and a
+  // 58,000 t battleship converge alike (a speed-error integrator winds a heavy ship's lever to the
+  // detent long before its speed answers). The gain is normalised by the acceleration full power
+  // would give at this speed (thrust ≈ power / speed).
+  let power = 0;
+  for (const p of wc.propulsors) if (p.type !== 'thruster') power += wc.engine.maxPowerW;
+  const accelRef = Math.max(1e-3, power / (cfg.aircraft.mass * Math.max(target, 1)));
+  const steps = Math.round(25 / dt);
+  for (let i = 0; i < steps; i++) {
     state = stepVessel(state, { throttle: lever, elevator: 0, aileron: 0, rudder: 0, elevatorTrim: 0, flapsNotch: 0, gearDown: true, brake: 0, parkingBrake: false, engineOn: true }, dt, calm, cfgCalm);
-    // keep it on the heading and on the line; steer the speed with the lever
-    const err = target - state.vessel!.speedMs;
-    lever = clamp(lever + err * 0.02 * dt * 60, wc.neutralDetent + 0.02, 1);
-    const e = eulerFromQuat(state.orientation);
-    state = { ...state, orientation: quatFromEuler(heading, e.pitchDeg, e.rollDeg), position: { ...state.position, x: start.x, z: start.z } };
+    // keep it on the heading, on the line and at the speed; steer the lever by what the speed would do
     const sp = Math.hypot(state.velocity.x, state.velocity.z);
-    state = { ...state, velocity: { x: fwd.x * sp, y: state.velocity.y, z: fwd.z * sp }, angularVelocity: { x: state.angularVelocity.x, y: 0, z: 0 } };
+    const accel = (sp - target) / dt;
+    lever = clamp(lever - (accel / accelRef) * dt * 1.5, wc.neutralDetent + 0.02, 1);
+    const e = eulerFromQuat(state.orientation);
+    const settle = i >= steps - Math.round(2 / dt);
+    const hold = settle ? sp : target;
+    if (!settle) {
+      // the shafts held at the lever's governed rpm: the helmsman sees the propellers' answer at once,
+      // not through a heavy plant's spool-up (the last seconds run free so the engines settle)
+      const c = leverCommand(lever, wc);
+      const n = c.rpm / wc.engine.gearRatio / 60;
+      state = { ...state, vessel: { ...state.vessel!, propulsors: state.vessel!.propulsors.map((p, k) => (wc.propulsors[k].type === 'thruster' ? p : { ...p, gear: c.gear, rpm: c.rpm, n, boost: 1 })) } };
+    }
+    state = { ...state, orientation: quatFromEuler(heading, e.pitchDeg, e.rollDeg), position: { ...state.position, x: start.x, z: start.z } };
+    state = { ...state, velocity: { x: fwd.x * hold, y: state.velocity.y, z: fwd.z * hold }, angularVelocity: { x: state.angularVelocity.x, y: 0, z: 0 } };
   }
   const y = state.position.y - level + (env.waterLevel(start.x, start.z) ?? level);
   const vs = state.vessel!;
@@ -674,8 +1034,10 @@ export function createVesselState(env: Environment, cfg: Config, start: VesselSt
     ...state,
     time: 0,
     position: { x: start.x, y, z: start.z },
-    vessel: { ...vs, seaTime, mooring: null },
+    vessel: { ...vs, seaTime, mooring: null, ...(vs.rider ? { rider: newRider() } : {}), ...(vs.righting !== undefined ? { righting: 0 } : {}) },
   };
+  // (Sea-Doo: a small planing craft needs a margin on the throttle to stay over the hump in a seaway)
+  if (wc.hull.planingModel === 'strips') lever = Math.min(1, lever + 0.04);
   return { state, controls: { throttle: lever } };
 }
 
@@ -766,7 +1128,9 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   const vbPre = worldToBody(q, vel);
   const FnPre = Math.hypot(vbPre.x, vbPre.z) / Math.sqrt(grav * geo.lwl);
   const rhoG = rho * grav;
-  const hydro = 1 - (hull.planingLift > 0 ? hull.planingBuoyancyLoss * smoothstep(0.4, 1.3, FnPre) * (vbPre.z < 0 ? 1 : 0) : 0);
+  // (Sea-Doo, strip planing: not once the hull is driven under — a buried hull keeps its buoyancy)
+  const buried = hull.planingModel === 'strips' ? 1 - smoothstep(0.8, 1.5, prevV.displacedVolume / geo.volume) : 1;
+  const hydro = 1 - (hull.planingLift > 0 ? hull.planingBuoyancyLoss * smoothstep(0.4, 1.3, FnPre) * (vbPre.z < 0 ? 1 : 0) * buried : 0);
   // The hull's own wave (ahead only): ζ(s) = a cos(k s), s aft of the bow crest, k = g / U².
   const Upre = -vbPre.z;
   const swA = Upre > 0.3 ? hull.selfWave * (geo.bwl / geo.lwl) * ((Upre * Upre) / (2 * grav)) * smoothstep(0.25, 0.4, FnPre) * (1 - smoothstep(hull.selfWaveFadeFn[0], hull.selfWaveFadeFn[1], FnPre)) : 0;
@@ -789,6 +1153,11 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   let latW = 0;
   let latX = 0;
   const stripDepth = new Float64Array(geo.strips);
+  // Sea-Doo: the keel's rocker per strip (the strip planing model)
+  const stripRock = hull.planingModel === 'strips' ? new Float64Array(geo.strips) : null;
+  // (…and each strip's deepest bottom immersion per side [port, starboard]: banked, the low side's
+  // panel runs wet forward of where the keel does)
+  const sideDepth = stripRock ? new Float64Array(2 * geo.strips) : null;
   if (level !== null) {
     for (const col of geo.cols) {
       const rb = bodyToWorld(q, { x: col.x, y: col.y, z: col.z });
@@ -829,6 +1198,11 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
       if (col.centre && zf < zFwdKeel) zFwdKeel = zf;
       if (col.chine && zf < zFwdChine) zFwdChine = zf;
       if (col.centre) stripDepth[col.strip] = Math.max(stripDepth[col.strip], sub / cu);
+      if (stripRock && col.centre) stripRock[col.strip] = col.rocker;
+      if (sideDepth && col.bottom) {
+        const k = 2 * col.strip + (col.x > 0 ? 1 : 0);
+        sideDepth[k] = Math.max(sideDepth[k], sub / cu);
+      }
     }
   }
   const immersion = clamp(volume / geo.volume, 0, 1.5);
@@ -856,7 +1230,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
 
   // ── Planing lift (Savitsky, dynamic part) ──
   let planingLift = 0;
-  if (hull.planingLift > 0 && wetted && u > 0.5) {
+  if (hull.planingLift > 0 && wetted && u > 0.5 && !stripRock) {
     const B = geo.chineBeam;
     const Lk = Number.isFinite(zFwdKeel) ? geo.zStern - zFwdKeel : 0;
     const Lc = Number.isFinite(zFwdChine) ? geo.zStern - zFwdChine : 0;
@@ -894,6 +1268,105 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     }
   }
 
+  // ── Sea-Doo: strip-theory planing (config hull.planingModel 'strips') ──
+  // Each wet strip's two bottom panels (port, starboard) take a normal force: the rate the section's
+  // added mass gains momentum as it passes aft (m_a = ρ π/4 c² a side, c the Wagner wetted half-beam
+  // π/2 · d / tan β, capped at the chine) plus cross-flow drag (Zarnick 1978): f = U V dm_a/dξ +
+  // C_dc ρ c/2 V|V|, V the water's speed into that panel — U × the local keel angle, less the strip's
+  // own heave (pitch and roll rate × arm), plus the waves' orbital rise — faded toward the transom
+  // (Garme 2005). Each side's panel wets from its own deepest immersion: banked, the low panel runs wet
+  // forward of where the keel does and carries the load — the lift then tilts with the bank (the
+  // carve's centripetal force) and its lateral centre moves to the low side (the roll stiffness);
+  // skidding, the sideways flow loads the leading panel (a roll into the turn). Forefoot lift, heave /
+  // pitch / roll damping and slamming all come out of it — what a short, light, fast hull needs
+  // (Savitsky's prismatic fit doesn't hold when the wetted length jumps with a degree of trim). On the
+  // plane these panel forces replace the displacement-hull side force below.
+  let stripDyn = 0;
+  if (stripRock && hull.planingLift > 0 && wetted && u > 0.5) {
+    const sg = stripGeom(geo, hull.stations);
+    const B = geo.chineBeam;
+    const cv = Math.max(0.5, u / Math.sqrt(grav * B));
+    const mPrev = [0, 0];
+    for (let i = 0; i < geo.strips; i++) {
+      const d = stripDepth[i];
+      const dSide0 = sideDepth![2 * i];
+      const dSide1 = sideDepth![2 * i + 1];
+      if (d <= 0 && dSide0 <= 0 && dSide1 <= 0) {
+        mPrev[0] = 0;
+        mPrev[1] = 0;
+        continue;
+      }
+      const z = geo.stripZ[i];
+      const tb = sg.tanBeta[i];
+      const beta = Math.atan(tb);
+      const cb = Math.cos(beta);
+      const sb = Math.sin(beta);
+      // the water's rise into the bottom there: the keel's rocker meeting the flow, the waves' orbital rise
+      const vn0 = u * Math.sin(stripRock[i]) + (level !== null ? patchAt(geo, sea.vy, 0, z) * up.y : 0);
+      const garme = Math.tanh((2.5 * Math.max(0, geo.zStern - z)) / (B * cv));
+      for (let k = 0; k < 2; k++) {
+        const side = k === 0 ? -1 : 1;
+        const dS = k === 0 ? dSide0 : dSide1;
+        if (dS <= 0) {
+          mPrev[k] = 0;
+          continue;
+        }
+        const c = Math.min(sg.chineHalf[i], ((Math.PI / 2) * dS) / tb);
+        const ma = rho * (Math.PI / 4) * c * c;
+        // the panel centroid's own motion (heave, roll, pitch) into the bottom
+        const xP = side * 0.5 * c;
+        const yP = sg.keelY[i] + 0.5 * c * tb;
+        const hy = vb.y + (w.z * xP - w.x * z);
+        const hxP0 = vSide + (w.y * z - w.z * yP);
+        // the water's speed into the panel: its rise (rocker, waves) less the panel's heave, and — skidding —
+        // the sideways flow onto the leading panel
+        const v = cb * (vn0 - hy) + side * sb * hxP0;
+        const fMom = Math.max(0, u * v * Math.max(0, ma - mPrev[k])) * hull.planingLift;
+        const fCd = STRIP_CROSSFLOW_CD * rho * 0.5 * c * v * Math.abs(v) * geo.dz * (v > 0 ? 1 : 0.3);
+        mPrev[k] = ma;
+        // along the hull's normal (the strakes and chine flats carry much of a PWC bottom's load, so
+        // the panels' inboard tilt is left out), at the panel: banked, the low panel lifts
+        const f = ((fMom + fCd) * garme) / cb;
+        W.add({ x: up.x * f, y: up.y * f, z: up.z * f }, bodyToWorld(q, { x: xP, y: yP, z }));
+        planingLift += f;
+      }
+      // + radiation damping of the section's heave at speed (wave-making: ∝ U m_a / length), config
+      const cs = Math.min(sg.chineHalf[i], ((Math.PI / 2) * d) / tb);
+      const wSec = vb.y - w.x * z - (level !== null ? patchAt(geo, sea.vy, 0, z) * up.y : 0);
+      const fRad = (-(hull.stripDamping ?? 0) * u * rho * (Math.PI / 2) * cs * cs * wSec * geo.dz) / Math.max(0.3, geo.lwl);
+      W.add({ x: up.x * fRad, y: up.y * fRad, z: up.z * fRad }, bodyToWorld(q, { x: 0, y: sg.keelY[i], z }));
+      planingLift += fRad;
+    }
+    stripDyn = clamp(planingLift / (m * grav), 0, 1);
+    // the planing bottom's yaw damping (strakes and chines resisting the stern's swing), config:
+    // N = −k ½ ρ U L_w³ B r
+    const kNr = hull.stripYawDamping ?? 0;
+    if (kNr > 0) {
+      const Nr = -kNr * 0.5 * rho * u * wetLen * wetLen * wetLen * B * pqrFromOmega(w).r;
+      W.torque(bodyToWorld(q, { x: 0, y: -Nr, z: 0 }));
+    }
+  }
+
+  // ── Sea-Doo (strip planing): driven under (a nose-in), the whole hull ploughs — form drag against
+  // its motion, the deck, hood and the rider's legs leading (a bluff body: Cd ~1.5 on its frontal area),
+  // faded in as it buries — it stops the dive short and the foam-filled hull pops back up ──
+  if (stripRock && immersion > 1) {
+    const V = Math.hypot(vel.x, vel.y, vel.z);
+    if (V > 0.1) {
+      const D = 0.5 * rho * 1.5 * geo.maxBeam * 0.6 * clamp(immersion - 1, 0, 1) * V * V;
+      W.force({ x: (-vel.x / V) * D, y: (-vel.y / V) * D, z: (-vel.z / V) * D });
+    }
+  }
+
+  // ── Sea-Doo (strip planing): going astern, the flat transom leads — its immersed face pushes water ──
+  if (stripRock && u < -0.05 && wetted) {
+    const tr = hull.stations[hull.stations.length - 1];
+    const dT = stripDepth[geo.strips - 1];
+    const aT = 2 * Math.min(tr.chineHalf, (dT * tr.chineHalf) / Math.max(0.02, tr.chineY - tr.keelY)) * dT * 0.5 + Math.max(0, dT - (tr.chineY - tr.keelY)) * 2 * tr.chineHalf;
+    const D = 0.5 * rho * 1.0 * aT * u * u;
+    W.add(bodyToWorld(q, { x: 0, y: 0, z: -D }), bodyToWorld(q, { x: 0, y: tr.keelY + 0.5 * dT, z: tr.z }));
+  }
+
   // ── Resistance: friction, residuary ──
   let resistance = 0;
   if (wetted && Vh > 0.01) {
@@ -912,6 +1385,16 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   }
 
   // ── Manoeuvring: Clarke's linear derivatives + strip cross-flow drag ──
+  // (Sea-Doo, strip planing: on the plane the V bottom's panels carry the linear side force instead;
+  // the cross-flow drag of a hull skidding sideways stays, and — pressure on a V's panels — it acts
+  // where their normals cross above the keel, not low in the water)
+  const sideK = 1 - stripDyn;
+  const sgm = stripRock ? stripGeom(geo, hull.stations) : null;
+  const vMetaY = (i: number, d: number): number => {
+    const tbm = sgm!.tanBeta[i];
+    const cm = Math.min(sgm!.chineHalf[i], ((Math.PI / 2) * d) / tbm);
+    return Math.min(sgm!.keelY[i] + 0.5 * cm * (tbm + 1 / tbm), sgm!.deckY[i]);
+  };
   if (wetted && Vh > 0.05) {
     let aLat = 0;
     for (let i = 0; i < geo.strips; i++) aLat += stripDepth[i] * geo.dz;
@@ -927,8 +1410,8 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     const U = Uref;
     const Y = 0.5 * rho * L * L * U * (Yv * vSide + Yr * r * L);
     const N = 0.5 * rho * L * L * L * U * (Nv * vSide + Nr * r * L);
-    W.add(bodyToWorld(q, { x: Y, y: 0, z: 0 }), bodyToWorld(q, { x: 0, y: geo.waterlineY - 0.5 * T, z: 0 }));
-    W.torque(bodyToWorld(q, { x: 0, y: -N, z: 0 }));
+    W.add(bodyToWorld(q, { x: Y * sideK, y: 0, z: 0 }), bodyToWorld(q, { x: 0, y: geo.waterlineY - 0.5 * T, z: 0 }));
+    W.torque(bodyToWorld(q, { x: 0, y: -N * sideK, z: 0 }));
     // cross-flow drag per strip (lateral velocity v + r × arm; arm + forward = −z)
     for (let i = 0; i < geo.strips; i++) {
       const d = stripDepth[i];
@@ -936,7 +1419,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
       const z = geo.stripZ[i];
       const vl = vSide + r * -z;
       const f = -0.5 * rho * hull.crossFlowCd * d * geo.dz * vl * Math.abs(vl);
-      W.add(bodyToWorld(q, { x: f, y: 0, z: 0 }), bodyToWorld(q, { x: 0, y: geo.waterlineY - 0.5 * d, z }));
+      W.add(bodyToWorld(q, { x: f, y: 0, z: 0 }), bodyToWorld(q, { x: 0, y: stripRock ? vMetaY(i, d) : geo.waterlineY - 0.5 * d, z }));
     }
   }
   // extra roll damping (chines, spray rails)
@@ -963,7 +1446,9 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   let starting = state.engine.starting;
   let startTimer = state.engine.startTimer;
   const failed = state.engine.failed;
-  if (!c.engineOn || failed) {
+  // Sea-Doo: the tether cord stops the engine while the rider is off
+  const tetherOff = !!wc.rider && prevV.rider !== undefined && !prevV.rider.aboard;
+  if (!c.engineOn || failed || tetherOff) {
     engineRunning = false;
     starting = false;
     startTimer = 0;
@@ -977,7 +1462,9 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     }
   }
   const cmd = leverCommand(c.throttle, wc);
-  const helm = clamp(c.rudder + c.aileron, -1, 1);
+  // A vessel with tunnel thrusters: ← / → (aileron) drive the thrusters, A / D (rudder) alone the rudders.
+  const hasThrusters = wc.propulsors.some((p) => p.type === 'thruster');
+  const helm = clamp(c.rudder + (hasThrusters ? 0 : c.aileron), -1, 1);
   const nMaxProp = eng.maxRpm / eng.gearRatio / 60;
   const qRated = eng.maxPowerW / (TAU * nMaxProp);
   const props: PropulsorState[] = [];
@@ -985,6 +1472,23 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   for (let i = 0; i < wc.propulsors.length; i++) {
     const pc = wc.propulsors[i];
     const ps = prevV.propulsors[i] ?? newPropulsors(wc)[0];
+    // ── Tunnel thruster (cruise-ship work): athwartships thrust only, then the next propulsor ──
+    if (pc.type === 'thruster') {
+      const pwT = bodyToWorld(q, pc.position);
+      const surfT = level === null ? -Infinity : level + patchAt(geo, sea.h, pc.position.x, pc.position.z);
+      const immT = clamp((surfT - (pos.y + pwT.y) + pc.diameter / 2) / pc.diameter, 0, 1);
+      const st = stepThruster(pc, ps, c.aileron, engineRunning, speedKt, immT, dt);
+      W.add(bodyToWorld(q, { x: st.thrust, y: 0, z: 0 }), pwT);
+      props.push(st);
+      continue;
+    }
+    // Sea-Doo: a waterjet (stepJet) instead of a propeller
+    if (pc.type === 'jet' && pc.jet) {
+      const js = stepJet(pc, ps, { q, pos, vb, w, level, sea, geo, rho, dt, running: engineRunning, starting, c, wc, speedKt, helm, W });
+      props.push(js);
+      totalThrust += js.thrust;
+      continue;
+    }
     // steering
     const steerTarget = helm * maxSteerAt(pc, speedKt);
     const steerDeg = moveToward(ps.steerDeg, steerTarget, pc.steerRateDegPerSec * dt);
@@ -1123,6 +1627,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
   }
   const nearBottom = groundTop > lowest - 4;
   const checkObstacles = typeof env.obstacleTop === 'function';
+  const checkSoft = typeof env.softObstacleTop === 'function'; // offshore work: race buoys
   for (let i = 0; i < ptW.length; i++) {
     const r = ptW[i];
     const P = { x: pos.x + r.x, y: pos.y + r.y, z: pos.z + r.z };
@@ -1171,8 +1676,66 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
         W.add({ x: -nx * fn - vt.x * ff, y: -vt.y * ff, z: -nz * fn - vt.z * ff }, r);
       }
     }
+    // ── Offshore work: soft obstacles (inflatable buoys) — a gentle push away, never a crash ──
+    if (checkSoft && P.y < (level ?? P.y) + 1.5) {
+      const top = env.softObstacleTop!(P.x, P.z);
+      if (top > P.y) {
+        let nx = r.x;
+        let nz = r.z;
+        const nl = Math.hypot(nx, nz);
+        if (nl > 1e-3) {
+          nx /= nl;
+          nz /= nl;
+          let pen = 0.05;
+          for (const s of [0.1, 0.2, 0.4, 0.8, 1.6]) {
+            pen = s;
+            if (env.softObstacleTop!(P.x - nx * s, P.z - nz * s) <= P.y) break;
+          }
+          const vn = vP.x * nx + vP.z * nz;
+          // an inflatable buoy on a slack mooring is shoved aside / under: a firm but capped push
+          // (≤ 0.3 g on the whole hull) — the boat bumps it and slows a little, it isn't holed
+          const fn = Math.min(m * grav * 0.3, m * grav * 0.6 * pen + m * 0.3 * Math.max(0, vn));
+          touching = true;
+          W.add({ x: -nx * fn, y: 0, z: -nz * fn }, r);
+        }
+      }
+    }
+    // ── end offshore ──
   }
   if (!nearBottom && level !== null) depthUnderKeel = Math.max(0, lowest - groundTop);
+
+  // ── Sea-Doo: the rider shifting their weight (a pure moment about the CG), and spills ──
+  const rc = wc.rider;
+  let rider = prevV.rider;
+  if (rc) {
+    const r0 = prevV.rider ?? newRider();
+    const on = r0.aboard;
+    // the rider balances like a skier: toward the bank that loads the seat squarely (atan U r / g) plus
+    // the carve you ask for (← / →: full lean-in intent; A / D: half), against the roll rate
+    const intent = clamp(c.aileron + rc.leanFromRudder * c.rudder, -1, 1);
+    const bankNow = eulerFromQuat(q).rollDeg * DEG;
+    // (they coordinate the turn they're steering; with the bars straight they hold it level)
+    const steering = Math.min(1, Math.abs(c.rudder + c.aileron));
+    const bankWant = steering * Math.atan2(u * pqrFromOmega(w).r, grav) + intent * rc.intentBankDeg * DEG;
+    const leanT = on ? clamp(rc.bankGain * (bankWant - bankNow) - rc.rateGain * pqrFromOmega(w).p, -1, 1) : 0;
+    const lean = moveToward(r0.lean, leanT, rc.leanRatePerSec * dt);
+    const foreAft = moveToward(r0.foreAft, on ? clamp(-c.elevator, -1, 1) : 0, rc.leanRatePerSec * dt);
+    if (on) {
+      // their weight shifted across the seat, under the load they feel — along the hull's own "down"
+      // (in a banked turn the turn loads them as much as the hull): body torque = r × (0, −n m g, 0)
+      const rx = lean * rc.leanM;
+      const rz = -foreAft * rc.foreAftM;
+      const fg = rc.mass * grav * clamp(state.derived.loadFactor, 0.3, 3);
+      W.torque(bodyToWorld(q, { x: rz * fg, y: 0, z: -rx * fg }));
+    }
+    rider = { ...r0, lean, foreAft };
+    // a hard nose-in at speed throws the rider off: nose down, the bow's deck buried deep
+    if (on && speedKt > rc.spillKt && level !== null && eulerFromQuat(q).pitchDeg < -rc.spillPitchDeg) {
+      const st0 = hull.stations[1];
+      const bw = bodyToWorld(q, { x: 0, y: st0.deckY, z: st0.z });
+      if (level + patchAt(geo, sea.h, 0, st0.z) - (pos.y + bw.y) > rc.spillDepthM) rider = { ...rider, aboard: false, off: 'spill', offTime: 0 };
+    }
+  }
 
   // ── Integrate (semi-implicit Euler, added mass per body axis scaled by the immersion) ──
   W.force({ x: 0, y: -m * grav, z: 0 });
@@ -1203,11 +1766,41 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     y: clamp(w.y + ((tb.y - (w.z * hx - w.x * hz)) / Iy) * dt, -wMax, wMax),
     z: clamp(w.z + ((tb.z - (w.x * hy - w.y * hx)) / Ir) * dt, -wMax, wMax),
   };
-  const orientation = qIntegrateBody(q, angularVelocity, dt);
+  let orientation = qIntegrateBody(q, angularVelocity, dt);
 
   // ── Capsize ──
-  const e = eulerFromQuat(orientation);
-  const capsizeTime = Math.abs(e.rollDeg) > ct.capsizeRollDeg || up.y < 0 ? prevV.capsizeTime + dt : 0;
+  let e = eulerFromQuat(orientation);
+  let capsizeTime = Math.abs(e.rollDeg) > ct.capsizeRollDeg || up.y < 0 ? prevV.capsizeTime + dt : 0;
+  // Sea-Doo: capsized and nearly stopped, the rider swims round and rolls it back over (no wreck)
+  let righting = prevV.righting ?? 0;
+  if (wc.righting) {
+    const rg = wc.righting;
+    if (righting > 0) {
+      const left = Math.max(dt, (1 - righting) * rg.durationS);
+      righting = Math.min(1, righting + dt / rg.durationS);
+      const f = bodyToWorld(orientation, { x: 0, y: 0, z: -1 });
+      const hdg = Math.atan2(f.x, -f.z) / DEG;
+      orientation = qSlerp(orientation, quatFromEuler(hdg, staticFloat(cfg).pitchDeg, 0), Math.min(1, dt / left));
+      angularVelocity.x = 0;
+      angularVelocity.y = 0;
+      angularVelocity.z = 0;
+      velocity.x *= 1 - Math.min(1, 2 * dt);
+      velocity.z *= 1 - Math.min(1, 2 * dt);
+      e = eulerFromQuat(orientation);
+      capsizeTime = 0;
+      if (righting >= 1) righting = 0;
+    } else if (capsizeTime > rg.delayS && speedKt < rg.maxKt) righting = 1e-6;
+  }
+  if (rc && rider) {
+    let rd = rider;
+    if (rd.aboard && (Math.abs(e.rollDeg) > ct.capsizeRollDeg || up.y < 0)) rd = { ...rd, aboard: false, off: 'capsize', offTime: 0 };
+    if (!rd.aboard) {
+      rd = { ...rd, offTime: rd.offTime + dt };
+      // climb back on: upright, not being righted, nearly stopped, after swimming back
+      if (righting === 0 && Math.abs(e.rollDeg) < 30 && speedKt < rc.reboardKt && rd.offTime > rc.reboardS) rd = { ...rd, aboard: true, off: null, offTime: 0 };
+    }
+    rider = rd;
+  }
 
   const vessel: VesselState = {
     seaTime,
@@ -1227,6 +1820,8 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     touching,
     capsizeTime,
     surfaceY,
+    ...(rider ? { rider } : {}),
+    ...(wc.righting ? { righting } : {}),
   };
   const loadFactor = (fb.y + m * grav * up.y) / (m * grav);
   const next: AircraftState = {
@@ -1235,7 +1830,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     velocity,
     orientation,
     angularVelocity,
-    engine: vesselEngine(vessel, engineRunning, starting, startTimer, failed),
+    engine: vesselEngine(vessel, engineRunning, starting, startTimer, failed, wc),
     flapsDeg: 0,
     gearPos: 1,
     phase: 'afloat',
@@ -1250,7 +1845,7 @@ export function stepVessel(state: AircraftState, raw: Controls, dt: number, env:
     vessel,
   };
   if (crashReason) return vesselCrash({ ...next, velocity: vel }, crashReason, time);
-  if (capsizeTime > ct.capsizeTimeS) return vesselCrash(next, 'Capsized', time);
+  if (capsizeTime > ct.capsizeTimeS && !wc.righting) return vesselCrash(next, 'Capsized', time);
   if (!Number.isFinite(position.x + position.y + position.z + orientation.w)) return vesselCrash(state, 'Foundered', time);
   return next;
 }

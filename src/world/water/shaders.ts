@@ -33,12 +33,19 @@
  * irregular edges; clear water upstream → olive-brown sediment downstream;
  * flow lanes (calm/rippled streaks advected downstream) that show the current
  * from altitude; riffles; rapids whitewater as standing waves + moving streaks.
- * Sea: a turbid plume off the river mouth, and the player boat's wake from the wake map
- * (wakeMap.ts / wakeField.ts: wave height → vertex lift near the camera and the normal by finite
- * differences, so the Kelvin crests catch the sky and the sun; white water as lace-broken foam in
- * the sea's own foam lighting; churned, aerated water paler and rougher; a calm slick behind).
+ * Sea: a turbid plume off the river mouth, and the driven vessel's wake from the wake map
+ * (wakeMap.ts / wakeField.ts). Wave height → vertex lift near the camera (none in the churned wash)
+ * and the normal by finite differences over 2 texels, so the Kelvin crests catch the sky and the
+ * sun; whitecaps where those slopes are steep. Foam: the map's density thresholded against an
+ * animated, domain-warped cellular pattern of "boils" (upwelling clear water), stretched along the
+ * track (the map's second target) — solid white with dark holes when fresh, a streaky lace as it
+ * decays, broken threads, then nothing; two octaves + fraying near the camera, the mean coverage far
+ * away, lumpy normals and thick/thin brightness; the boils' domes bend the normal. Aerated water
+ * glows pale turquoise under it (a ship's lane lasts minutes); the slick flattens the ripples into
+ * a dark glassy band. The 'low' quality preset (WAKE_DETAIL 0) draws the mean coverage only.
  */
 import { LAND, MARCH, PROFILE, RIVER_OPTICS, glsl3, glslF } from './shading';
+import { WAKE_SLOPE } from './wakeField';
 
 const O = RIVER_OPTICS;
 
@@ -180,6 +187,8 @@ uniform vec4 uBathyFXf;
   uniform sampler2D uWakeMap; // player wake: R height (m), G foam, B churn, A slick
   uniform vec4 uWakeXf;       // x0, z0, 1/extent, active
   uniform vec2 uWakeTexel;    // texel (m), 1/res
+  uniform float uWakeCell;    // foam cell size (m)
+  uniform sampler2D uWakeAux; // the track's direction (x, z, weighted), freshness of the white water
   uniform vec2 uSurf;      // zone width (m), breaker period (s)
   uniform vec4 uMouth;     // river mouth x, z, plume radius (m), strength
 #endif
@@ -202,6 +211,7 @@ vec3 wN;          // world wave normal
 float wRough;     // perceptual roughness
 float wOpacity;   // body opacity (0 at the waterline)
 float wFoam;
+float wkShare = 0.0; // the wake's share of the foam (its own albedo)
 float wDry = 0.0; // exposed gravel / sand bar
 float wDist;
 float wCover = 1.0; // geometric coverage (river edges, mouth fade)
@@ -222,6 +232,44 @@ float wNoise( vec2 p ) {
   return mix( mix( wHash( i ), wHash( i + vec2( 1.0, 0.0 ) ), u.x ), mix( wHash( i + vec2( 0.0, 1.0 ) ), wHash( i + vec2( 1.0, 1.0 ) ), u.x ), u.y );
 }
 float wSat( float x ) { return clamp( x, 0.0, 1.0 ); }
+#ifdef WATER_SEA
+vec2 wHash2( vec2 p ) {
+  ivec2 i = ivec2( floor( p ) );
+  uint h = wPcg( uint( i.x ) + wPcg( uint( i.y ) ) );
+  return vec2( float( h ), float( wPcg( h ) ) ) * ( 1.0 / 4294967295.0 );
+}
+// The wake's foam structure: the boils of upwelling clear water that push the foam aside. Animated
+// cellular noise (p in cells): x = the "hole" measure exp(−π F1² / r²) of the nearest boil (1 at its
+// centre, → 0 between boils, where the foam gathers; r varies per boil), yz = its slope (the boil's
+// dome: continuous, creased only where two boils meet). The boils are ellipses stretched S times
+// along the track direction d (the metric changes, the cells stay world-aligned: no shear in
+// turns), so the foam between them streaks along the wake. For a Poisson field exp(−π F1²) is uniform on [0, 1], so the
+// coverage threshold matches wakeField.ts foamCoverage() / foamMeanCoverage(). Boils orbit their
+// cells at a constant rate (t) with an amplitude amp: fresh propwash seethes, old lace barely
+// moves (a rate that varied in space would shear the pattern into streaks as time grows).
+vec3 wFoamCells( vec2 p, float t, float amp, vec2 d, float S ) {
+  vec2 i = floor( p );
+  vec2 f = p - i;
+  float best = 0.0;
+  vec2 gb = vec2( 0.0 );
+  float k2 = 1.0 - 1.0 / ( S * S );
+  for ( int yy = -1; yy <= 1; yy++ ) for ( int xx = -1; xx <= 1; xx++ ) {
+    vec2 g = vec2( float( xx ), float( yy ) );
+    vec2 h = wHash2( i + g );
+    vec2 o = g + 0.5 + amp * sin( t * ( 0.55 + 0.6 * h.yx ) + 6.2831 * h ) - f;
+    float r = 0.6 + 0.8 * fract( h.x * 7.13 + h.y * 3.71 );
+    // stretched along the track (d, unit): semi-axes r√S along it, r/√S across (the same area)
+    float od = dot( o, d );
+    vec2 mo = ( o - k2 * od * d ) * S;
+    float dd = dot( o, mo );
+    float ir2 = 3.14159 / ( r * r );
+    float m = exp( - dd * ir2 );
+    // the boil's dome: h = m, ∂m/∂p = 2 m ir2 · M o (o = centre − p)
+    if ( m > best ) { best = m; gb = 2.0 * m * ir2 * mo; }
+  }
+  return vec3( best, gb );
+}
+#endif
 
 // Gerstner trains at the (origin-relative) point p: accumulates the normal's
 // −slope (x, z), 1 − Σ k s sin θ (y), the crest measure and the lost variance.
@@ -415,9 +463,10 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
   float crest = 0.0;
   wGerstner( p, fw, ng, lost, crest );
 
-  // ── the player's wake (wake map): its wave slopes, white water, churn and slick ──
-  float wkFoam = 0.0;
-  float wkChurn = 0.0;
+  // ── the player's wake (wake map): its wave slopes, foam, aeration and slick ──
+  float wkFoam = 0.0;   // foam coverage after the structure (0..1)
+  float wkThick = 0.0;  // how deep inside a foam patch (thin edges are translucent, the middles bright)
+  float wkChurn = 0.0;  // aeration: bubbles in the water column
   float wkSlick = 0.0;
   #ifdef WATER_SEA
     if ( uWakeXf.w > 0.5 ) {
@@ -428,26 +477,86 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
         wedge = wedge * wedge * ( 3.0 - 2.0 * wedge );
         vec4 wc0 = textureLod( uWakeMap, wu, 0.0 );
         // slopes over a 4-texel span (~2 m): the wake's swells stay soft, never a creased fold
-        float tx = 2.0 * uWakeTexel.y;
+        float tx = ${WAKE_SLOPE.spanTexels.toFixed(1)} * uWakeTexel.y;
         float hx1 = textureLod( uWakeMap, wu + vec2( tx, 0.0 ), 0.0 ).r;
         float hx0 = textureLod( uWakeMap, wu - vec2( tx, 0.0 ), 0.0 ).r;
         float hz1 = textureLod( uWakeMap, wu + vec2( 0.0, tx ), 0.0 ).r;
         float hz0 = textureLod( uWakeMap, wu - vec2( 0.0, tx ), 0.0 ).r;
-        vec2 grad = vec2( hx1 - hx0, hz1 - hz0 ) / ( 4.0 * uWakeTexel.x );
-        grad = clamp( grad, vec2( -0.8 ), vec2( 0.8 ) );
+        vec2 grad = vec2( hx1 - hx0, hz1 - hz0 ) / ( ${(2 * WAKE_SLOPE.spanTexels).toFixed(1)} * uWakeTexel.x );
+        grad = clamp( grad, vec2( -${WAKE_SLOPE.clamp} ), vec2( ${WAKE_SLOPE.clamp} ) );
         // slopes the pixel can resolve go into the normal, the rest into roughness
         float wres = 1.0 - smoothstep( 2.0 * uWakeTexel.x, 8.0 * uWakeTexel.x, fw );
-        ng.x -= grad.x * wedge * wres;
-        ng.z -= grad.y * wedge * wres;
+        // the wake's waves read a little stronger in the normal than their height (their crests are
+        // coherent lines against the random sea), but not in the churned wash (5d92507)
+        float wgain = 1.0 + 0.6 * ( 1.0 - wSat( wc0.b ) );
+        ng.x -= grad.x * wedge * wres * wgain;
+        ng.z -= grad.y * wedge * wres * wgain;
         lost += 0.5 * dot( grad, grad ) * wedge * ( 1.0 - wres );
-        wkFoam = wSat( wc0.g ) * wedge;
+        // whitecaps where the wake's own waves are steep (the quarter waves, the diverging crests
+        // near the hull): the crest breaks when the slope passes ~0.2
+        float steep = length( grad ) * wedge;
+        float cap = smoothstep( 0.16, 0.34, steep ) * smoothstep( 0.0, 0.06, wc0.r );
+        float wkDens = max( wSat( wc0.g ), cap * 0.75 ) * wedge;
         wkChurn = wSat( wc0.b ) * wedge;
         wkSlick = wSat( wc0.a ) * wedge;
+        vec4 wa = textureLod( uWakeAux, wu, 0.0 );
+        float wal = length( wa.xy );
+        vec2 tdir = wal > 1e-3 ? wa.xy / wal : vec2( 1.0, 0.0 );
+        float along = smoothstep( 0.05, 0.3, wal );
+        float fresh = max( smoothstep( 0.5, 1.0, wkDens ) * 0.6, wSat( wa.z / max( wal, 0.05 ) ) * along );
+        // the foam's own structure (wakeField.ts foamCoverage): a domain-warped, animated cellular
+        // pattern thresholded by the density — solid white with dark holes where it is fresh, a lace
+        // of filaments on the cell walls as it decays, broken threads, then nothing. Far away, where
+        // a pixel spans many cells, the threshold's mean coverage.
+        float kf = 0.9 * exp( 0.9 * log( max( wkDens, 1e-4 ) ) );
+        float gate = smoothstep( 0.0, 0.08, wkDens );
+        float mean = gate * wSat( kf );
+        wkFoam = mean;
+        wkThick = wSat( kf * 1.4 ) * mean;
+        #if WAKE_DETAIL
+          float CELL = uWakeCell;
+          float res1 = 1.0 - smoothstep( 0.2 * CELL, 0.75 * CELL, fw );
+          if ( ( wkDens > 0.004 || wkChurn > 0.02 ) && res1 > 0.0 ) {
+            vec2 q = pw / CELL;
+            // a strong, two-scale domain warp: the boils are blobby, never a regular grid
+            q += ( vec2( wNoise( q * 0.23 + 3.1 ), wNoise( q * 0.23 - 7.7 ) ) - 0.5 ) * 1.9;
+            q += ( vec2( wNoise( q * 0.9 + 1.3 ), wNoise( q * 0.9 - 4.1 ) ) - 0.5 ) * 0.6;
+            float amp = 0.1 + 0.3 * fresh;
+            // streaks: stretched along the track, more so as the foam ages and is drawn out
+            float S = 1.0 + along * ( 0.5 + 0.6 * ( 1.0 - fresh ) );
+            vec3 c1 = wFoamCells( q, uTime * 0.9, amp, tdir, S );
+            vec3 c2 = wFoamCells( q * 2.7 + 17.0, uTime * 1.3, amp, tdir, S );
+            float res2 = 1.0 - smoothstep( 0.2 * CELL / 2.7, 0.75 * CELL / 2.7, fw );
+            float res3 = 1.0 - smoothstep( 0.03 * CELL, 0.12 * CELL, fw );
+            // big boils, small ones punching finer holes into the foam between them, and bubbly
+            // fraying at two finer scales (value noise: cheap)
+            vec2 qf = q * 5.0 + vec2( 0.0, uTime * 0.15 );
+            float fray = ( wNoise( qf ) - 0.5 ) * 0.3 * res2 + ( wNoise( qf * 2.4 + 5.0 ) - 0.5 ) * 0.2 * res3;
+            float e = max( c1.x, ( c2.x - 0.3 ) * 1.25 * res2 ) + fray;
+            float soft = max( 0.13, 1.3 * fw / CELL );
+            float cov = gate * ( 1.0 - smoothstep( kf - soft, kf + soft, e ) );
+            wkFoam = mix( mean, cov, res1 );
+            wkThick = mix( wkThick, wSat( ( kf - e ) / 0.35 ) * cov, res1 );
+            // the boils: low domes of upwelling water between the foam walls, strongest in the fresh wash
+            float boil = wkChurn * ( 0.3 + 0.7 * fresh ) * res1 * 0.05 / CELL;
+            ng.x -= c1.y * boil;
+            ng.z -= c1.z * boil;
+          }
+        #else
+          // the low preset: a cheap lace from two octaves of value noise (no cellular boils)
+          float res1 = 1.0 - smoothstep( 0.2 * uWakeCell, 0.75 * uWakeCell, fw );
+          if ( wkDens > 0.004 && res1 > 0.0 ) {
+            vec2 q = pw / uWakeCell;
+            float e = smoothstep( 0.22, 0.78, 0.62 * wNoise( q ) + 0.38 * wNoise( q * 2.7 + 5.0 ) );
+            float soft = max( 0.13, 1.3 * fw / uWakeCell );
+            wkFoam = mix( mean, gate * ( 1.0 - smoothstep( kf - soft, kf + soft, e ) ), res1 );
+          }
+        #endif
         // the propeller wash boils: churned water is covered in short, steep, restless ripples (two
         // layers of noise slopes drifting against each other, so it seethes rather than scrolls).
         // The smooth swell underneath never reads as a bent sheet. Resolved slopes go into the
         // normal; far away, where a pixel spans many ripples, they become roughness.
-        float tb = max( wkChurn, 0.8 * wkFoam );
+        float tb = max( wkChurn, 0.8 * wkDens );
         if ( tb > 0.01 ) {
           float tres = 1.0 - smoothstep( 0.12, 0.7, fw );
           vec2 q1 = pw * 1.35 + vec2( uTime * 0.55, - uTime * 0.35 );
@@ -522,8 +631,9 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     d2 = wDetail( p, uDetailL2, uDetailOff.zw, v2 );
     sd = ( d1.xy + d2.xy ) * slick * uWaveGain;
     dvar = ( v1 + v2 ) * slick * slick * uWaveGain * uWaveGain;
-    // the wake's slick: the turbulence has flattened the ripples; churned water is rough and broken
-    float wkCalm = 1.0 - 0.7 * wkSlick * ( 1.0 - wkChurn );
+    // the wake's slick: the turbulence has flattened the ripples (a dark, glassy band behind the boat
+    // that shows from the air long after the foam has gone); churned water is rough and broken
+    float wkCalm = 1.0 - 0.85 * wkSlick * ( 1.0 - 0.7 * wkChurn );
     sd *= wkCalm;
     dvar = dvar * wkCalm * wkCalm + 0.02 * wkChurn;
   #endif
@@ -545,13 +655,14 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
     float wc = smoothstep( uWhitecap.x, uWhitecap.y, crest + 0.12 * d1.z + 0.25 * ( slick - 1.0 ) ) * uWhitecap.z;
     wc *= smoothstep( 4.0, 12.0, depth );
     foam = max( foam, wc * foamTex );
-    // the wake's white water: the lace in the map, broken up finer here (bubbles, the tile's ripples)
-    float wkMicro = mix( 0.5, wNoise( pw * 2.7 ) * 0.6 + wNoise( pw * 6.3 + 1.7 ) * 0.4, 1.0 - smoothstep( 0.08, 0.35, fw ) );
-    float wkF = wkFoam * ( 0.55 + 0.5 * foamTex + 0.5 * wkMicro );
-    foam = max( foam, smoothstep( 0.08, 0.75, wkF ) * ( 0.6 + 0.4 * wkFoam ) );
-    // aerated water under the churn: pale turquoise, glowing with scattered light
-    deep = mix( deep, vec3( 0.03, 0.12, 0.12 ), wkChurn * ( 1.0 - 0.5 * wkFoam ) );
-    absorb = mix( absorb, vec3( 0.3, 0.07, 0.07 ), wkChurn );
+    // the wake's white water (its structure is already in wkFoam)
+    wkShare = wSat( wkFoam / max( max( foam, wkFoam ), 1e-3 ) );
+    foam = max( foam, wkFoam );
+    // aerated water: clouds of bubbles under and around the foam scatter the light back — pale
+    // turquoise / green, brightest in the fresh wash, a long glowing lane behind a ship
+    float aer = wSat( wkChurn * ( 0.7 + 0.6 * wNoise( pw / 7.0 + uTime * vec2( 0.03, -0.02 ) ) ) );
+    deep = mix( deep, vec3( 0.045, 0.14, 0.125 ), aer * ( 1.0 - 0.4 * wkFoam ) );
+    absorb = mix( absorb, vec3( 0.34, 0.075, 0.07 ), aer );
     // the river's sediment plume off the mouth
     float plume = uMouth.w * exp( - length( pw - uMouth.xy ) / uMouth.z ) * ( 0.5 + 0.5 * wNoise( pw / 170.0 + vec2( uTime * 0.008, 0.0 ) ) );
     deep = mix( deep, ${glsl3(O.turbidDeep)}, plume );
@@ -655,7 +766,16 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
   #else
     wOpacity = smoothstep( 0.0, 0.9, depth );
   #endif
-  diffuseColor.rgb = mix( body, vec3( 0.74, 0.77, 0.78 ), wFoam );
+  // foam albedo: the sea's own foam; the wake's thin foam is translucent (the aerated water shows
+  // through, bluish), the middles of its patches bright white
+  vec3 foamAlb = vec3( 0.74, 0.77, 0.78 );
+  #ifdef WATER_SEA
+    vec3 wkAlb = mix( vec3( 0.46, 0.64, 0.64 ), vec3( 0.9, 0.92, 0.92 ), wSat( 0.25 + wkThick ) );
+    // thick and thin patches of bubbles: the brightness varies within the foam
+    wkAlb *= mix( 0.8 + 0.28 * wNoise( pw * 1.3 + 3.0 ), 0.94, smoothstep( 0.3, 1.5, fw ) );
+    foamAlb = mix( foamAlb, wkAlb, wkShare );
+  #endif
+  diffuseColor.rgb = mix( body, foamAlb, wFoam );
   #ifdef WATER_RIVER
     // exposed bars: gravel upstream, sand downstream, pebbly, dark and wet at the waterline
     vec3 barC = mix( ${glsl3(O.gravelBar)}, ${glsl3(O.sandBar)}, turb );
@@ -675,11 +795,21 @@ export const WATER_SURFACE_FRAGMENT = /* glsl */ `
   #ifdef WATER_LAKE
     lost *= min( slick, 1.0 );
   #endif
-  float v = lost + dvar + uBaseVar * mix( 1.0, slick, 0.6 ) * uWaveGain;
+  float v = lost + dvar + uBaseVar * mix( 1.0, slick, 0.6 ) * uWaveGain * ( 1.0 - 0.6 * wkSlick * ( 1.0 - wkChurn ) );
   float alpha = sqrt( 0.0009 + v );
   wRough = clamp( sqrt( alpha ), 0.06, 0.75 );
   wRough = mix( wRough, 0.9, max( wFoam, wDry ) );
   n = normalize( mix( n, vec3( 0.0, 1.0, 0.0 ), max( wFoam * 0.6, wDry ) ) );
+  #ifdef WATER_SEA
+    // the wake's foam is lumpy: heaps of bubbles catch the sun on one side (near the camera only)
+    if ( wkFoam > 0.02 ) {
+      float fres = 1.0 - smoothstep( 0.05, 0.3, fw );
+      vec2 fq = pw * 3.3 + vec2( 0.0, uTime * 0.2 );
+      float f0 = wNoise( fq );
+      vec2 fg = vec2( wNoise( fq + vec2( 0.3, 0.0 ) ) - f0, wNoise( fq + vec2( 0.0, 0.3 ) ) - f0 ) / 0.3;
+      n = normalize( n - vec3( fg.x, 0.0, fg.y ) * 0.3 * wkFoam * fres );
+    }
+  #endif
   wN = n;
 }
 `;

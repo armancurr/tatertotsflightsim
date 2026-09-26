@@ -14,8 +14,8 @@
  * aircraft readings are kept harmless: airspeed = speed through the water, no stall, no overspeed,
  * gear 'down' with no light and no gear warnings, flaps 0.
  */
-import { CONFIG, M_TO_FT, MS_TO_FPM, MS_TO_KT, RAD_TO_DEG, DEG_TO_RAD, type Config } from '../config';
-import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings, MarineGear, RotorReadings, VesselReadings } from '../types';
+import { CONFIG, M_TO_FT, MS_TO_FPM, MS_TO_KT, RAD_TO_DEG, DEG_TO_RAD, type Config, type WatercraftConfig } from '../config';
+import type { AircraftState, Controls, EngineState, EngineStatus, GearState, InstrumentReadings, MarineGear, PropulsorState, RotorReadings, VesselReadings } from '../types';
 import { stallAlphaRad, simStateLabel } from '../physics';
 import { gearWarning } from './gearWarning';
 
@@ -423,14 +423,19 @@ export function vesselReadings(m: InstrumentModel, state: AircraftState, control
   const wc = cfg.aircraft.watercraft;
   const v = state.vessel;
   const lever = clamp(fin(controls.throttle), -1, 1);
-  const props = Array.isArray(v?.propulsors) ? v.propulsors : [];
-  const count = Math.max(1, props.length || wc?.propulsors.length || 1);
+  const all = Array.isArray(v?.propulsors) ? v.propulsors : [];
+  // tunnel thrusters (cruise-ship work) are not engines: the tachs, gear and drive angle read the rest
+  const isThruster = (i: number) => wc?.propulsors[i]?.type === 'thruster';
+  const props = wc?.propulsors.some((p) => p.type === 'thruster') ? all.filter((_p, i) => !isThruster(i)) : all;
+  const count = Math.max(1, props.length || wc?.propulsors.filter((p) => p.type !== 'thruster').length || 1);
   const rpm: number[] = [];
   const loadPct: number[] = [];
-  const engineRpm = clamp(fin(state.engine?.rpm), 0, 5000);
+  // (Sea-Doo: a high-revving engine's tach reads past 5,000)
+  const rpmCap = Math.max(5000, 1.25 * (cfg.aircraft.watercraft?.engine.maxRpm ?? 0));
+  const engineRpm = clamp(fin(state.engine?.rpm), 0, rpmCap);
   for (let i = 0; i < count; i++) {
     const p = props[i];
-    rpm.push(p ? clamp(fin(p.rpm), 0, 5000) : engineRpm);
+    rpm.push(p ? clamp(fin(p.rpm), 0, rpmCap) : engineRpm);
     loadPct.push(p ? clamp(fin(p.load) * 100, 0, 150) : 0);
   }
   const first = props[0];
@@ -450,7 +455,28 @@ export function vesselReadings(m: InstrumentModel, state: AircraftState, control
     planingPct: clamp(fin(v?.planing ?? 0) * 100, 0, 100),
     moored: v ? v.mooring != null : false,
     aground: v?.aground === true,
+    ...(wc?.propulsors.some((p) => p.type === 'thruster') ? { thrusters: thrusterReadings(all, wc) } : {}),
   };
+}
+
+/** Bow / stern tunnel-thruster groups' mean thrust, −1 … +1 of full (+ pushing to starboard). */
+function thrusterReadings(all: readonly PropulsorState[], wc: WatercraftConfig): { bow: number; stern: number } {
+  let bow = 0;
+  let nb = 0;
+  let stern = 0;
+  let ns = 0;
+  wc.propulsors.forEach((pc, i) => {
+    if (pc.type !== 'thruster') return;
+    const f = clamp(fin(all[i]?.thrust) / Math.max(1, pc.thruster?.maxThrustN ?? 1), -1, 1);
+    if (pc.position.z < 0) {
+      bow += f;
+      nb++;
+    } else {
+      stern += f;
+      ns++;
+    }
+  });
+  return { bow: nb ? bow / nb : 0, stern: ns ? stern / ns : 0 };
 }
 
 /** The helicopter's rotor instruments from the (already advanced) model. */

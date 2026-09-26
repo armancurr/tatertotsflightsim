@@ -9,10 +9,13 @@
 
 Fly a **Cessna 172RG**, an **F-16C**, an **A-10C Warthog**, a **Boeing 747-400** or a **Bell 206
 JetRanger** helicopter over a big
-world of farmland, forests, rivers, towns, a coastline and snow-capped mountains — or take a
-**Princess V50** motor yacht out of the Port Chateau marina onto the open sea. The flight
-physics are real, so you can stall, spin and crash (the aircraft breaks apart); the yacht floats
-on the same waves you see, climbs onto the plane and banks into its turns. The jets carry
+world of farmland, forests, rivers, towns, a coastline and snow-capped mountains — or take to the
+sea from Port Chateau in a **Princess V50** motor yacht, a **Sea-Doo** jet ski, the **MS Tater
+Star** cruise ship or the battleship **USS Iowa**. The flight physics are real, so you can stall,
+spin and crash (the aircraft breaks apart); the boats float on the same waves you see, and every
+hull — 3 m or 270 m — runs through one hull model. Out at sea there's a lighthouse, lit channel
+buoys, an oil platform with a helideck, a wind farm, a jet-ski race course, a naval gunnery range,
+dolphins that ride your bow wave, breaching humpbacks and gulls. The jets carry
 guns and missiles: bust tanks at the target range and shoot down enemy MiGs, Sukhois and Hind
 helicopters. Every model, texture and sound is generated in code: nothing is downloaded while
 you play, and the only runtime dependency is [Three.js](https://threejs.org).
@@ -88,6 +91,9 @@ calibration tables are at the top of `src/physics/aircraft.ts`; the helicopter's
 | Vessel | What it's like | Speeds |
 | --- | --- | --- |
 | **Princess V50** | A 50 ft (15.5 m, 14.2 t) hardtop sports yacht on a deep-V planing hull with twin Volvo Penta IPS 600 pod drives (2 × 435 hp). It starts moored at a visitors' berth in the Port Chateau marina. It floats on the same waves the sea is drawn with, climbs bow-up over the hump onto the plane, banks into its turns at speed, and runs aground on beaches and bumps into pontoons (hard enough, and the hull is holed). A helm display with twin tachs, lever and gear, drive angle, trim tabs, trim and heel, and a depth sounder. | Planes in ~12 s, cruises ~30 kt, tops out ~34 kt at 3,500 rpm; ~12 kt astern |
+| **USS Iowa (BB-61)** | The fast battleship as modernised in 1984 and preserved today: 270 m, 58,400 t at full load, four shafts driven by 212,000 shp of steam turbines, twin rudders, three triple 16-inch turrets (they train, elevate and recoil with the naval gunnery), 5-inch mounts, Tomahawk and Harpoon launchers, Phalanx CIWS and a helicopter pad on the fantail. Rolls slowly (~16 s) on a 2.8 m GM, answers the telegraph over minutes and turns on a ~800 m circle. It starts moored at the naval pier (<kbd>Shift</kbd>+<kbd>R</kbd> or `spawn=sea`: underway offshore; `spawn=gunnery`: off the gunnery range). | 10 kt in ~1 min, 30 kt in ~3 min, ~32.5 kt flat out at ~200 shaft rpm; crash stop from 30 kt ~4 min and ~1.5 km; ~16 kt astern |
+| **MS Tater Star** (`?aircraft=cruise`) | A classic 1990s mid-size cruise ship in the manner of the Carnival Fantasy class: 260.6 m, 31.5 m beam, 7.75 m draft, ~70,000 GT, diesel-electric with two 14 MW shafts, rudders and six tunnel thrusters. A plain white ship — tiered decks of windows and balconies, lifeboats in davits, a pool deck, bridge wings and a single funnel with a potato-gold band; the windows light up at night. ← / → run the bow and stern thrusters (she turns on the spot in harbour; they are useless above ~5 kt), A / D the rudders. She starts moored at the cruise terminal east of the marina (Shift+R: underway offshore). | ~21 kt service, ~22.5 kt flat out at 600 rpm; ~5 min to gather way; crash stop ~6 ship lengths; turning circle ~4 lengths; ~13 kt astern |
+| **Sea-Doo RXP-X 325** | A 3.3 m personal watercraft (jet ski) with a supercharged 325 hp Rotax 1630 ACE triple on an axial waterjet: a steerable nozzle, VTS trim and the iBR reverse bucket (Space brakes). A rider who leans into the carves and crouches at speed; it jumps off wave crests, spills its rider on a hard nose-in and, capsized, is rolled back upright by the rider. Starts at the marina's visitors' berth; the helm display shows the pump rpm, nozzle and bucket. | On the plane in under a second, 0–60 mph in ~3.4 s, governed at ~58 kt; ~5 kt astern |
 
 The hull model (`src/physics/hull.ts`) works for any size of boat or ship: the buoyancy comes from
 the hull's shape on the real waves, and the planing lift (Savitsky), resistance (ITTC-57 friction,
@@ -177,6 +183,27 @@ two faster at the top end), <kbd>]</kbd> raises them. Watch the depth sounder ne
 gentle grounding just sticks, a fast one holes the hull. <kbd>R</kbd> puts you back at the berth,
 <kbd>Shift</kbd>+<kbd>R</kbd> starts you underway 2.6 km offshore.
 
+**Sea-Doo RXP-X 325.** Pick it from the menu (or add `?aircraft=seadoo`). <kbd>W</kbd> is the
+throttle (it casts off from the berth), <kbd>S</kbd> brings it back to the iBR neutral and on into
+reverse, <kbd>Space</kbd> is the iBR brake. <kbd>←</kbd> / <kbd>→</kbd> turn the bars and lean the
+rider into the carve (<kbd>A</kbd> / <kbd>D</kbd> turn with half the lean), <kbd>↑</kbd> / <kbd>↓</kbd>
+crouch forward / sit back, <kbd>[</kbd> / <kbd>]</kbd> trim the nozzle. No throttle, no steering — the
+jet steers — except the off-throttle assist at speed. Jump the wave crests; bury the nose and the rider
+goes swimming; flip it and they right it. The race course (orange turn buoys and a start arch) is
+off the beach east of the marina: ride through the arch and the lap timer starts.
+
+**MS Tater Star.** Pick *Cruise ship* (or `?aircraft=cruise`). She lies at the cruise terminal
+east of the marina. <kbd>←</kbd> / <kbd>→</kbd> run her bow and stern thrusters — swing her off the
+pier at a standstill (they're useless above ~5 kt) — <kbd>A</kbd> / <kbd>D</kbd> the rudders and
+<kbd>W</kbd> / <kbd>S</kbd> the engine telegraph. Everything takes minutes: plan your stops.
+
+**USS Iowa.** Pick *Iowa* (or `?aircraft=iowa`); she lies at the naval pier west of the marina.
+Drive her like the cruise ship (no thrusters). The fire-control panel on the right shows the three
+turrets: point the mouse at the sea and the turrets train onto it, <kbd>Q</kbd> fires a salvo from
+every gun that's loaded and on target, <kbd>T</kbd> locks a target at the gunnery range
+(`spawn=gunnery` starts you 9 km off it), <kbd>Z</kbd> is a ×5 rangefinder. The shells take up to a
+minute and a half to land — watch for the splashes.
+
 ### Combat (F-16 and A-10)
 
 The target range is **north of the airport**: take off from runway 36 and keep going. The **RANGE**
@@ -238,7 +265,7 @@ Add these to the address, for example `http://127.0.0.1:8092/?aircraft=f16&cam=c
 
 | Option | What it does |
 | --- | --- |
-| `aircraft=c172rg`, `f16`, `a10`, `b747`, `b206` or `v50` | Choose the aircraft (or the yacht) |
+| `aircraft=c172rg`, `f16`, `a10`, `b747`, `b206`, `v50`, `cruise`, `iowa` or `seadoo` | Choose the aircraft (or the vessel) |
 | `rwy=36`, `18`, `03` or `21` | Start (and reset) lined up on that runway end |
 | `spawn=range` | Start 4 km short of the target range at 1,500 ft, pointing at it |
 | `spawn=sea` / `spawn=berth` | The yacht: start underway on the open sea / moored at its berth (the default). An aircraft with `spawn=sea` starts over the sea |
@@ -353,7 +380,7 @@ src/
   fleet/         the aircraft (and vessel) registry (add an aircraft or a boat here)
   physics/       pure, deterministic flight model: step(state, controls, dt, env); hull.ts floats the boats
   aircraft/      procedural aircraft models and cockpits (Cessna at the top level; f16/, a10/, b747/, b206/)
-  vessels/       procedural vessel models (the generic hull loft; v50/)
+  vessels/       procedural vessel models (the generic hull loft; v50/, seadoo/, cruise/, iowa/)
   combat/        guns, arcade missiles, ground targets (targets/) and enemy aircraft (air/)
   world/         terrain, water, airport, roads, towns, trees, grass, cars, ships and air traffic
   game/          main loop, window.sim, and systems/ (one plug-in per feature)
@@ -376,6 +403,7 @@ then pick a guide:
 - [Adding vehicles and targets](docs/ADDING_VEHICLES_AND_TARGETS.md) — tanks and trucks at the range, enemy aircraft, cars on the roads.
 - [Adding boats](docs/ADDING_BOATS.md) — ships, yachts and ferries, their routes and wakes.
 - [Adding land features](docs/ADDING_LAND_FEATURES.md) — terrain, towns, landmarks, runways and new world systems.
+- [Offshore scenery](docs/OFFSHORE.md) — the oil platform and its helideck, the wind farm, the jet-ski race course and lap timer.
 - [Testing](docs/TESTING.md) — the test layers, fuzzing and the test browser.
 
 Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security problem, see

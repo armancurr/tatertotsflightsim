@@ -43,6 +43,7 @@ export class HullTrack {
   private readonly v: Float32Array;
   private readonly s: Float64Array;
   private readonly p: Float32Array;
+  private readonly w: Float32Array;
   /** Index of the newest entry, and the number of entries. */
   private head = -1;
   private n = 0;
@@ -60,6 +61,7 @@ export class HullTrack {
     this.v = new Float32Array(capacity);
     this.s = new Float64Array(capacity);
     this.p = new Float32Array(capacity);
+    this.w = new Float32Array(capacity);
   }
 
   /** Distance travelled at the oldest entry held (m). */
@@ -69,9 +71,9 @@ export class HullTrack {
 
   /**
    * The hull where it had travelled `sq` m (the FIRST time it got there), into `out` with `age` =
-   * seconds since, and `planing` if `out` has it. Clamped to the history held.
+   * seconds since, and `planing` / `wash` if `out` has them. Clamped to the history held.
    */
-  sampleAtDistance(sq: number, now: number, out: WakeSample & { planing?: number }): WakeSample {
+  sampleAtDistance(sq: number, now: number, out: WakeSample & { planing?: number; wash?: number }): WakeSample {
     const C = this.capacity;
     if (this.n === 0) {
       out.speed = 0;
@@ -115,11 +117,13 @@ export class HullTrack {
       out.travelled = sq;
       out.age = now - (this.t[a] + (this.t[b] - this.t[a]) * k);
       if ('planing' in out) out.planing = this.p[a] + (this.p[b] - this.p[a]) * k;
+      if ('wash' in out) out.wash = this.w[a] + (this.w[b] - this.w[a]) * k;
       return out;
     }
     this.copy(i, out);
     out.age = now - this.t[i];
     if ('planing' in out) out.planing = this.p[i];
+    if ('wash' in out) out.wash = this.w[i];
     return out;
   }
 
@@ -141,9 +145,10 @@ export class HullTrack {
   /**
    * Records the hull at time `time` (s, monotonic; a step back in time clears the track): hull
    * centre (x, z), heading (deg) and speed through the water (m/s, |·| is used). Returns true when
-   * a new entry was stored (at most one per `minDt`).
+   * a new entry was stored (at most one per `minDt`). `planing` 0..1 and `wash` (the propulsors'
+   * load, 0..1+: how hard the propellers / jet churn the water) ride along for the wake field.
    */
-  push(time: number, x: number, z: number, headingDeg: number, speed: number, planing = 0): boolean {
+  push(time: number, x: number, z: number, headingDeg: number, speed: number, planing = 0, wash = 0.7): boolean {
     if (this.n > 0) {
       const lt = this.t[this.head];
       if (time < lt - 1e-6) this.reset();
@@ -163,6 +168,7 @@ export class HullTrack {
     this.v[this.head] = Math.abs(speed);
     this.s[this.head] = this.travelled;
     this.p[this.head] = planing;
+    this.w[this.head] = Number.isFinite(wash) ? wash : 0.7;
     this.n = Math.min(this.capacity, this.n + 1);
     return true;
   }

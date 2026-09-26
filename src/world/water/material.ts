@@ -18,6 +18,15 @@ import {
   WATER_REFLECT_PARS,
 } from './shaders';
 import { WAKE_MAP_UNIFORMS } from './wakeMap';
+import { qualityFromQuery } from '../../render/quality';
+
+/**
+ * The wake's per-pixel foam structure (cellular lace, boils) — off on the 'low' quality preset,
+ * where the sea draws the wake's foam at its mean coverage (?quality=, src/render/quality.ts).
+ */
+export function wakeDetailEnabled(search: string | null = typeof location !== 'undefined' ? location.search : null): boolean {
+  return qualityFromQuery(search) !== 'low';
+}
 
 export type WaterKind = 'sea' | 'lake' | 'river';
 
@@ -142,6 +151,8 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
   material.defines = { [`WATER_${kind.toUpperCase()}`]: '', WAVE_N: String(Math.max(1, Math.min(16, waveCount))) };
   // lakes and rivers mirror the land around them (the sea keeps its sky reflection)
   if (kind !== 'sea') material.defines.WATER_REFLECT = '';
+  const wakeDetail = kind === 'sea' && wakeDetailEnabled() ? 1 : 0;
+  if (kind === 'sea') material.defines.WAKE_DETAIL = String(wakeDetail);
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, shared, uniforms, kind === 'sea' ? WAKE_MAP_UNIFORMS : {});
     let v = shader.vertexShader;
@@ -159,6 +170,6 @@ export function createWaterMaterial(kind: WaterKind, shared: SharedWaterUniforms
     f = replaceOnce(f, '#include <opaque_fragment>', WATER_OPAQUE_FRAGMENT);
     shader.fragmentShader = f;
   };
-  material.customProgramCacheKey = () => `water4-${kind}`;
+  material.customProgramCacheKey = () => `water5-${kind}-${wakeDetail}`;
   return { kind, material, uniforms };
 }

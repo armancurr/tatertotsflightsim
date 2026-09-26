@@ -3,7 +3,8 @@
  *
  *   engine voice (swapped per aircraft: piston.ts = Cessna O-360 + prop, jet.ts = F-16 F110 turbofan,
  *                 turbofan.ts = A-10 TF34s, turboshaft.ts = JetRanger Allison 250 + rotors,
- *                 marineDiesel.ts = Princess V50 twin D6 diesels + IPS drives + the hull in the water)
+ *                 marineDiesel.ts = Princess V50 twin D6 diesels + IPS drives + the hull in the water,
+ *                 pwc.ts = Sea-Doo RXP-X Rotax 1630 triple + supercharger + jet pump + hull; open-air rider view)
  *     ├─ exterior path ─┐
  *   rolling rumble, brake scrub, touchdown one-shots ─┤→ aircraft bus → view LP ×2 + shelf
  *                                                        (muffled cabin / open air, air absorption)
@@ -37,6 +38,10 @@ import { createTurboshaftVoice } from './turboshaft';
 import { TURBOSHAFT } from './turboshaftMapping';
 import { createMarineDieselVoice } from './marineDiesel';
 import { marineWindScale } from './marineMapping';
+// Sea-Doo (pwc) voice
+import { createPwcVoice } from './pwc';
+import { PWC, pwcWindScale, zeroPwcLevels } from './pwcMapping';
+// End Sea-Doo (pwc) voice
 import { createCombatAudio, type CombatAudio, type CombatAudioApi } from './combat';
 import { createAirAudio, type AirAudio, type AirAudioApi } from './airTargets';
 
@@ -238,7 +243,8 @@ function buildGraph(ctx: BaseAudioContext, seed: number): Graph {
 
 const fin = (v: number | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const isEngine = (k: unknown): k is EngineSound =>
-  k === 'piston' || k === 'jet' || k === 'turbofan' || k === 'turboshaft' || k === 'marineDiesel';
+  k === 'piston' || k === 'jet' || k === 'turbofan' || k === 'turboshaft' || k === 'marineDiesel' ||
+  k === 'pwc'; // Sea-Doo (pwc) voice
 
 export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
   const seed = opts.seed ?? 4711;
@@ -274,6 +280,7 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     turboshaft: 0, rotorPct: 0, slap: 0, slapSharpness: 0, tailRotor: 0, tailHz: 0, gearbox: 0, rotorHorn: 0,
     marine: 0, marineRpm: 0, engineLoad: 0, turbo: 0, turboHz: 0, hullRush: 0, skim: 0, wash: 0, slapRate: 0, hullSlaps: 0,
     grind: 0, gearClunks: 0,
+    pwc: 0, pump: 0, pumpVent: 0, // Sea-Doo (pwc) voice
   };
 
   const makeVoice = (g: Graph, kind: EngineSound): EngineVoice =>
@@ -285,7 +292,9 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
           ? createTurboshaftVoice(g.ctx, g.voiceOut, g.kit.rnd)
           : kind === 'marineDiesel'
             ? createMarineDieselVoice(g.ctx, g.voiceOut, g.kit.rnd)
-            : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
+            : kind === 'pwc' // Sea-Doo (pwc) voice
+              ? createPwcVoice(g.ctx, g.voiceOut, g.kit.rnd)
+              : createPistonVoice(g.ctx, g.voiceOut, g.kit.rnd);
   let combat: CombatAudio | null = null;
   /** Always present; a no-op until the context exists (every call is guarded). */
   const combatApi: CombatAudioApi = {
@@ -404,7 +413,10 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     const exterior = a.cameraMode !== 'cockpit';
     const crashed = !!a.crashed;
     // A boat: no tyres, touchdowns, stall or gear horns; the wind is the apparent wind over the deck.
-    const marine = v.kind === 'marineDiesel';
+    const marine = v.kind === 'marineDiesel' || v.kind === 'pwc'; // Sea-Doo (pwc) voice: a jet ski is a boat too
+    // Sea-Doo (pwc) voice: the rider sits on it in the open air — no cabin low-pass in the cockpit view.
+    const openAir = v.kind === 'pwc' && !exterior;
+    // End Sea-Doo (pwc) voice
 
     // Master
     L.master = masterGain(muted, paused);
@@ -413,15 +425,15 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     // View / listener
     const dist = fin(a.listenerDistanceM, v.refDistanceM);
     listenerDist = exterior ? Math.max(0, dist) : 0;
-    L.viewCutoff = viewCutoffHz(a.cameraMode, dist);
+    L.viewCutoff = openAir ? PWC.riderCutoffHz : viewCutoffHz(a.cameraMode, dist); // Sea-Doo (pwc) voice: openAir
     L.distance = distanceGain(a.cameraMode, dist, v.refDistanceM);
     L.cabin = cabinBusGain(a.cameraMode);
     g.view1.set(L.viewCutoff, t, A.cameraRampTau);
-    g.view2.set(exterior ? A.exteriorCutoffHz : L.viewCutoff * 1.6, t, A.cameraRampTau);
-    g.viewShelf.set(exterior ? 0 : 5, t, A.cameraRampTau);
+    g.view2.set(exterior || openAir ? A.exteriorCutoffHz : L.viewCutoff * 1.6, t, A.cameraRampTau); // Sea-Doo (pwc) voice: openAir
+    g.viewShelf.set(exterior ? 0 : openAir ? PWC.riderShelfDb : 5, t, A.cameraRampTau); // Sea-Doo (pwc) voice: openAir
     g.distance.set(L.distance, t, A.cameraRampTau);
     g.cabin.set(L.cabin, t, A.cameraRampTau);
-    g.windLP.set(exterior ? A.exteriorCutoffHz : 1500, t, A.cameraRampTau);
+    g.windLP.set(exterior || openAir ? A.exteriorCutoffHz : 1500, t, A.cameraRampTau); // Sea-Doo (pwc) voice: openAir
 
     // Engine voice
     const dop = exterior ? dopplerFactor(fin(a.closingSpeedMs, 0)) : 1;
@@ -435,11 +447,12 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     vf.crashed = crashed;
     vf.primed = primed && !voiceFresh;
     L.oneShots += v.update(a, vf, L);
+    if (v.kind !== 'pwc') zeroPwcLevels(L); // Sea-Doo (pwc) voice: its channels are silent under the other voices
     voiceFresh = false;
 
     // Airflow
     const ias = fin(a.airspeedKt, 0);
-    L.wind = windGain(ias) * (marine ? marineWindScale(exterior) : 1);
+    L.wind = windGain(ias) * (marine ? (v.kind === 'pwc' ? pwcWindScale(exterior) : marineWindScale(exterior)) : 1); // Sea-Doo (pwc) voice: pwcWindScale
     g.wind.set(L.wind * A.windVolume, t, tau);
     g.windBP.set(windCenterHz(ias), t, tau);
     g.hiss.set(Math.pow(L.wind, 1.5) * A.windVolume * 0.3, t, tau);
@@ -644,6 +657,10 @@ export function createAudio(opts: CreateAudioOptions = {}): AudioSystem {
     },
     get context() {
       return ctx;
+    },
+    // ── naval guns (src/audio/naval.ts) join the mix at the master bus ──
+    get masterInput() {
+      return graph?.masterNode ?? null;
     },
     levels() {
       L.crashLive = countLive();

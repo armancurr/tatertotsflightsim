@@ -216,6 +216,20 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
         e.gear = gearSign(p?.gear);
         e.propRps = clampTo(p?.n, -1e4, 1e4);
         e.thrustN = clampTo(p?.thrust, -1e8, 1e8);
+        // Sea-Doo (pwc) voice: the waterjet's pump state (only on 'jet' propulsors; the keys are absent otherwise).
+        const j = p?.jet;
+        if (j) {
+          e.flow = clampTo(j.flow, 0, 100);
+          e.jetSpeed = clampTo(j.jetSpeed, -500, 500);
+          e.ventilation = clampTo(j.ventilation, 0, 1);
+          e.bucket = clampTo(j.bucket, 0, 1);
+        } else if (e.flow !== undefined) {
+          delete e.flow;
+          delete e.jetSpeed;
+          delete e.ventilation;
+          delete e.bucket;
+        }
+        // End Sea-Doo (pwc) voice.
       }
       vessel.engineCount = n;
       vessel.speedMs = clampTo(vs.speedMs, -200, 200);

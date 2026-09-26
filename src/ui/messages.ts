@@ -181,7 +181,20 @@ export function startHint(cfg: Config = CONFIG): string {
   const k = (a: KeyAction) => keysOf(a, cfg);
   if (cfg.aircraft.watercraft) {
     const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
-    return `${k('engine')} engines · ${k('throttleUp')}/${k('throttleDown')} lever ahead / astern · ${k('yawLeft')}/${k('yawRight')} steer · ${k('trimNoseDown')}/${k('trimNoseUp')} trim tabs · ${k('help')} controls · ${menu} menu`;
+    // Sea-Doo: a waterjet's rider — throttle, iBR, lean
+    if (cfg.aircraft.watercraft.propulsors[0]?.type === 'jet') {
+      return `${k('throttleUp')} throttle · ${k('throttleDown')} iBR neutral / reverse · ${k('brake')} brake · ${k('rollLeft')}/${k('rollRight')} steer + lean · ${k('pitchDown')}/${k('pitchUp')} lean fore / aft · ${k('trimNoseDown')}/${k('trimNoseUp')} nozzle trim · ${k('help')} controls · ${menu} menu`;
+    }
+    // a ship with tunnel thrusters (cruise-ship work): ← / → run them; no trim tabs
+    // a warship's main battery: aim with the mouse, Q fires, T locks, Z the rangefinder; no trim tabs on a ship
+    const extra = cfg.weapons?.naval
+      ? `mouse aim · ${k('fireGun')} fire · ${k('lockTarget')} lock · ${k('fireMissile')} rangefinder`
+      : cfg.aircraft.watercraft.propulsors.some((p) => p.type === 'thruster')
+        ? `${k('rollLeft')}/${k('rollRight')} thrusters`
+        : cfg.aircraft.watercraft.trimTabs
+          ? `${k('trimNoseDown')}/${k('trimNoseUp')} trim tabs`
+          : '';
+    return `${k('engine')} engines · ${k('throttleUp')}/${k('throttleDown')} lever ahead / astern · ${k('yawLeft')}/${k('yawRight')} steer · ${extra ? `${extra} · ` : ''}${k('help')} controls · ${menu} menu`;
   }
   if (cfg.aircraft.rotorcraft) {
     const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');

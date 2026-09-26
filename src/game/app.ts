@@ -20,14 +20,17 @@
  *   ?aircraft=c172rg|f16|a10|b747|b206|v50   which aircraft (or vessel) to fly (src/fleet)
  *   ?spawn=range                             start 4 km short of the target range, 1,500 ft, 250 kt
  *   ?spawn=sea                               a vessel: start underway on the open sea (Shift+R); an aircraft: over it
- *   ?spawn=berth                             a vessel: start moored at its berth in the marina (the default; R)
+ *   ?spawn=berth                             a vessel: start moored at its berth (the default; R): the marina's
+ *                                            visitors' pontoon, the cruise terminal or the naval pier by size
+ *   ?spawn=gunnery                           the naval gunnery range: a ship 9 km off it steaming east; an aircraft 6 km south
  *   ?rwy=36|18|03|21                         start lined up on that runway end (R resets there too)
  */
 import * as THREE from 'three';
 import { CONFIG, FT_TO_M } from '../config';
 import type { AircraftState, CameraMode, Controls } from '../types';
 import { createInitialState, createApproachState, approachControls, createTrimmedState, createVesselState, step } from '../physics';
-import { playerBerth, seaStart } from '../world/port';
+import { vesselBerth, seaStart } from '../world/port';
+import { gunneryStart } from '../combat/navalRange';
 import { runwayEndFrame } from '../world/runway';
 import { createEnvironment } from '../world/environment';
 import { createRenderer } from '../render/renderer';
@@ -105,15 +108,18 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   /** A vessel's start: moored at its berth (R), or underway on the open sea (Shift+R). */
   const vesselStart = (where: 'berth' | 'sea'): { state: AircraftState; controls: Partial<Controls> } => {
     if (where === 'berth') {
-      const b = playerBerth();
+      // ── port: each vessel at its own berth by size (visitors' pontoon / cruise terminal / naval pier; src/world/port.ts) ──
+      const b = vesselBerth(def);
       return createVesselState(env, ac, { x: b.x, z: b.z, headingDeg: b.headingDeg, moored: true, seaTime: seaClock });
     }
     const p = seaStart();
     return createVesselState(env, ac, { x: p.x, z: p.z, headingDeg: p.headingDeg, speedKt: 22, seaTime: seaClock });
   };
-  let state: AircraftState = isVessel() ? vesselStart(params.get('spawn') === 'sea' ? 'sea' : 'berth').state : createInitialState(env, ac, startRunway);
+  const firstVessel = isVessel() ? vesselStart(params.get('spawn') === 'sea' ? 'sea' : 'berth') : null;
+  let state: AircraftState = firstVessel ? firstVessel.state : createInitialState(env, ac, startRunway);
   let prev: AircraftState = state;
-  let controlState = createControlState();
+  // (a vessel started underway comes with the lever that holds its speed)
+  let controlState = firstVessel ? resetControls(createControlState(), firstVessel.controls) : createControlState();
   const camParam = params.get('cam') as CameraMode | null;
   let camRig: CameraRigState = createCameraRig(camParam && CAMERA_MODES.includes(camParam) ? camParam : 'chase', ac);
   let paused = params.get('pause') === '1';
@@ -229,7 +235,12 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
   });
 
   const spawn = params.get('spawn');
-  if (spawn === 'sea' || spawn === 'berth') {
+  // ── ?spawn=gunnery: the naval gunnery range at sea (src/combat/navalRange.ts) ──
+  if (spawn === 'gunnery') {
+    const g = gunneryStart(isVessel());
+    const kt = isVessel() ? g.speedKt : def.id === 'c172rg' ? 110 : ac.aircraft.rotorcraft ? 100 : g.speedKt;
+    teleport({ x: g.x, z: g.z, headingDeg: g.headingDeg, speedKt: kt, aglFt: g.aglFt });
+  } else if (spawn === 'sea' || spawn === 'berth') {
     // a vessel already started there; an aircraft goes over the open sea
     if (!isVessel() && spawn === 'sea') {
       const p = seaStart();
@@ -370,6 +381,7 @@ export async function startApp(container: HTMLElement, hudRoot: HTMLElement): Pr
     visual.airStores = combat.status.airStores;
     visual.rotor = state.rotor ?? null;
     visual.vessel = state.vessel ?? null;
+    visual.turrets = combat.status.turrets ?? null;
     aircraft.setVisualState(visual, frameDt);
 
     // Camera.

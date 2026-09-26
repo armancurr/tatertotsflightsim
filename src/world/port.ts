@@ -12,12 +12,21 @@
  *
  * Poses are the CG of the yacht: x, z world metres, heading clockwise from north (0 = −Z, 90 = +X),
  * the bow (body −Z) pointing along it.
+ *
+ * Berths by size (`BerthId`): 'visitor' (the marina's visitors' pontoon: yachts, jet skis), 'cruise'
+ * (the cruise terminal east of the marina) and 'naval' (the naval pier west of it) — the piers are
+ * laid out in src/world/harbour/layout.ts. `berthFor(def)` picks one for a vessel (by fleet id when
+ * known, else a warship → naval, else the smallest berth its hull fits), `berthPose(id, size)` puts
+ * that hull's CG alongside the berth's face, and `vesselBerth(def)` does both (the app's R / "Back to
+ * the berth"). `vesselSize(cfg)` measures a hull from its station table.
  */
-import { CONFIG, type Config } from '../config';
+import { CONFIG, type Config, type AircraftConfig } from '../config';
 import { getLayout, type WorldLayout } from './layout';
 import { getHeightfield } from './heightfield';
 import { createMarina, defineRoutes, toLocal, toWorld, type MarinaLayout, type WaterWorld } from './traffic/sea';
 import { marinaObstacleTop } from './traffic/harbourObstacles';
+import { hullGeometry } from '../physics/hull';
+import { BERTH_LIMITS, SHIP_UNDER_KEEL, portWorks, type BerthFace } from './harbour/layout';
 
 export interface DockPose {
   x: number;
@@ -51,6 +60,7 @@ interface PortCache {
   marina: MarinaLayout;
   berth?: PlayerBerth;
   sea?: DockPose;
+  sites?: Record<BerthId, BerthSite>;
 }
 const caches = new WeakMap<WorldLayout, WeakMap<Config, PortCache>>();
 function cache(layout: WorldLayout, cfg: Config): PortCache {
@@ -213,3 +223,185 @@ export function checkDock(pose: DockPose, marina: MarinaLayout, water: WaterWorl
 
 /** The pose's position in the marina frame (QA / tests). */
 export const berthLocal = (m: MarinaLayout, pose: DockPose) => toLocal(m.frame, pose.x, pose.z);
+
+// ─── Berths by size ─────────────────────────────────────────────────────────────────────────────
+
+export type BerthId = 'visitor' | 'cruise' | 'naval';
+export const BERTH_IDS: readonly BerthId[] = ['visitor', 'cruise', 'naval'];
+
+/** A hull's size from its station table (body frame, CG at 0, bow −z). */
+export interface VesselSize {
+  lengthM: number;
+  beamM: number;
+  /** Static draft to the lowest point (keel or propeller tips), m. */
+  draftM: number;
+  bowZ: number;
+  sternZ: number;
+  halfBeam: number;
+  /** Deck edge above the static waterline at mid-length, m. */
+  freeboardM: number;
+}
+
+/** The size of a vessel's hull, or null for an aircraft. */
+export function vesselSize(cfg: Config | AircraftConfig): VesselSize | null {
+  const ac = 'aircraft' in cfg ? cfg.aircraft : cfg;
+  const wc = ac.watercraft;
+  if (!wc || wc.hull.stations.length < 2) return null;
+  const st = wc.hull.stations;
+  let bowZ = Infinity, sternZ = -Infinity, halfBeam = 0, low = Infinity;
+  for (const s of st) {
+    bowZ = Math.min(bowZ, s.z);
+    sternZ = Math.max(sternZ, s.z);
+    halfBeam = Math.max(halfBeam, s.deckHalf, s.chineHalf);
+    low = Math.min(low, s.keelY);
+  }
+  for (const p of wc.propulsors) low = Math.min(low, p.position.y - p.diameter / 2);
+  const g = hullGeometry(wc, ac.mass);
+  const mid = st.reduce((a, s) => (Math.abs(s.z - (bowZ + sternZ) / 2) < Math.abs(a.z - (bowZ + sternZ) / 2) ? s : a), st[0]);
+  return { lengthM: sternZ - bowZ, beamM: 2 * halfBeam, draftM: g.waterlineY - low, bowZ, sternZ, halfBeam, freeboardM: mid.deckY - g.waterlineY };
+}
+
+/** What a berth takes and where its face is. */
+export interface BerthSite {
+  id: BerthId;
+  name: string;
+  /** Largest vessel it takes (m). */
+  maxLengthM: number;
+  maxBeamM: number;
+  maxDraftM: number;
+  /** The quay face (world): the vessel lies alongside it, bow toward (bx, bz), `side` to it. */
+  face: BerthFace;
+  /** The reserved water of the largest vessel + a margin (world polygon, 4 corners): no route, buoy or structure. */
+  reserved: { x: number; z: number }[];
+}
+
+/** Fleet ids with a known berth (the cruise ship and the battleship are built elsewhere; absent ids are fine). */
+export const BERTH_BY_ID: Readonly<Record<string, BerthId>> = { v50: 'visitor', seadoo: 'visitor', cruise: 'cruise', iowa: 'naval' };
+
+/** Every berth site (cached per layout + config). */
+export function portBerths(layout: WorldLayout = getLayout(), cfg: Config = CONFIG): Record<BerthId, BerthSite> {
+  const c = cache(layout, cfg);
+  if (c.sites) return c.sites;
+  const m = c.marina;
+  const v = m.visitor;
+  // the visitors' pontoon face (+u side), bow toward the entrance (+w)
+  const f = m.frame;
+  const edge = v.u + v.side * v.half;
+  const A = toWorld(f, edge, v.w0);
+  const B = toWorld(f, edge, v.w1);
+  const C = toWorld(f, edge, (v.w0 + v.w1) / 2);
+  const visitorFace: BerthFace = { ax: A.x, az: A.z, bx: B.x, bz: B.z, nx: f.ux * v.side, nz: f.uz * v.side, headingDeg: f.headingW, cx: C.x, cz: C.z, gap: FENDER_GAP, side: v.side > 0 ? 'starboard' : 'port' };
+  const vb = v.berth;
+  const visitorReserved = [toWorld(f, vb.u0, vb.w0), toWorld(f, vb.u1, vb.w0), toWorld(f, vb.u1, vb.w1), toWorld(f, vb.u0, vb.w1)];
+  const works = portWorks(layout, cfg);
+  const site = (id: BerthId, name: string, face: BerthFace): BerthSite => {
+    const lim = BERTH_LIMITS[id];
+    return { id, name, maxLengthM: lim.length, maxBeamM: lim.beam, maxDraftM: lim.draft, face, reserved: id === 'visitor' ? visitorReserved : reservedBox(face, lim.length, lim.beam) };
+  };
+  c.sites = {
+    visitor: site('visitor', "Visitors' pontoon", visitorFace),
+    cruise: site('cruise', 'Cruise terminal', works.cruise.face),
+    naval: site('naval', 'Naval pier', works.naval.face),
+  };
+  return c.sites;
+}
+
+/** The water a berth reserves: along the face, the largest hull ± 10 m, from the face out past its beam by 10 m. */
+function reservedBox(face: BerthFace, length: number, beam: number): { x: number; z: number }[] {
+  const h = (face.headingDeg * Math.PI) / 180;
+  const fx = Math.sin(h);
+  const fz = -Math.cos(h);
+  const a = length / 2 + 10;
+  const out = face.gap + beam + 10;
+  const p = (along: number, off: number) => ({ x: face.cx + fx * along + face.nx * off, z: face.cz + fz * along + face.nz * off });
+  return [p(-a, 0), p(a, 0), p(a, out), p(-a, out)];
+}
+
+/** Does a hull fit a berth? */
+export function fitsBerth(id: BerthId, s: VesselSize): boolean {
+  const lim = BERTH_LIMITS[id];
+  return s.lengthM <= lim.length && s.beamM <= lim.beam && s.draftM <= lim.draft;
+}
+
+/** Anything with a fleet id and a config (an `AircraftDef`). */
+export interface VesselLike {
+  id: string;
+  config: Config;
+}
+
+/**
+ * The berth for a vessel: its fleet id's berth when known ('v50', 'seadoo' → visitor, 'cruise' →
+ * cruise, 'iowa' → naval); else a warship (a naval gun battery) → naval; else the smallest berth its
+ * hull fits (visitor, then cruise), and naval (the deepest) for anything bigger.
+ */
+export function berthFor(v: VesselLike): BerthId {
+  const known = BERTH_BY_ID[v.id];
+  if (known) return known;
+  const s = vesselSize(v.config);
+  if (!s) return 'visitor';
+  if (v.config.weapons?.naval) return 'naval';
+  if (fitsBerth('visitor', s)) return 'visitor';
+  if (fitsBerth('cruise', s)) return 'cruise';
+  return 'naval';
+}
+
+export interface VesselBerth extends PlayerBerth {
+  berth: BerthId;
+}
+
+/**
+ * A hull's CG at a berth: alongside the face (the hull's widest point `gap` off it), the middle of the
+ * hull on the berth's centre, bow along the face's heading.
+ */
+export function berthPose(id: BerthId, size: Pick<VesselSize, 'bowZ' | 'sternZ' | 'halfBeam'>, layout: WorldLayout = getLayout(), cfg: Config = CONFIG): VesselBerth {
+  const site = portBerths(layout, cfg)[id];
+  const f = site.face;
+  const h = (f.headingDeg * Math.PI) / 180;
+  const fx = Math.sin(h);
+  const fz = -Math.cos(h);
+  const off = f.gap + size.halfBeam;
+  // hull middle (body z = zm) at the centre: CG = centre + forward · zm
+  const zm = (size.bowZ + size.sternZ) / 2;
+  const lengthM = Math.hypot(f.bx - f.ax, f.bz - f.az);
+  return {
+    x: f.cx + f.nx * off + fx * zm,
+    z: f.cz + f.nz * off + fz * zm,
+    headingDeg: f.headingDeg,
+    berthIndex: -1,
+    lengthM: id === 'visitor' ? playerBerth(layout, cfg).lengthM : lengthM,
+    beamM: id === 'visitor' ? playerBerth(layout, cfg).beamM : f.gap + site.maxBeamM + 10,
+    side: f.side,
+    berth: id,
+  };
+}
+
+/**
+ * Where a vessel starts (R, "Back to the berth"): its berth (`berthFor`), its CG from its own hull
+ * size. The Princess V50 — the yacht the visitors' pontoon was laid out for — gets `playerBerth()`
+ * exactly.
+ */
+export function vesselBerth(v: VesselLike, layout: WorldLayout = getLayout(), cfg: Config = CONFIG): VesselBerth {
+  const id = berthFor(v);
+  if (id === 'visitor' && v.id === 'v50') return { ...playerBerth(layout, cfg), berth: 'visitor' };
+  const s = vesselSize(v.config);
+  return berthPose(id, s ?? BERTH_YACHT, layout, cfg);
+}
+
+/** Least water under a ship's keel at the cruise / naval berths, m (the visitors' berth keeps MIN_UNDER_KEEL). */
+export { SHIP_UNDER_KEEL, BERTH_LIMITS };
+
+/** Least depth under a hull footprint at a pose, and whether any of it stands in a marina structure or in `obstacleTop`. */
+export function checkHull(
+  pose: DockPose,
+  size: Pick<VesselSize, 'bowZ' | 'sternZ' | 'halfBeam'>,
+  water: WaterWorld = defaultWater(),
+  obstacleTop?: (x: number, z: number) => number,
+): { minDepth: number; blocked: boolean } {
+  let minDepth = Infinity;
+  let blocked = false;
+  for (const p of hullFootprint(pose, size)) {
+    minDepth = Math.min(minDepth, seaDepth(water, p.x, p.z));
+    if (obstacleTop && obstacleTop(p.x, p.z) > -1.5) blocked = true;
+  }
+  return { minDepth, blocked };
+}

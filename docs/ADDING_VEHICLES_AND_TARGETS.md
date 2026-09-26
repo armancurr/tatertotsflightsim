@@ -8,8 +8,9 @@ The world has three kinds of vehicles, each with its own code:
 | **Aircraft targets**: enemy aircraft that fly, evade and are shot down | `src/combat/air/`, system `airTargets` | MiG-29, Su-25, Mi-24 |
 | **Road traffic**: cars and trucks driving and parked on the road network | `src/world/cars/`, system `cars` | sedan, SUV, pickup, bus, semi, farm tractor |
 
-Boats and ships are in [ADDING_BOATS.md](ADDING_BOATS.md). The airport's own vehicles (ARFF
-trucks, refuelers, tugs, the patrolling pickup) are covered at the end.
+Boats and ships are in [ADDING_BOATS.md](ADDING_BOATS.md); a ship's turret guns and the gunnery
+range at sea are in [Naval guns and the gunnery range](#naval-guns-and-the-gunnery-range). The
+airport's own vehicles (ARFF trucks, refuelers, tugs, the patrolling pickup) are covered at the end.
 
 Everything is procedural: models are built from boxes, cylinders and extruded profiles in code,
 with vertex colours instead of textures. Real vehicles are the reference: use real dimensions and
@@ -23,8 +24,9 @@ All targets live in one **combat world** per scene: `combatWorld(scene)` in
 - **One target type.** Every target, on the ground or in the air, is a `GroundTarget`
   (`src/combat/types.ts`): `id`, `kind: TargetKind`, `position`, `headingDeg`, `velocity`,
   `health`, `maxHealth`, `alive`, `destroyedAt`, `group`, and `orientation` (aircraft only).
-  `TargetKind = GroundKind | AirKind`, where `GroundKind = 'tank' | 'ifv' | 'apc' | 'truck' | 'aaa'`
-  and `AirKind = 'fighter' | 'attack' | 'helo'`.
+  `TargetKind = GroundKind | AirKind | SeaKind`, where `GroundKind = 'tank' | 'ifv' | 'apc' | 'truck' | 'aaa'`,
+  `AirKind = 'fighter' | 'attack' | 'helo'` and `SeaKind = 'raft' | 'hulk' | 'sled'` (the floating
+  targets of the gunnery range, below).
 - **Classes in config.** `CONFIG.combat.targets` has one `TargetClassConfig` per kind: `name`
   (shown in the HUD and the kill message), hull box `length` × `width` × `height` in metres,
   `health`, `armor` and `speed`. Aircraft classes also set `air: true`.
@@ -227,6 +229,80 @@ To add, say, a Su-27 as `interceptor`:
 **Keep it arcade.** The player's Sidewinders (`AIM9M` in `src/config.ts`, carried as
 `weapons.airMissiles`) fly the scripted path in `src/combat/missile.ts`, and the enemy's flares
 are a visual reaction, not a seeker model. Don't add guidance laws or seeker simulations.
+
+## Naval guns and the gunnery range
+
+A ship can carry a **main battery**: turret guns firing unguided ballistic shells, with an arcade
+fire control (aim at a point, the turrets train and elevate onto the ballistic solution, a key fires a
+salvo). The USS Iowa's nine 16-inch/50 guns are the example (`IOWA_WEAPONS` in `src/config.ts`). It
+stays game-level: shells follow gravity and drag, nothing steers them.
+
+### The pieces
+
+| File | What it does |
+| --- | --- |
+| `src/combat/naval.ts` | Pure maths: the turret geometry (train, elevation, the muzzle of each gun), training arcs, the shell's exterior ballistics (RK4, drag with the ISA density), a range table, and `solveFireControl()` (the low-angle elevation and bearing that land a shell on a point, allowing for the ship's speed and a moving target; `deckAngles()` turns it into train and elevation on a rolling, pitching deck) |
+| `src/combat/navalBattery.ts` | Pure turret state: training and elevating at the real rates inside the arcs, per-gun reload and magazines, salvos rippled gun after gun, a gun only firing while its turret is on target; writes the `TurretStatus` array the ship's model animates from |
+| `src/combat/navalFireControl.ts` | Pure loop tying them together each frame (`createNavalController()`), also used by the headless tests |
+| `src/combat/navalShells.ts` | The shells in flight: hits on hulls (`world.raycast`), land and water, blast damage through `world.applyBlast`, the `detonation` event with `weapon: 'shell'`, and each shell's predicted fall of shot |
+| `src/combat/navalFx.ts`, `src/combat/render/navalFxRender.ts` | Water columns, muzzle blasts, bursts, foam and pressure rings on the sea, camera shake at the speed of sound |
+| `src/audio/naval.ts` | The report, splash and burst sounds, each delayed by distance / 343 m/s |
+| `src/ui/navalHud.ts` | The fire-control panel and the markers over the view |
+| systems `navalGuns`, `navalRange`, `navalHud`, `navalAudio` | The wiring (`src/game/systems/`) |
+
+The systems switch on for any vehicle whose config has `weapons.naval` (`navalGunsOf()` decides) and
+do nothing otherwise. The combat world's `navalFire` event carries each shot (muzzle, bore, turret,
+gun) for the effects and the sound.
+
+### Giving a ship guns
+
+1. **The battery.** Add a `WeaponsConfig` with a `naval: NavalGunsConfig` section (see `IOWA_WEAPONS`):
+   the gun's muzzle velocity, shell mass and `dragK` (tune it against the real maximum range: the
+   16-inch shell reaches ~38 km at 45°, `tests/combat/naval.test.ts` checks it), reload time and rounds
+   per gun, dispersion, damage and blast radius, and one `NavalTurretConfig` per turret.
+2. **The turrets.** For each: `position` (the rotation centre on the barbette, body frame), barrels
+   and their spacing, trunnion height and offset, barrel length, the training arc (`trainMinDeg` …
+   `trainMaxDeg`; an aft turret has its arc around 180, e.g. 30 … 330) and its stowed angle, the
+   elevation limits and the train / elevation rates.
+3. **The model.** Draw the turrets at exactly those positions and animate them from
+   `visual.turrets` (`AircraftVisualState.turrets`, one `TurretStatus` per turret):
+
+   - `trainDeg` 0 = the guns point at the bow (body −Z), + = toward starboard (clockwise seen from
+     above): rotate the turret by −train about body +Y;
+   - `elevDeg` + = muzzles up: rotate each barrel by +elevation about the turret's +X (the trunnion);
+   - gun 0 is the port-most barrel, offset (k − (n − 1) / 2) × `barrelSpacing` along the turret's +X;
+   - the muzzle is `muzzlePosition()`: turret position + rotateY(−train) · ((lateral, trunnionHeight,
+     −trunnionForward) + rotateX(elevation) · (0, 0, −barrelLength));
+   - `recoil[k]` 0..1 (1 = just fired) slides barrel k back, `flash[k]` 0..1 can light the muzzle.
+4. **The fleet entry** sets `weapons` in its config. Until your ship exists you can try the guns on
+   any vessel with `?naval=iowa` in the URL (grey stand-in turrets are drawn at the configured
+   positions): `?aircraft=v50&naval=iowa&spawn=gunnery`.
+
+In the game: move the mouse over the sea (drag to turn the view) — the turrets train onto the point
+under the pointer; <kbd>Z</kbd> opens the rangefinder (the view turns along the pointer's ray,
+narrowed ×5; drag to pan) for picking a point 10–20 km off; <kbd>T</kbd> locks the next target in reach
+(the solution then leads it); <kbd>Q</kbd> calls a salvo. Turrets that are still coming onto the line fire the moment they are on target, for a
+few seconds. The panel at the right shows range, bearing, time of flight, each turret's train,
+elevation, loads and ON TARGET, and SPLASH counts down to the fall of shot.
+
+### The gunnery range
+
+`CONFIG.combat.gunnery` places the range in open water north-west of Long Key, between the island and
+the tanker lane (`tests/combat/navalRange.test.ts` keeps every target and buoy in deep water and at
+least 1.5 km from the traffic routes). `planGunneryRange()` in `src/combat/navalRange.ts` lays it out:
+four target rafts, two hulked freighters, a sled towed round a racetrack by a tug, and yellow
+special-mark buoys at the corners. The floating targets are combat targets of the `SeaKind`s `raft`,
+`hulk` and `sled` (classes in `CONFIG.combat.targets`: a direct 16-inch hit sinks a raft, the hulk
+takes a few, ship steel halves the 30 mm rounds), so the F-16's and A-10's guns and Mavericks can
+shoot them too. They ride the drawn sea, burn and sink when destroyed (`CONFIG.combat.gunnery.sinkS`)
+and are back after `CONFIG.combat.gunnery.respawnS`. `?spawn=gunnery` starts a ship 9 km south of the
+range steaming east (the range on the port beam) and an aircraft 6 km south at 1,500 ft.
+
+To add a target type, add a `SeaKind`, its class, a place in `planGunneryRange()`, its draft in
+`DRAFT` and a model builder in `NAVAL_RANGE_BUILDERS` (`src/combat/render/navalRangeRender.ts`).
+
+QA hooks: `window.sim.naval` (`state()`, `aimAt(x, z)`, `lock(id)`, `fire()`, `demo(kind, x, z)`,
+`watch(…)` a parked camera) and `window.sim.gunnery` (`list()`, `kill(id)`, `look(id)`).
 
 ## Adding a road vehicle type
 

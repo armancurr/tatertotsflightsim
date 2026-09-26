@@ -254,7 +254,8 @@ function computeDerived(
   const ad = airDataFromBodyVelocity(vb);
   const e = eulerFromQuat(q);
   const { p, q: qr, r } = pqrFromOmega(omega);
-  const ground = env.groundHeight(pos.x, pos.z);
+  // a landable deck (pier, helipad, helideck) is the ground under an aircraft: AGL (radar altimeter, ground effect) from it
+  const ground = Math.max(env.groundHeight(pos.x, pos.z), env.deckTop ? env.deckTop(pos.x, pos.z) : -Infinity);
   const water = env.waterLevel(pos.x, pos.z);
   const surface = water !== null && water > ground ? water : ground;
   return {
@@ -406,7 +407,7 @@ function createTrimmedRotorcraftState(req: TrimRequest, env: Environment, cfg: C
   const px = req.x ?? 0;
   const pz = req.z ?? 0;
   const water = env.waterLevel(px, pz);
-  const surface = Math.max(env.groundHeight(px, pz), water ?? -Infinity);
+  const surface = Math.max(env.groundHeight(px, pz), env.deckTop ? env.deckTop(px, pz) : -Infinity, water ?? -Infinity);
   const tr = solveRotorTrim(req, cfg, req.altitudeM + ac.rotorcraft!.rotor.hub.y - surface);
   const gamma = (req.flightPathDeg ?? 0) * DEG;
   const h = heading * DEG;

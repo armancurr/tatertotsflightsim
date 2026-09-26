@@ -9,7 +9,9 @@ kind of vessel.
 This is the **traffic** — boats that follow routes. To add a boat the player **drives** (physics,
 helm, berth), see [ADDING_A_VESSEL.md](ADDING_A_VESSEL.md). The marina's structures (and the moored
 traffic boats) are solid for the player's hull: `src/world/traffic/harbourObstacles.ts` builds them
-from the same dimensions the model draws.
+from the same dimensions the model draws. The big-ship port (the cruise terminal and the naval pier)
+and the aids to navigation (the lighthouse, the harbour lights and the buoys) have their own
+section at the end: [The port and the aids to navigation](#the-port-and-the-aids-to-navigation).
 
 ## How it fits together
 
@@ -18,7 +20,7 @@ from the same dimensions the model draws.
 | Plan (pure) | `src/world/traffic/sea.ts` | The vessel kinds and sizes, the marina layout, every route, route validation, and each vessel's pose at time `t` |
 | Paths (pure) | `src/world/traffic/path.ts` | `createPath`, `smoothLoop`, `smoothLine`, `filletPath`: waypoints → an arc-length path with speeds |
 | Models | `src/world/traffic/models/vessels.ts` | `buildVesselPart(kind, part, lod)`: procedural hulls, superstructures and sails |
-| Wakes (pure) | `src/world/traffic/wake.ts` | Foam trail from the stern plus two Kelvin arms from the bow |
+| Wakes (pure) | `src/world/traffic/wake.ts` | Foam trail from the stern plus two Kelvin arms from the bow (drawn with the player wake's look: a foam lace between boils over turquoise aerated water, `createWakeMaterial` in `materials.ts`) |
 | Wave motion (pure) | `src/world/traffic/buoyancy.ts` | Heave, pitch and roll from the same wave trains the water shader draws |
 | Renderer | `src/world/traffic/ships.ts` | `createShips()`: every hull, sail and the marina in **one** `THREE.BatchedMesh`, plus one wake mesh and one point buffer for lights and spray (3 draw calls in total) |
 | System | `src/game/systems/ships.ts` | Builds the plan time-sliced, runs the traffic clock, updates the ships every frame |
@@ -62,6 +64,10 @@ angle).
   reserved for the player's own boat (`playerBerth()` in `src/world/port.ts`), which the moored
   traffic never fills either.
 
+Keep routes clear of the big-ship port by hand too. `tests/world/harbour/routes.test.ts` requires
+every route to stay 150 m from the cruise terminal's and the naval pier's structures and from each
+ship berth's reserved water. `tests/world/harbour/navaids.test.ts` requires 60 m from every buoy.
+
 A route that fails is dropped and its id goes into `plan.rejected`, and the tests require that
 list to be empty. They also require that no two routes ever come within 60 m of each other
 (`tests/world/traffic/sea.test.ts`, "routes never cross each other").
@@ -74,7 +80,7 @@ of `defineRoutesJob()` reads its loops from a list, capped by the count in confi
 ```ts
 // src/world/traffic/sea.ts, in defineRoutesJob()
 const motorLoops: XZ[][] = [
-  [{ x: -3900, z: 8480 }, { x: -1500, z: 8560 }, { x: -350, z: 8880 }, { x: -1600, z: 9180 }, { x: -4100, z: 8980 }],
+  [{ x: -3750, z: 8760 }, { x: -1500, z: 8620 }, { x: -350, z: 8880 }, { x: -1600, z: 9180 }, { x: -4100, z: 8980 }],
   [{ x: -500, z: 10650 }, { x: 2500, z: 10500 }, { x: 5600, z: 10250 }, { x: 4600, z: 11050 }, { x: 1000, z: 11250 }],
   [{ x: -7200, z: 8250 }, { x: -9800, z: 8150 }, { x: -12200, z: 8450 }, { x: -11000, z: 8950 }, { x: -8000, z: 8750 }],
   // new: a loop 2 km off the coast east of the river mouth
@@ -126,6 +132,8 @@ export const WAKE_KIND: Record<VesselKind, { maxAge: number; fullSpeed: number; 
 
 `WAKE_KIND` sets how long the wake lasts (s), the speed at which it's fully formed (m/s), how
 strong the Kelvin arms and the stern foam are, and whether the bow throws spray (planing hulls).
+Traffic wakes are cheap ribbons; the driven vessel's wake is part of the sea surface instead
+(see "The wake and spray" in `docs/ADDING_A_VESSEL.md`).
 The compiler then points at the remaining tables.
 
 ### 2. The model
@@ -188,7 +196,9 @@ builds a little per frame.
 ### 4. Optional
 
 - **Lights.** `LAMPS` in `src/world/traffic/ships.ts` places navigation, masthead and deck lights
-  per kind for dusk and dawn. A kind without an entry simply has no lights.
+  per kind for dusk and dawn. A kind without an entry simply has no lights. (The marina's
+  quay lamps are here too. The harbour-entrance beacons' flashing lights belong to the port system,
+  with the other aids to navigation.)
 - **View distance.** `isShip()` in `ships.ts` gives the ferry, container ship and tanker the long
   `shipViewDistance` (42 km); small craft vanish beyond `viewDistance` (7 km).
 - **Moored in the marina.** Berths are filled by `createMarina()` in `sea.ts`, with the kinds
@@ -223,6 +233,39 @@ node scripts/shot.mjs "http://127.0.0.1:8092/?veil=0&pause=1&tt=0&spawn=9500,800
 
 Check it at every time of day (`&tod=0` to `3`): the paint under the HDR lighting, the lights at
 dawn, the wake from above.
+
+## The port and the aids to navigation
+
+Besides the marina, Port Chateau has a **cruise terminal** east of it and a **naval pier** west of
+it, where the player's big ships berth and lie when nobody drives them (see
+[ADDING_A_VESSEL.md](ADDING_A_VESSEL.md), Step 4). The coast is lit and buoyed like a European
+harbour (IALA region A):
+
+| What | Where | Light |
+| --- | --- | --- |
+| Lighthouse | Gull Island's summit (−1,920, 11,577), the light 175 m up; a rotating optic with two beam panels 54° apart, one turn in 10 s | Fl(2) W 10s, seen from 20+ km; soft beams sweep round at night |
+| Harbour lights | The marina's breakwater heads (the drawn beacons): red on the west head, green on the east | Fl R 4s / Fl G 4s |
+| Lateral buoys | Two pairs up the marina approach, three up the cruise terminal's, two up the naval pier's; **red cans to port and green cones to starboard entering from seaward** | Fl R 3s / Fl G 3s (marina), Fl(2) R/G 6s (cruise), Fl(3) R/G 10s (naval) |
+| Safe-water mark | The fairway, seaward of the marina channel: red-and-white, a red ball on top | LFl W 10s |
+| Cardinal marks | Round the islands' shoals, in 6 m of water on their own side of the hazard: N, E, S, W of Gull Island; N, E, S of Seal Rock; N, E of Long Key | Q W, Q(3) W 10s, Q(6)+LFl W 15s, Q(9) W 15s |
+
+| Layer | File | What it does |
+| --- | --- | --- |
+| Piers (pure) | `src/world/harbour/layout.ts` | `portWorks()`: both piers in their own frames, placed from the heightfield so each berth is deep enough for the largest ship it takes |
+| Obstacles (pure) | `src/world/harbour/obstacles.ts` | The piers as obstacle columns (the marina's primitives), and their landable decks |
+| Aids to navigation (pure) | `src/world/harbour/navaids.ts` | `navaids()`: the lighthouse, the harbour lights, the channels and every buoy; `parseLight('Fl(2) W 10s')`, `lightOn()`, `lighthouseIntensity()`; the buoys' and lighthouse's obstacles |
+| Models | `src/world/harbour/models.ts`, `navaidModels.ts` | The terminal, the naval pier, the lighthouse, one pillar buoy per IALA kind (two LODs) |
+| Renderer | `src/world/harbour/render.ts` | Everything in **3** draw calls: one BatchedMesh (piers, lighthouse, every buoy riding the drawn waves near the camera), one point list (every light, flashing its character), one additive mesh (the beams) |
+| Systems | `src/game/systems/port.ts`, `berthedShips.ts` | Build and draw the port, register the obstacles and decks, and show the berthed ships |
+
+To **add a buoy**, add a channel to `channels` in `buildNavaids()` (a `from` point seaward, a `to`
+point inside, a half-width, and where its pairs go as fractions from `from`), or push a single
+`Buoy` for a cardinal or safe-water mark. The port and starboard sides come from the inbound
+direction. `tests/world/harbour/navaids.test.ts` checks the sides, the depth, the clearance from the
+routes, the berths, the piers and the other areas (the jet-ski course, the wind farm, the oil rig
+and the gunnery range), and the light characters. Look at it in `preview/port.html`
+(`?view=cruise|naval|lighthouse|buoys|port&tod=3&night=1&t=3`) or in the sim with the QA camera
+above.
 
 ## Other traffic
 

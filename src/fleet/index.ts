@@ -5,13 +5,16 @@
  * is the same with a `watercraft` section, `kind: 'vessel'` and a model under `src/vessels/`
  * (docs/ADDING_A_VESSEL.md).
  */
-import { CONFIG, F16_AIRCRAFT, F16_WEAPONS, A10_AIRCRAFT, A10_WEAPONS, B747_AIRCRAFT, B206_AIRCRAFT, V50_AIRCRAFT, type Config } from '../config';
+import { CONFIG, F16_AIRCRAFT, F16_WEAPONS, A10_AIRCRAFT, A10_WEAPONS, B747_AIRCRAFT, B206_AIRCRAFT, V50_AIRCRAFT, IOWA_AIRCRAFT, IOWA_WEAPONS, CRUISE_AIRCRAFT, SEADOO_AIRCRAFT, type Config } from '../config';
 import { createAircraft } from '../aircraft';
 import { createF16Model } from '../aircraft/f16';
 import { createA10Model } from '../aircraft/a10';
 import { createB747Model } from '../aircraft/b747';
 import { createB206Model } from '../aircraft/b206';
 import { createV50Model } from '../vessels/v50';
+import { createIowaModel } from '../vessels/iowa';
+import { createCruiseModel } from '../vessels/cruise';
+import { createSeadooModel } from '../vessels/seadoo';
 import type { AircraftDef } from './types';
 
 export type { AircraftDef, AircraftModelHandle, BreakupPart, HudStyle, EngineSound, VehicleKind } from './types';
@@ -139,8 +142,86 @@ const V50: AircraftDef = {
   createModel: () => createV50Model(),
 };
 
+const iowaConfig: Config = {
+  ...CONFIG,
+  aircraft: IOWA_AIRCRAFT,
+  weapons: IOWA_WEAPONS,
+  // The engine-order telegraph: ~4 s from stop to full ahead on the keyboard (the turbines take far longer).
+  controls: { ...CONFIG.controls, throttleRate: 0.25 },
+  camera: {
+    ...CONFIG.camera,
+    chase: { ...CONFIG.camera.chase, distance: 380, height: 80, lookAhead: 60 },
+    orbit: { ...CONFIG.camera.orbit, distance: 420, minDistance: 60, maxDistance: 3000 },
+    external: { ...CONFIG.camera.external, leadDistance: 900, sideOffset: 150, heightOffset: 30, maxDistance: 2000, framingSize: 320, minLead: 300, spotterDistance: 320, spotterEyeHeight: 8 },
+  },
+};
+
+const IOWA: AircraftDef = {
+  kind: 'vessel',
+  id: 'iowa',
+  name: 'USS Iowa (BB-61)',
+  shortName: 'Iowa',
+  description: 'The 1943 fast battleship as modernised in 1984 — 270 m, 58,000 t, 212,000 shp on four shafts, nine 16-inch guns; 33 kt, and kilometres to stop.',
+  config: iowaConfig,
+  hud: 'marine',
+  sound: 'marineDiesel',
+  createModel: () => createIowaModel(),
+};
+
+const cruiseConfig: Config = {
+  ...CONFIG,
+  aircraft: CRUISE_AIRCRAFT,
+  // The engine-order telegraph: ~8 s from stop to full ahead on the keyboard.
+  controls: { ...CONFIG.controls, throttleRate: 0.12 },
+  camera: {
+    ...CONFIG.camera,
+    chase: { ...CONFIG.camera.chase, distance: 290, height: 62, lookAhead: 60 },
+    orbit: { ...CONFIG.camera.orbit, distance: 380, minDistance: 150, maxDistance: 2000 },
+    external: { ...CONFIG.camera.external, framingSize: 320, sideOffset: 160, heightOffset: 30, maxDistance: 2400, spotterDistance: 260 },
+  },
+};
+
+const CRUISE: AircraftDef = {
+  kind: 'vessel',
+  id: 'cruise',
+  name: 'MS Tater Star',
+  shortName: 'Cruise ship',
+  description: '260 m Tater Line cruise ship (70,000 GT), twin screws and six tunnel thrusters — ← / → turn her on the spot; ~21 kt service, ~22 kt flat out.',
+  config: cruiseConfig,
+  hud: 'marine',
+  sound: 'marineDiesel',
+  createModel: () => createCruiseModel(),
+};
+
+
+// ── Sea-Doo RXP-X 325 (personal watercraft) ──
+const seadooConfig: Config = {
+  ...CONFIG,
+  aircraft: SEADOO_AIRCRAFT,
+  // A finger throttle: ~1 s from idle to wide open on the keyboard.
+  controls: { ...CONFIG.controls, throttleRate: 1 },
+  camera: {
+    ...CONFIG.camera,
+    chase: { ...CONFIG.camera.chase, distance: 8, height: 2.4 },
+    orbit: { ...CONFIG.camera.orbit, distance: 9, minDistance: 3 },
+  },
+};
+
+const SEADOO: AircraftDef = {
+  kind: 'vessel',
+  id: 'seadoo',
+  name: 'Sea-Doo RXP-X 325',
+  shortName: 'Sea-Doo',
+  description: 'Supercharged 325 hp jet ski — 0–60 mph in ~3.4 s, governed at ~58 kt; lean into the carves, Space is the iBR brake.',
+  config: seadooConfig,
+  hud: 'marine',
+  sound: 'pwc',
+  createModel: () => createSeadooModel(),
+};
+// ── end Sea-Doo ──
+
 /** In menu order (the picker lists vessels after the aircraft). */
-export const FLEET: readonly AircraftDef[] = [C172, F16, A10, B747, B206, V50];
+export const FLEET: readonly AircraftDef[] = [C172, F16, A10, B747, B206, V50, SEADOO, CRUISE, IOWA];
 
 export const DEFAULT_AIRCRAFT_ID = C172.id;
 

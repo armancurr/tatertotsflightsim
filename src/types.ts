@@ -126,6 +126,17 @@ export interface Environment {
   waterLevel(x: number, z: number): number | null;
   /** Top height (MSL) of the tallest obstacle (tree, building, tower) at x,z, or -Infinity. */
   obstacleTop?(x: number, z: number): number;
+  /**
+   * Offshore work: top (MSL) of the tallest SOFT obstacle at x,z (inflatable race buoys), or -Infinity.
+   * A hull bumps off it without damage; aircraft ignore it. Optional.
+   */
+  softObstacleTop?(x: number, z: number): number;
+  /**
+   * (Port work, src/world/harbour) Top (MSL) of a landable deck at x,z — a pier deck, a berthed
+   * ship's deck and helipad — or -Infinity. Aircraft stand on it as on the ground (src/physics/ground.ts);
+   * where it is the top obstacle, touching it is not a collision. Vessels ignore it (they hit the obstacle).
+   */
+  deckTop?(x: number, z: number): number;
   /** Wind velocity in world frame (m/s, the direction the air moves toward). Optional. */
   wind?(x: number, y: number, z: number, time: number): Vec3;
 }
@@ -411,6 +422,12 @@ export interface VesselReadings {
   planingPct: number;
   moored: boolean;
   aground: boolean;
+  /**
+   * Tunnel thrusters (cruise-ship work; absent on vessels without them): the bow and stern groups'
+   * mean thrust, −1 … +1 of full (+ = pushing that end to starboard). `rpm` / `loadPct` / `gear` /
+   * `steerDeg` above are the shaft / pod propulsors only.
+   */
+  thrusters?: { bow: number; stern: number } | null;
 }
 
 /** Helicopter instruments (dual tach, torquemeter, N1, collective, warnings). */
@@ -456,4 +473,46 @@ export interface SimSnapshot {
   state: SimStateLabel;
   /** Frames per second (smoothed over the last second). */
   fps: number;
+}
+
+// ─── Sea-Doo work: waterjets and riders (merged into PropulsorState / VesselState above) ──────────
+
+/** A waterjet's live state (PropulsorState.jet, 'jet' propulsors only): what the model, the wake and the sound read. */
+export interface JetPropulsorState {
+  /** Reverse bucket 0 (up, full ahead) … 1 (down, full astern); the iBR neutral sits in between. */
+  bucket: number;
+  /** Nozzle trim (VTS), deg (+ = the jet aimed down: stern up, bow down). The steering angle is PropulsorState.steerDeg. */
+  trimDeg: number;
+  /** Water flow through the pump, m³/s, and the jet's speed out of the nozzle, m/s (relative to the hull). */
+  flow: number;
+  jetSpeed: number;
+  /** 0 = the intake full of water … 1 = sucking air (a jump, a wave top): the pump ventilates. */
+  ventilation: number;
+  /** The nozzle exit is out of the water: the jet shoots into the air (the rooster tail). */
+  nozzleClear: boolean;
+}
+
+/** The rider of a personal watercraft (VesselState.rider). */
+export interface RiderState {
+  /** Lean −1 (to port) … +1 (to starboard), and fore / aft −1 (sitting back) … +1 (crouched over the bars). */
+  lean: number;
+  foreAft: number;
+  /** On the craft (false after a spill or a capsize, until they climb back on). */
+  aboard: boolean;
+  /** Why they are off: 'spill' (thrown off) or 'capsize'; null when aboard. */
+  off: 'spill' | 'capsize' | null;
+  /** Seconds since they came off (swimming back). */
+  offTime: number;
+}
+
+export interface PropulsorState {
+  /** 'jet' propulsors only (src/physics/hull.ts stepJet). */
+  jet?: JetPropulsorState;
+}
+
+export interface VesselState {
+  /** Personal watercraft only (config `watercraft.rider`). */
+  rider?: RiderState;
+  /** Righting after a capsize: 0 = not righting, else progress 0..1 (config `watercraft.righting`). */
+  righting?: number;
 }

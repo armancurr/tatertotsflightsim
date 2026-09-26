@@ -130,20 +130,46 @@ const HELICOPTER: { id: ControlGroupId; title: string; rows: RowSpec[] } = {
  * Driving a boat (`cfg.aircraft.watercraft` set): the same keys, what they do at the helm. With
  * Cameras and a Sim block of its own it replaces the aircraft groups.
  */
-const VESSEL: { id: ControlGroupId; title: string; rows: RowSpec[] } = {
-  id: 'vessel',
-  title: 'Helm',
-  rows: [
-    {
+function vesselGroup(cfg: Config): { id: ControlGroupId; title: string; rows: RowSpec[] } {
+  const wc = cfg.aircraft.watercraft!;
+  const jet = wc.propulsors[0]?.type === 'jet';
+  const thrusters = wc.propulsors.some((p) => p.type === 'thruster');
+  const naval = !!cfg.weapons?.naval;
+  const rows: RowSpec[] = [];
+  if (jet) {
+    rows.push(
+      { action: 'Throttle / iBR neutral · reverse', parts: ['throttleUp', '/', 'throttleDown'], note: () => 'The finger throttle; back past neutral the iBR bucket drops for reverse' },
+      { action: 'iBR brake (hold)', parts: ['brake'] },
+      { action: 'Steer + lean — port / starboard', parts: ['rollLeft', '/', 'rollRight', 'yawLeft', '/', 'yawRight'], note: () => 'The arrows lean the rider fully into the carve; A / D steer with half the lean' },
+      { action: 'Lean fore / aft', parts: ['pitchDown', '/', 'pitchUp'] },
+      { action: 'Nozzle trim (VTS) — down / up', parts: ['trimNoseDown', '/', 'trimNoseUp'] },
+    );
+  } else {
+    rows.push({
       action: 'Lever — ahead / astern',
       parts: ['throttleUp', '/', 'throttleDown'],
-      note: () => 'One lever for both engines: from ahead back through neutral (N) into astern (R) — pause in neutral',
-    },
-    { action: 'Steer — port / starboard', parts: ['yawLeft', '/', 'yawRight', 'rollLeft', '/', 'rollRight'], note: () => 'Turns the drives; they turn less at speed' },
-    { action: 'Trim tabs — down / up', parts: ['trimNoseDown', '/', 'trimNoseUp'], note: () => 'Tabs down lower the bow and help her onto the plane' },
-    { action: 'Engines start / stop', parts: ['engine'] },
-  ],
-};
+      note: () => 'One lever for every engine: from ahead back through neutral (N) into astern (R) — pause in neutral',
+    });
+    if (thrusters) {
+      rows.push(
+        { action: 'Steer — port / starboard', parts: ['yawLeft', '/', 'yawRight'], note: () => 'The rudders: they need way on (and the propellers\' wash)' },
+        { action: 'Bow & stern thrusters', parts: ['rollLeft', '/', 'rollRight'], note: () => 'Turn her on the spot in harbour; useless above ~5 kt' },
+      );
+    } else {
+      rows.push({ action: 'Steer — port / starboard', parts: ['yawLeft', '/', 'yawRight', 'rollLeft', '/', 'rollRight'], note: () => 'Turns the drives / rudders; drives turn less at speed' });
+    }
+    if (wc.trimTabs) rows.push({ action: 'Trim tabs — down / up', parts: ['trimNoseDown', '/', 'trimNoseUp'], note: () => 'Tabs down lower the bow and help her onto the plane' });
+  }
+  if (naval) {
+    rows.push(
+      { action: 'Fire a salvo', parts: ['fireGun'], note: () => 'Aim with the mouse pointer on the sea; guns on target fire, rippled' },
+      { action: 'Lock / next target', parts: ['lockTarget'] },
+      { action: 'Rangefinder (×5)', parts: ['fireMissile'] },
+    );
+  }
+  rows.push({ action: 'Engines start / stop', parts: ['engine'] });
+  return { id: 'vessel', title: 'Helm', rows };
+}
 
 const VESSEL_SIM: { id: ControlGroupId; title: string; rows: RowSpec[] } = {
   id: 'sim',
@@ -173,7 +199,7 @@ export function controlGroups(cfg: Config = CONFIG): ControlGroup[] {
   const listed = new Set<string>();
   const vessel = cfg.aircraft.watercraft != null;
   const cameras = LAYOUT.find((g) => g.id === 'cameras')!;
-  const layout = vessel ? [VESSEL, cameras, VESSEL_SIM] : cfg.aircraft.rotorcraft ? [HELICOPTER, ...LAYOUT] : LAYOUT;
+  const layout = vessel ? [vesselGroup(cfg), cameras, VESSEL_SIM] : cfg.aircraft.rotorcraft ? [HELICOPTER, ...LAYOUT] : LAYOUT;
   if (vessel) for (const id of AIRCRAFT_ONLY) listed.add(id);
   const groups: ControlGroup[] = layout.map(({ id, title, rows }) => ({
     id,
@@ -206,7 +232,13 @@ export function controlGroups(cfg: Config = CONFIG): ControlGroup[] {
 export function controlNotes(cfg: Config = CONFIG): string[] {
   const k = (a: KeyAction) => keyLabel((cfg.controls.keys[a] as readonly string[] | undefined)?.[0] ?? '?');
   const boat = `Princess V50 (motor yacht): she starts moored at the berth — ${k('engine')} starts both engines, then ${k('throttleUp')} eases the lever ahead to cast off. ${k('throttleDown')} brings it back through neutral into astern; ${k('yawLeft')}/${k('yawRight')} steer the drives; ${k('trimNoseDown')} lowers the trim tabs once planing. Watch the depth under the keel.`;
-  if (cfg.aircraft.watercraft) return [boat, `${k('reset')} takes her back to the berth, Shift+${k('reset')} restarts underway on the open sea. Esc opens the menu at any time.`];
+  const ships = `Ships: the MS Tater Star starts at the cruise terminal — ${k('rollLeft')}/${k('rollRight')} work her bow and stern thrusters to swing her off the pier before you go ahead. The USS Iowa starts at the naval pier: aim at the sea with the mouse, ${k('fireGun')} fires the 16-inch guns, ${k('lockTarget')} locks a target at the gunnery range. Both take kilometres to stop.`;
+  const ski = `Sea-Doo (jet ski): no throttle, no steering — ${k('throttleUp')} and lean into the carve with ${k('rollLeft')}/${k('rollRight')}; ${k('brake')} is the iBR brake. The race course (buoys and an arch) is off the beach east of the marina.`;
+  if (cfg.aircraft.watercraft) {
+    const wc = cfg.aircraft.watercraft;
+    const note = wc.propulsors[0]?.type === 'jet' ? ski : wc.propulsors.some((p) => p.type === 'thruster') || cfg.weapons?.naval ? ships : boat;
+    return [note, `${k('reset')} takes her back to the berth, Shift+${k('reset')} restarts underway on the open sea. Esc opens the menu at any time.`];
+  }
   return [
     `F-16: push the throttle past ~${cfg.menu.afterburnerFromPct} % for afterburner; ${keyLabel(cfg.controls.keys.speedBrake[0])} opens and closes the speed brake.`,
     `Cessna: full throttle, rotate at about ${CONFIG.aircraft.limits.vrKt} kt, gear up once climbing. Esc opens this menu at any time.`,
@@ -215,6 +247,8 @@ export function controlNotes(cfg: Config = CONFIG): string[] {
     `747: flaps 10 for take-off, rotate at about ${B747_AIRCRAFT.limits.vrKt} kt and ease it off; ${keyLabel(cfg.controls.keys.speedBrake[0])} works the spoilers. Heavy and slow to answer — small inputs, early.`,
     `JetRanger (helicopter): ${keyLabel(cfg.controls.keys.throttleUp[0])}/${keyLabel(cfg.controls.keys.throttleDown[0])} is the collective, the arrows the cyclic, ${keyLabel(cfg.controls.keys.yawLeft[0])}/${keyLabel(cfg.controls.keys.yawRight[0])} the pedals; ${keyLabel(cfg.controls.keys.stabilityAssist?.[0] ?? 'KeyK')} turns the stability assist off for the raw machine. Keep rotor RPM in the green and torque under 100 %.`,
     boat,
+    ships,
+    ski,
   ];
 }
 

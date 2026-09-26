@@ -157,6 +157,7 @@ export function vesselOf(r: InstrumentReadings): VesselReadings {
       gear: v.gear === 'ahead' || v.gear === 'astern' ? v.gear : 'neutral', steerDeg: fin(v.steerDeg), tabsPct: fin(v.tabsPct), trimDeg: fin(v.trimDeg),
       heelDeg: fin(v.heelDeg), depthM: typeof v.depthM === 'number' && Number.isFinite(v.depthM) ? v.depthM : null, planingPct: fin(v.planingPct),
       moored: v.moored === true, aground: v.aground === true,
+      ...(v.thrusters ? { thrusters: { bow: clamp(fin(v.thrusters.bow), -1, 1), stern: clamp(fin(v.thrusters.stern), -1, 1) } } : {}),
     };
   }
   return {
@@ -343,7 +344,7 @@ export function drawMarineNav(c: Ctx, w: number, h: number, r: InstrumentReading
 }
 
 /** One tachometer: 270° dial, ×1000 labels, red arc from the rated rpm, needle, digits, label, load. */
-function drawTach(c: Ctx, cx: number, cy: number, R: number, rpm: number, load: number, label: string, rated: number, f: number, off: boolean): void {
+function drawTach(c: Ctx, cx: number, cy: number, R: number, rpm: number, load: number, label: string, rated: number, f: number, off: boolean, narrow = false): void {
   const { max, redline } = tachRange(rated);
   const lw = Math.max(1, R * 0.035);
   // Track and red arc.
@@ -395,6 +396,10 @@ function drawTach(c: Ctx, cx: number, cy: number, R: number, rpm: number, load: 
   const by = cy + R + f * 0.75;
   rrect(c, bx, by, bw, bh, bh / 2, C.track);
   if (ld > 0.5) rrect(c, bx, by, Math.max(bh, (bw * Math.min(ld, 100)) / 100), bh, bh / 2, ld > 100 ? C.red : ld > 85 ? C.amber : C.accent);
+  if (narrow) {
+    text(c, `LOAD ${Math.round(ld)}%`, cx, by + bh + f * 0.55, f * 0.6, C.dim, 'center', 700);
+    return;
+  }
   text(c, 'LOAD', bx - f * 0.3, by + bh / 2, f * 0.6, C.dim, 'right', 700);
   text(c, `${Math.round(ld)}%`, bx + bw + f * 0.3, by + bh / 2, f * 0.7, C.text, 'left', 700);
 }
@@ -466,7 +471,7 @@ function drawDrive(c: Ctx, cx: number, cy: number, r: number, steerDeg: number, 
  * The engines block (w × h canvas): PORT / STBD tachs with load, the lever, drive angle and trim
  * tabs. `ratedRpm` sets the red arc (the tach reads to the next 500 above rated + 14 %).
  */
-export function drawMarineEngines(c: Ctx, w: number, h: number, r: InstrumentReadings, ratedRpm = 3500, detent = 0.08): void {
+export function drawMarineEngines(c: Ctx, w: number, h: number, r: InstrumentReadings, ratedRpm = 3500, detent = 0.08, jet = false, hasTabs = true): void {
   const W = sz(w);
   const H = sz(h);
   if (W < 80 || H < 40) return;
@@ -486,27 +491,47 @@ export function drawMarineEngines(c: Ctx, w: number, h: number, r: InstrumentRea
   const R = Math.max(10, Math.min(cellW * 0.4, (H - 2 * pad - f * 1.6) * 0.47));
   const cy = pad + R * 1.05;
   const names = n === 2 ? ['PORT', 'STBD'] : n === 1 ? ['ENGINE'] : Array.from({ length: n }, (_, i) => `ENG ${i + 1}`);
-  for (let i = 0; i < n; i++) drawTach(c, pad + cellW * (i + 0.5), cy, R, v.rpm[i] ?? 0, v.loadPct[i] ?? 0, names[i], ratedRpm, f, off);
+  // (three or four engines: a narrow cell — the load readout goes under its bar, without the LOAD label)
+  for (let i = 0; i < n; i++) drawTach(c, pad + cellW * (i + 0.5), cy, R, v.rpm[i] ?? 0, v.loadPct[i] ?? 0, names[i], ratedRpm, f, off, n > 2);
 
   // Lever.
   const lx = pad + tachW + leverW * 0.62;
   line(c, pad + tachW + 1, pad, pad + tachW + 1, H - pad, C.faint, 1);
-  text(c, 'LEVER', pad + tachW + leverW / 2, pad + f * 0.35, f * 0.72, C.label, 'center', 700);
+  text(c, jet ? 'THROTTLE' : 'LEVER', pad + tachW + leverW / 2, pad + f * 0.35, f * 0.72, C.label, 'center', 700); // Sea-Doo: jet label
   const lTop = pad + f * 1.5;
   const lBot = H - pad - f * 1.5;
   drawLever(c, lx, lTop, lBot, v, f, clamp(fin(detent) * 100, 0, 50));
   const lp = Math.round(clamp(fin(v.leverPct), -100, 100));
   text(c, `${lp > 0 ? '+' : lp < 0 ? '−' : ''}${Math.abs(lp)}%`, pad + tachW + leverW / 2, H - pad - f * 0.45, f * 0.85, gearColor(v.gear), 'center', 700);
 
-  // Drive angle (top half) and trim tabs (bottom half).
+  // Drive angle (top half) and trim tabs — or, on a ship with tunnel thrusters, the thrusters (bottom half).
   const sx = W - pad - sideW;
   line(c, sx - 1, pad, sx - 1, H - pad, C.faint, 1);
   const scx = sx + sideW / 2;
-  text(c, 'DRIVES', sx + f * 0.5, pad + f * 0.35, f * 0.72, C.label, 'left', 700);
+  text(c, jet ? 'NOZZLE' : 'DRIVES', sx + f * 0.5, pad + f * 0.35, f * 0.72, C.label, 'left', 700); // Sea-Doo: jet label
   text(c, steerText(v.steerDeg), W - pad, pad + f * 0.35, f * 0.85, C.text, 'right', 700);
   const dr = Math.min(sideW * 0.42, H * 0.3);
   drawDrive(c, scx, pad + f * 1.2 + dr, dr, v.steerDeg, f);
   const tTop = pad + f * 1.9 + dr + f * 0.4;
+  if (v.thrusters) {
+    drawThrusters(c, sx + f * 0.5, tTop, W - pad - (sx + f * 0.5), H - pad - tTop, v.thrusters, f);
+    c.restore();
+    return;
+  }
+  // ── Sea-Doo: a waterjet has no trim tabs — show the iBR reverse bucket instead ──
+  if (jet) {
+    text(c, 'iBR', sx + f * 0.5, tTop, f * 0.72, C.label, 'left', 700);
+    text(c, ibrText(v.gear), W - pad, tTop, f * 0.85, gearColor(v.gear), 'right', 700);
+    drawBucket(c, scx, tTop + f * 0.8, H - pad, sideW, v.gear, f);
+    c.restore();
+    return;
+  }
+  // ── end Sea-Doo ──
+  // no trim tabs (a displacement ship): the drive dial alone
+  if (!hasTabs) {
+    c.restore();
+    return;
+  }
   text(c, 'TABS', sx + f * 0.5, tTop, f * 0.72, C.label, 'left', 700);
   const tabs = clamp(fin(v.tabsPct), 0, 100);
   text(c, `${Math.round(tabs)}%`, W - pad, tTop, f * 0.85, C.text, 'right', 700);
@@ -525,6 +550,55 @@ export function drawMarineEngines(c: Ctx, w: number, h: number, r: InstrumentRea
   }
   c.restore();
 }
+
+/**
+ * Tunnel thrusters (cruise-ship work): a BOW and a STERN bar filling left (to port) or right (to
+ * starboard) from the centre with the group's thrust, −1 … +1.
+ */
+function drawThrusters(c: Ctx, x: number, y: number, w: number, h: number, t: { bow: number; stern: number }, f: number): void {
+  text(c, 'THRUSTERS', x, y, f * 0.72, C.label, 'left', 700);
+  const bh = Math.max(3, Math.min(f * 0.5, (h - f * 1.2) / 4));
+  const bx = x + f * 2.3;
+  const bw = Math.max(10, w - f * 2.3);
+  const rows: [string, number][] = [['BOW', t.bow], ['STN', t.stern]];
+  rows.forEach(([label, val], k) => {
+    const cy = y + f * 1.1 + k * (bh + f * 0.9) + bh / 2;
+    text(c, label, x, cy, f * 0.6, C.dim, 'left', 700);
+    rrect(c, bx, cy - bh / 2, bw, bh, bh / 2, C.track);
+    const v = clamp(fin(val), -1, 1);
+    const mid = bx + bw / 2;
+    if (Math.abs(v) > 0.01) rrect(c, v > 0 ? mid : mid + (bw / 2) * v, cy - bh / 2, Math.max(bh * 0.6, (bw / 2) * Math.abs(v)), bh, bh / 2, v > 0 ? C.ahead : C.red);
+    line(c, mid, cy - bh * 0.9, mid, cy + bh * 0.9, C.text, Math.max(1, f * 0.1));
+  });
+}
+
+// ── Sea-Doo: the iBR bucket readout for waterjets ──
+
+/** The iBR bucket as the helm shows it: up (driving ahead), neutral, down (reverse / braking). */
+export function ibrText(g: MarineGear): string {
+  return g === 'ahead' ? 'UP' : g === 'astern' ? 'DOWN' : 'NEUTRAL';
+}
+
+/** A side view of the nozzle with the bucket up, half down (neutral) or down over the exit. */
+function drawBucket(c: Ctx, cx: number, top: number, bottom: number, w: number, g: MarineGear, f: number): void {
+  const hgt = bottom - top;
+  if (hgt < 6) return;
+  const lw = Math.max(1, f * 0.14);
+  const y = top + hgt * 0.45;
+  const len = Math.min(w * 0.55, hgt * 1.6);
+  const x0 = cx - len / 2;
+  // the nozzle (pointing aft, to the right) and the jet
+  rrect(c, x0, y - hgt * 0.12, len * 0.6, hgt * 0.24, hgt * 0.08, 'rgba(238,244,251,0.85)');
+  const down = g === 'astern' ? 1 : g === 'neutral' ? 0.55 : 0;
+  // the bucket: a hood pivoting over the exit
+  const px = x0 + len * 0.62;
+  const py = y - hgt * 0.3;
+  const a = (-70 + 95 * down) * DEG;
+  line(c, px, py, px + Math.cos(a) * len * 0.35, py + Math.sin(a) * len * 0.35, gearColor(g), lw * 2.4);
+  if (down < 0.9) line(c, x0 + len * 0.62, y, x0 + len, y, C.accent, lw * 1.6);
+  else line(c, x0 + len * 0.6, y + hgt * 0.1, x0 + len * 0.3, y + hgt * 0.4, C.astern, lw * 1.6);
+}
+// ── end Sea-Doo ──
 
 /** The compact one-row strip for the cockpit view: speed · rpm × n · gear + lever · depth. */
 export function drawMarineCompact(c: Ctx, w: number, h: number, r: InstrumentReadings, ratedRpm = 3500, blink = false): void {
@@ -612,7 +686,7 @@ const FALLBACK: VesselReadings = {
   speedKt: 0, sogKt: 0, rpm: [], loadPct: [], leverPct: 0, gear: 'neutral', steerDeg: 0, tabsPct: 0, trimDeg: 0, heelDeg: 0, depthM: null, planingPct: 0, moored: false, aground: false,
 };
 const NAV_KEYS = 12;
-const ENG_KEYS = 16;
+const ENG_KEYS = 18;
 /** Shallow-water alarm flash rate, Hz. */
 const ALARM_HZ = 2;
 
@@ -620,6 +694,8 @@ export function createMarineHudView(doc: Document, parent: HTMLElement, cfg: Con
   const wc = cfg.aircraft.watercraft;
   const rated = fin(wc?.engine.maxRpm ?? cfg.aircraft.engine.maxRpm, 3500);
   const detent = fin(wc?.neutralDetent, 0.08);
+  const jet = wc?.propulsors[0]?.type === 'jet'; // Sea-Doo: waterjet helm labels
+  const hasTabs = wc ? wc.trimTabs != null : true;
   const slot = (name: string, cls: string, n: number): MSlot => {
     const wrap = doc.createElement('div');
     wrap.className = `fsh-glass ${cls}`;
@@ -728,11 +804,13 @@ export function createMarineHudView(doc: Document, parent: HTMLElement, cfg: Con
         k[13] = compact ? 1 : 0;
         k[14] = compact ? Math.round(fin(v.speedKt) * 10) : 0;
         k[15] = compact ? depthKey * 4 + (shallow ? 1 : 0) + (blink ? 2 : 0) : 0;
+        k[16] = v.thrusters ? 1000 + Math.round(fin(v.thrusters.bow) * 50) : 0;
+        k[17] = v.thrusters ? Math.round(fin(v.thrusters.stern) * 50) : 0;
         if (changed(eng)) {
           const c = begin(eng);
           if (c) {
             if (compact) drawMarineCompact(c, eng.w, eng.h, r, rated, blink);
-            else drawMarineEngines(c, eng.w, eng.h, r, rated, detent);
+            else drawMarineEngines(c, eng.w, eng.h, r, rated, detent, jet, hasTabs);
           }
         }
       }

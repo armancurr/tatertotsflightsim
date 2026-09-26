@@ -3,6 +3,7 @@
  * (tests, animation mapping) can import it.
  */
 import type { CameraMode, InstrumentReadings, RotorState, VesselState } from '../types';
+import type { TurretStatus } from '../combat/types';
 
 export interface AircraftLights {
   nav: boolean;
@@ -65,6 +66,8 @@ export interface AircraftVisualState {
    * Absent/null for aircraft.
    */
   vessel?: VesselState | null;
+  /** Ships with turrets: train, elevation, recoil and flash per turret (WeaponsStatus.turrets). */
+  turrets?: readonly TurretStatus[] | null;
 }
 
 /** Draws the whole instrument panel face into a canvas (the panel texture). */

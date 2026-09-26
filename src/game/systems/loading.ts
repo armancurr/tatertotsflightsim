@@ -12,17 +12,36 @@ import { createLoadingVeil, type LoadingVeil } from '../../ui/veil';
 import { loadAircraftChoice, safeLocalStorage } from '../../ui/picker';
 import { FLEET, getAircraftDef } from '../../fleet';
 import { departureRunwayName } from '../../world/runway';
+import { berthFor, type BerthId } from '../../world/port';
+import type { AircraftDef } from '../../fleet/types';
 import type { SystemModule } from './types';
 
 /** The aircraft the app is about to build: ?aircraft=, else the remembered choice, else the default. */
-function aircraftName(): string {
+function chosenDef(): AircraftDef | null {
   try {
     const q = new URLSearchParams(location.search).get('aircraft');
     const saved = loadAircraftChoice(safeLocalStorage(), CONFIG.menu.storageKey);
     const id = q ?? (saved && FLEET.some((d) => d.id === saved) ? saved : null);
-    return getAircraftDef(id).name;
+    return getAircraftDef(id);
   } catch {
-    return CONFIG.aircraft.name;
+    return null;
+  }
+}
+
+const BERTH_NAMES: Record<BerthId, string> = { visitor: "Visitors' pontoon", cruise: 'Cruise terminal', naval: 'Naval pier' };
+
+/** A vessel starts at its berth (or on the open sea), not on the runway. */
+function vesselPlace(def: AircraftDef | null): string | undefined {
+  if (!def || def.kind !== 'vessel') return undefined;
+  try {
+    const spawn = new URLSearchParams(location.search).get('spawn');
+    if (spawn === 'sea') return 'Off Port Chateau';
+    if (spawn === 'gunnery') return 'Gunnery range';
+    if (spawn) return 'At sea';
+    // (names only: no layout work before the veil has painted)
+    return `Port Chateau · ${BERTH_NAMES[berthFor(def)]}`;
+  } catch {
+    return 'Port Chateau';
   }
 }
 
@@ -49,7 +68,8 @@ function wanted(): boolean {
 
 let veil: LoadingVeil | null = null;
 if (wanted()) {
-  veil = createLoadingVeil(document, CONFIG, { aircraftName: aircraftName(), runway: runwayName() });
+  const def = chosenDef();
+  veil = createLoadingVeil(document, CONFIG, { aircraftName: def?.name ?? CONFIG.aircraft.name, runway: runwayName(), place: vesselPlace(def) });
   // One painted frame before the app's synchronous start-up work (capped, in case rAF is paused in a background tab).
   await Promise.race([
     new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 0))),

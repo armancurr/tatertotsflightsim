@@ -102,7 +102,7 @@ function skidContacts(inp: GroundInput, env: Environment, cfg: Config, ditchOk: 
       }
       continue;
     }
-    const n = env.groundNormal ? env.groundNormal(px, pz) : UP;
+    const n = normalAt(env, su, px, pz);
     const d = (su.ground - py) * n.y;
     if (d <= 0) continue;
     const vx = vel.x + (w.y * r.z - w.z * r.y);
@@ -175,13 +175,23 @@ function noContact(): GroundOutput {
   };
 }
 
-/** Surface under a point: the higher of terrain and water. */
-function surfaceY(env: Environment, x: number, z: number): { ground: number; water: number | null; top: number; wet: boolean } {
-  const ground = env.groundHeight(x, z);
+/** A deck counts as the top obstacle within this (m); a contact may sink this far into it (strut / skid travel) before it is a collision. */
+const DECK_TOLERANCE_M = 0.05;
+const DECK_SINK_M = 0.6;
+
+/** Surface under a point: the higher of terrain (or a landable deck, `Environment.deckTop`) and water. */
+function surfaceY(env: Environment, x: number, z: number): { ground: number; water: number | null; top: number; wet: boolean; deck: boolean } {
+  const terrain = env.groundHeight(x, z);
+  const d = env.deckTop ? env.deckTop(x, z) : -Infinity;
+  const deck = d > terrain;
+  const ground = deck ? d : terrain;
   const water = env.waterLevel(x, z);
   const wet = water !== null && water > ground;
-  return { ground, water, top: wet ? (water as number) : ground, wet };
+  return { ground, water, top: wet ? (water as number) : ground, wet, deck };
 }
+
+/** The surface normal under a contact: straight up on a deck, else the terrain's. */
+const normalAt = (env: Environment, su: { deck: boolean }, x: number, z: number): Vec3 => (!su.deck && env.groundNormal ? env.groundNormal(x, z) : UP);
 
 /**
  * Contact forces and collisions for the current pose. Wheels only exist while
@@ -206,7 +216,11 @@ export function groundContacts(inp: GroundInput, env: Environment, cfg: Config =
       const r = bodyToWorld(q, b);
       const px = pos.x + r.x;
       const pz = pos.z + r.z;
-      if (pos.y + r.y < env.obstacleTop(px, pz)) {
+      const top = env.obstacleTop(px, pz);
+      if (pos.y + r.y < top) {
+        // standing on a landable deck (a pier, a ship's helipad) that is the top of what is there is not a collision
+        const deck = env.deckTop ? env.deckTop(px, pz) : -Infinity;
+        if (deck >= top - DECK_TOLERANCE_M && pos.y + r.y > deck - DECK_SINK_M) continue;
         out.crashReason = 'Hit an obstacle';
         return out;
       }
@@ -254,7 +268,7 @@ export function groundContacts(inp: GroundInput, env: Environment, cfg: Config =
         }
         continue;
       }
-      const n = env.groundNormal ? env.groundNormal(px, pz) : UP;
+      const n = normalAt(env, su, px, pz);
       const d = (su.ground - py) * n.y; // penetration along the surface normal
       if (d <= 0) continue;
       out.wheelContact[i] = true;
@@ -316,7 +330,7 @@ export function groundContacts(inp: GroundInput, env: Environment, cfg: Config =
       out.crashReason = 'Ditched in water';
       return out;
     }
-    const n = env.groundNormal ? env.groundNormal(px, pz) : UP;
+    const n = normalAt(env, su, px, pz);
     const vx = vel.x + (w.y * r.z - w.z * r.y);
     const vy = vel.y + (w.z * r.x - w.x * r.z);
     const vz = vel.z + (w.x * r.y - w.y * r.x);

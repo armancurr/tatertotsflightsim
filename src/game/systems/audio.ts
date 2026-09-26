@@ -8,6 +8,7 @@
  * QA hooks on window: `runAudioSelfTest()` and `simAudio` {levels, meter, override, resume, selfTest}.
  */
 import { createAudio, createAudioInputTracker, runAudioSelfTest, type AudioInputs } from '../../audio';
+import { shareAudio } from '../../audio/naval';
 import { A10_WEAPONS } from '../../config';
 import { combatWorld } from '../../combat/world';
 import { secondaryPlan, isAirBurst } from '../../combat/fx/plan';
@@ -43,8 +44,10 @@ const mod: SystemModule = {
   create(ctx) {
     const w = globalThis as unknown as Win;
     const soundOf = (s: unknown): EngineSound =>
-      s === 'jet' || s === 'turbofan' || s === 'turboshaft' || s === 'marineDiesel' ? s : 'piston';
+      s === 'jet' || s === 'turbofan' || s === 'turboshaft' || s === 'marineDiesel' || s === 'pwc' ? s : 'piston'; // Sea-Doo (pwc) voice: 'pwc'
     const audio = createAudio({ engine: soundOf(ctx.actions?.currentAircraft?.().sound) });
+    // ── naval guns: the navalAudio system plays into this mix (src/audio/naval.ts) ──
+    if (ctx.scene) shareAudio(ctx.scene, audio);
     const track = createAudioInputTracker();
     // Reused per-frame tracker source (no allocation in update).
     const src = {} as Parameters<typeof track>[0];

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { HullTrack, hullSize, sprayRates, bowSprayOrigin } from '../../../src/world/traffic/hullTrack';
 import { wakeAges, writeWake, WAKE_VERTS_PER_SAMPLE, type WakeSample } from '../../../src/world/traffic/wake';
 import { CONFIG, V50_AIRCRAFT } from '../../../src/config';
-import { watercraftOf } from '../../../src/game/systems/playerWake';
+import { propulsorWash, watercraftOf } from '../../../src/game/systems/playerWake';
 import type { AircraftDef } from '../../../src/fleet/types';
 
 const newSample = (): WakeSample => ({ x: 0, z: 0, course: 0, speed: 0, travelled: 0, age: 0 });
@@ -96,5 +96,30 @@ describe('player wake: spray and who gets it', () => {
     expect(watercraftOf(def(V50_AIRCRAFT as typeof CONFIG.aircraft, 'vessel'))).toBe(V50_AIRCRAFT.watercraft);
     expect(watercraftOf(def(V50_AIRCRAFT as typeof CONFIG.aircraft))).toBe(V50_AIRCRAFT.watercraft);
     expect(watercraftOf(null)).toBeNull();
+  });
+
+  it('the propulsors\' wash: the mean load of the drives that push water aft (no tunnel thrusters), 0 in neutral', () => {
+    const wc = V50_AIRCRAFT.watercraft!;
+    const two = [{ load: 0.8, gear: 'ahead' }, { load: 0.6, gear: 'ahead' }];
+    expect(propulsorWash(wc, two)).toBeCloseTo(0.7, 6);
+    expect(propulsorWash(wc, [{ load: 0.8, gear: 'neutral' }, { load: 0.8, gear: 'neutral' }])).toBe(0);
+    expect(propulsorWash(wc, [{ load: 5, gear: 'astern' }, { load: Number.NaN, gear: 'ahead' }])).toBeCloseTo(0.65, 6);
+    const withThruster = { ...wc, propulsors: [...wc.propulsors, { ...wc.propulsors[0], type: 'thruster' as const }] };
+    expect(propulsorWash(withThruster, [...two, { load: 1, gear: 'ahead' }])).toBeCloseTo(0.7, 6);
+    expect(propulsorWash(wc, [])).toBeCloseTo(0.7, 6);
+  });
+
+  it('the track carries planing and wash, interpolated along the distance travelled', () => {
+    const tr = new HullTrack(100, 0.1);
+    tr.push(0, 0, 0, 90, 10, 0.2, 0.4);
+    tr.push(1, 10, 0, 90, 10, 0.6, 0.8);
+    const out = { ...newSample(), planing: 0, wash: 0 };
+    tr.sampleAtDistance(5, 1, out);
+    expect(out.planing).toBeCloseTo(0.4, 6);
+    expect(out.wash).toBeCloseTo(0.6, 6);
+    // a caller that doesn't know the wash: the default
+    tr.push(2, 20, 0, 90, 10);
+    tr.sampleAtDistance(20, 2, out);
+    expect(out.wash).toBeCloseTo(0.7, 6);
   });
 });

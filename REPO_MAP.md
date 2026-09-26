@@ -7,7 +7,7 @@ descriptions come from each file's own opening comment, so this map stays accura
 `npm run repo-map` after adding, moving or renaming files.
 
 Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.worktrees/`
-(temporary agent workspaces) and the QA image folders. 880 files, 221,631 lines.
+(temporary agent workspaces) and the QA image folders. 1029 files, 256,785 lines.
 
 ## Start here
 
@@ -56,11 +56,16 @@ Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.w
 | `src/render/` | The renderer and the atmosphere: sky, sun, shadows, haze (fog), clouds, lens flare, tone mapping. |
 | `src/ui/` | The instruments and the on-screen HUD: steam gauges, compass, warnings, messages and the help screen. |
 | `src/vessels/` |  |
+| `src/vessels/cruise/` |  |
+| `src/vessels/iowa/` |  |
+| `src/vessels/seadoo/` |  |
 | `src/vessels/v50/` |  |
 | `src/world/` | The world: its geography (layout), terrain height and ground cover, the runway, and the physics view of the world. |
 | `src/world/airport/` | The airport: pavement, FAA runway markings, lights and PAPI, buildings, and obstacles. |
 | `src/world/cars/` |  |
 | `src/world/grass/` | Grass tufts and wildflowers drawn close to the camera when flying low. |
+| `src/world/harbour/` |  |
+| `src/world/offshore/` |  |
 | `src/world/roads/` | The road network and the road surfaces drawn on the terrain. |
 | `src/world/terrain/` | Drawing the ground: level-of-detail terrain tiles built in background workers, and the terrain shader. |
 | `src/world/towns/` | Towns, the coastal city, villages and farms: where buildings go and how they are drawn. |
@@ -68,6 +73,7 @@ Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.w
 | `src/world/traffic/models/` | Procedural 3D models for traffic: boats, sails, ferry, container ship, tanker, marina, C172, PA-28, helicopter, airliner. |
 | `src/world/vegetation/` | Trees and forests: where each tree goes, the tree models, far-away tree images, and streaming them around the camera. |
 | `src/world/water/` | The sea, lakes and river: waves, ripples, water depth and shore foam, the river ribbon. |
+| `src/world/wildlife/` |  |
 | `tests/` | The automated tests (Vitest). Folders mirror `src/`; plus cross-cutting fuzz, functional-flight and browser end-to-end tests. |
 | `tests/aircraft/` | Tests for the 3D aircraft: gear kinematics, prop disc, wreck, geometry anchors. |
 | `tests/aircraft/a10/` |  |
@@ -95,18 +101,24 @@ Not listed: `node_modules/` (dependencies), `dist/` (build output), `.git/`, `.w
 | `tests/support/` | Shared test helpers: the scripted pilot, test worlds, the e2e browser/server harness. |
 | `tests/ui/` | Tests for the instruments, gauges, HUD layout, gear warning, messages and loading veil. |
 | `tests/vessels/` |  |
+| `tests/vessels/cruise/` |  |
+| `tests/vessels/iowa/` |  |
+| `tests/vessels/seadoo/` |  |
 | `tests/vessels/v50/` |  |
 | `tests/world/` | Tests for the world: noise, layout, heightfield, landcover, runway, environment, plus a whole-flight LOD test. |
 | `tests/world/airport/` | Tests for the airport plan, markings, lights/PAPI, obstacles and renderer. |
 | `tests/world/cars/` |  |
 | `tests/world/fixtures/` | Saved reference data for tests (the protected-ground snapshot). |
 | `tests/world/grass/` | Tests for grass placement and geometry. |
+| `tests/world/harbour/` |  |
+| `tests/world/offshore/` |  |
 | `tests/world/roads/` | Tests for the road plan, ribbons, markings and depth pull. |
 | `tests/world/terrain/` | Tests for terrain tiles, the quadtree, blending and detail textures. |
 | `tests/world/towns/` | Tests for building placement, archetypes, obstacles, LOD and the road network used by towns. |
 | `tests/world/traffic/` | Tests for traffic paths, sea routes, wakes, air circuits and models. |
 | `tests/world/vegetation/` | Tests for tree placement, species, obstacles, LOD, pooling and streaming. |
 | `tests/world/water/` | Tests for waves, bathymetry, river and the water system. |
+| `tests/world/wildlife/` |  |
 
 ## Files by folder
 
@@ -120,15 +132,15 @@ Project root: the page (`index.html`), build/test config, the licence and the pr
 | `.gitattributes` | 5 | Line-ending rules (LF in the repository) and binary file types. |
 | `.gitignore` | 18 | Files git ignores (dependencies, build output, agent worktrees, scratch screenshots). |
 | `.nvmrc` | 2 | The Node.js version for `nvm use`. |
-| `ARCHITECTURE.md` | 599 | How the simulator is built, explained in plain English. |
+| `ARCHITECTURE.md` | 637 | How the simulator is built, explained in plain English. |
 | `CODE_OF_CONDUCT.md` | 133 | Contributor Covenant 2.1. |
 | `CONTRIBUTING.md` | 145 | How to set up, the principles, code style, visual QA and what a good pull request looks like. |
 | `ELEVATOR_PITCH.md` | 59 | What this project is, in one page. |
 | `LICENSE` | 22 | MIT licence. |
 | `PLAN.md` | 132 | The build plan: architecture contracts, agent rules and the wave history. |
-| `README.md` | 399 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
-| `RECORD.md` | 300 | The build log: what was done, decisions, bugs found and their causes. |
-| `REPO_MAP.md` | 1463 | This file: every folder and file and what it is for. |
+| `README.md` | 427 | What it is, how to run it, the aircraft, what you can do, controls, URL options and troubleshooting. |
+| `RECORD.md` | 309 | The build log: what was done, decisions, bugs found and their causes. |
+| `REPO_MAP.md` | 1536 | This file: every folder and file and what it is for. |
 | `RESUME.md` | 167 | Hand-off notes: exactly where the work stopped and what to do next. |
 | `SECURITY.md` | 24 | How to report a security problem privately. |
 | `index.html` | 25 | The one web page. Holds the canvas container and the HUD layer and loads `src/main.ts`. |
@@ -177,10 +189,11 @@ Extra documentation (how the tests are organised) and shelved work waiting to be
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `ADDING_AN_AIRCRAFT.md` | 485 | Guide: add a flyable aircraft (config, flight model, weapons, 3D model, fleet entry, tests, tuning). |
-| `ADDING_A_VESSEL.md` | 165 | Documentation. |
-| `ADDING_BOATS.md` | 234 | Guide: add a boat route or a new kind of vessel (routes, models, wakes, tests). |
-| `ADDING_LAND_FEATURES.md` | 359 | Guide: how the world is built; add a landmark system, a town, a road, water or a runway. |
-| `ADDING_VEHICLES_AND_TARGETS.md` | 275 | Guide: add range targets, enemy aircraft and road vehicle types. |
+| `ADDING_A_VESSEL.md` | 287 | Documentation. |
+| `ADDING_BOATS.md` | 277 | Guide: add a boat route or a new kind of vessel (routes, models, wakes, tests). |
+| `ADDING_LAND_FEATURES.md` | 395 | Guide: how the world is built; add a landmark system, a town, a road, water or a runway. |
+| `ADDING_VEHICLES_AND_TARGETS.md` | 351 | Guide: add range targets, enemy aircraft and road vehicle types. |
+| `OFFSHORE.md` | 127 | Documentation. |
 | `TESTING.md` | 167 | The test layers, shared helpers, the test browser, CI and replaying fuzz failures. |
 
 ### `docs/screenshots/`
@@ -216,16 +229,22 @@ Developer preview pages — each one shows a single part of the sim (terrain, sk
 | `cars.html` | 21 | Developer preview page. |
 | `carsWorld.html` | 21 | Developer preview page. |
 | `crash.html` | 19 | Developer preview page. |
+| `cruise.html` | 20 | Developer preview page. |
 | `f16.html` | 20 | Developer preview page. |
 | `fx.html` | 19 | Developer preview page. |
 | `hud.html` | 21 | Developer preview page. |
+| `iowa.html` | 23 | Developer preview page. |
+| `offshore.html` | 20 | Developer preview page. |
+| `port.html` | 21 | Developer preview page. |
 | `roads.html` | 21 | Developer preview page. |
+| `seadoo.html` | 20 | Developer preview page. |
 | `ships.html` | 21 | Developer preview page. |
 | `terrain.html` | 21 | Developer preview page. |
 | `towns.html` | 21 | Developer preview page. |
 | `townsWorld.html` | 21 | Developer preview page. |
 | `trees.html` | 21 | Developer preview page. |
 | `v50.html` | 20 | Developer preview page. |
+| `wildlife.html` | 21 | Developer preview page. |
 
 ### `public/`
 
@@ -247,6 +266,7 @@ Helper scripts: headless screenshots, the test-browser picker, the keyboard-only
 | `shot.mjs` | 59 | Headless screenshot + console check, for development QA. |
 | `test-browser.d.mts` | 30 | Types for scripts/test-browser.mjs. |
 | `test-browser.mjs` | 112 | Which browser the automated tests (tests/support/e2e.ts) and scripts/shot.mjs launch. |
+| `wake-shots.mjs` | 186 | Wake QA harness (dev only): drives a vessel through `window.sim` in Chrome for Testing and photographs its wake from a fixed set of views, so before/after pairs are the same shots. |
 
 ### `src/`
 
@@ -255,9 +275,9 @@ All of the simulator’s source code (TypeScript).
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `boot.ts` | 118 | Boot sequence (main.ts calls `boot()` with the real browser; tests pass fakes): 1. |
-| `config.ts` | 4190 | Every tunable value in the simulator lives here. |
+| `config.ts` | 5059 | Every tunable value in the simulator lives here. |
 | `main.ts` | 25 | Entry point. |
-| `types.ts` | 458 | Shared contracts between the pure simulation (physics, controls, camera, instruments) and the renderer. |
+| `types.ts` | 519 | Shared contracts between the pure simulation (physics, controls, camera, instruments) and the renderer. |
 
 ### `src/aircraft/`
 
@@ -287,7 +307,7 @@ The 3D Cessna 172RG: fuselage, wings, tail, retractable gear, propeller, paint, 
 | `prop.ts` | 148 | Two-blade constant-speed propeller: twisted, tapered blades lofted from cambered sections (aluminium front, flat-black back, red/white/red tips), the spinner, and the translucent blur disc that takes over at speed. |
 | `shape.ts` | 429 | The C172RG airframe as numbers: fuselage profile curves, wing and tail planforms, gear kinematics. |
 | `tail.ts` | 214 | Empennage: horizontal stabiliser with the elevator (one surface on a straight hinge, cut out round the rudder, trim tab on the right half), the swept fin with its long dorsal fillet, and the rudder with the counterbal… |
-| `types.ts` | 130 | Contracts of the aircraft model (src/aircraft). |
+| `types.ts` | 133 | Contracts of the aircraft model (src/aircraft). |
 | `wells.ts` | 198 | Gear well liners: the recessed tubs behind the belly openings (the livery cuts the skin there with alpha; see `wellCutDistance`). |
 | `wing.ts` | 224 | High strut-braced wing: NACA 2412 sections, constant-chord inner panel, outer panel tapered on the leading edge (straight trailing edge), 1.7° dihedral, 3° washout, drooped fibreglass tips, single streamlined strut pe… |
 | `wreck.ts` | 154 | Wreck: how the airframe is bent after a crash. |
@@ -379,27 +399,31 @@ All sound, made live in the browser with the Web Audio API — engine, wind, sta
 | `airTargets.ts` | 276 | The enemy aircraft's sound: a small pool of procedural voices (no samples) that follow the nearest MiG-29s, Su-25s and Mi-24s (src/audio/airTargetsMapping.ts picks them and works out the level, Doppler, air absorption… |
 | `airTargetsMapping.ts` | 188 | Pure maths for the enemy aircraft's sound (src/audio/airTargets.ts): which aircraft are heard (the nearest few within range, keeping each voice on the same aircraft while it stays in the set), and for each one its lev… |
 | `analysis.ts` | 41 | PURE signal analysis used by the audio self-test (RMS, single-bin DFT, peak search). |
-| `audio.ts` | 681 | The aircraft's sound: a fully synthesised WebAudio graph (no sound files). |
+| `audio.ts` | 698 | The aircraft's sound: a fully synthesised WebAudio graph (no sound files). |
 | `builder.ts` | 188 | Small helpers for building WebAudio graphs: a node builder that remembers every node and source it made (so a sub-graph — an engine voice — can be torn down without leaks), and `Knob`, an AudioParam that is only re-ta… |
 | `combat.ts` | 430 | Combat sound (procedural WebAudio, no samples), under the master bus (mute, pause, compressor, limiter): the gun GAU-8/A "BRRRT" (65 rds/s → a 65 Hz buzz-saw of muzzle blasts, a heavy chest thump, the torn noise of ea… |
 | `combatMapping.ts` | 106 | PURE combat-sound mappings (total functions: NaN/±∞ in → finite, bounded out): - propagation: speed-of-sound delay, air absorption (a low-pass falling with distance), level; - the gun: firing rate (the fundamental of … |
 | `crashPlan.ts` | 88 | PURE crash-sound planning: the randomised schedule of secondary explosions after an impact, level laws for crash sounds heard from a distance, the burning fire's fade, and a rate limiter for the crash effects' window … |
 | `index.ts` | 5 | Public entry point of this folder (re-exports its API). |
-| `inputs.ts` | 286 | PURE adapter: AircraftState (+ controls, camera) → AudioInputs, with the edge detection the sound engine needs (touchdown once per record, gear/flap motors while the surfaces travel, Doppler closing speed from the cam… |
+| `inputs.ts` | 300 | PURE adapter: AircraftState (+ controls, camera) → AudioInputs, with the edge detection the sound engine needs (touchdown once per record, gear/flap motors while the surfaces travel, Doppler closing speed from the cam… |
 | `jet.ts` | 283 | The F-16C's voice: a GE F110-GE-129 afterburning turbofan (see jetMapping.ts for the acoustics). |
 | `jetMapping.ts` | 172 | PURE mappings for the F-16's GE F110-GE-129 afterburning turbofan. |
 | `mapping.ts` | 195 | PURE mappings from the flight situation to synthesiser parameters. |
 | `marineDiesel.ts` | 458 | The Princess V50's voice (aircraft sound 'marineDiesel'): twin Volvo Penta D6-435 diesels (6-cylinder in-line, 4-stroke, turbocharged) on IPS 600 pod drives, and the hull in the water (see marineMapping.ts for the aco… |
 | `marineMapping.ts` | 328 | PURE mappings for motor yachts (aircraft sound 'marineDiesel'; the Princess V50): twin Volvo Penta D6-435 diesels (6-cylinder in-line, 4-stroke, turbocharged, 700 … 3500 rpm) driving IPS 600 pod drives with twin count… |
+| `naval.ts` | 230 | The naval guns' sound (procedural WebAudio, no samples), into the shared master bus (mute, pause, glue compressor, limiter — `AudioSystem.masterInput`): report a 16-inch gun firing: near, a tearing crack, a chest-deep… |
 | `oneshots.ts` | 331 | One-shot sounds (touchdown chirp/thump, gear clunk, engine catch, afterburner light-off, the layered crash — boom, crunch, metal tearing, clang, debris clatter, scraping — explosions, debris impacts, fire crackle). |
 | `piston.ts` | 211 | The Cessna 172RG's voice: Lycoming O-360 (4 cylinders, 4-stroke) + 2-blade McCauley prop, plus the systems sounds of a light piston single (electric-hydraulic gear pump, flap motor, door-seal whistle). |
-| `selftest.ts` | 568 | Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext (faster than real time, no speakers needed) through the full output chain (glue compressor → limiter → soft clipper) and measu… |
+| `pwc.ts` | 467 | The Sea-Doo RXP-X 325's voice (aircraft sound 'pwc'): a Rotax 1630 ACE supercharged in-line triple driving the jet pump's impeller, and a small planing hull (see pwcMapping.ts for the acoustics). |
+| `pwcMapping.ts` | 499 | PURE mappings for the personal watercraft (aircraft sound 'pwc'; the Sea-Doo RXP-X 325): a Rotax 1630 ACE (1.6 l in-line three-cylinder 4-stroke, gear-driven supercharger, idle 1,700 rpm, limiter 8,000 rpm) driving th… |
+| `selftest.ts` | 666 | Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext (faster than real time, no speakers needed) through the full output chain (glue compressor → limiter → soft clipper) and measu… |
 | `turbofan.ts` | 164 | The A-10C's voice: two GE TF34-GE-100A high-bypass turbofans (see turbofanMapping.ts). |
 | `turbofanMapping.ts` | 60 | PURE mappings for the A-10's TF34-GE-100A high-bypass turbofans (aircraft sound 'turbofan'): the "Hog whistle" is the fan's blade-pass tone (28 blades × N1 shaft rate: ≈1.2 kHz at ground idle, ≈3.4 kHz at 100 % N1) ov… |
 | `turboshaft.ts` | 297 | The Bell 206B-3 JetRanger III's voice: Allison 250-C20J turboshaft, two-blade main and tail rotors, main transmission (see turboshaftMapping.ts for the acoustics). |
 | `turboshaftMapping.ts` | 370 | PURE mappings for the Bell 206B-3 JetRanger III (aircraft sound 'turboshaft'): an Allison 250-C20J turboshaft driving a two-blade teetering main rotor and a two-blade tail rotor through a gearbox. |
-| `types.ts` | 273 | Shared type definitions for this folder. |
+| `types.ts` | 294 | Shared type definitions for this folder. |
 | `waves.ts` | 362 | PURE waveform and noise generators for the synthesiser. |
+| `wildlife.ts` | 364 | Wildlife sounds (WebAudio synthesis, no samples): herring gulls calling near the flocks and the marina (a nasal "kyow" with a pitch rise and fall, sometimes the laughing "ha-ha-ha"), a burst of calls when perched bird… |
 
 ### `src/camera/`
 
@@ -423,11 +447,18 @@ The four camera views (cockpit, chase, fly-by, orbit), their smooth transitions 
 | `gunnery.ts` | 423 | PURE gun system core (no three.js), driven by src/game/systems/weapons.ts and by the headless tests: adjustControls — steps the barrels/ammo (gun.ts) before the physics; returns gunFiring (recoil) update — spawns this… |
 | `missile.ts` | 82 | Missiles, ARCADE model. |
 | `missileRender.ts` | 261 | Draws the missiles in flight: a small AGM-65 shape (body, glass seeker dome, long-chord wings, tail fins), a bright motor flame and a grey-white smoke trail that lingers, spreads and rises. |
+| `naval.ts` | 671 | PURE naval gunnery maths (no three.js): the turret geometry, the shell's exterior ballistics, a range table and the fire-control solution for a ship's main battery (the USS Iowa's 16-inch/50 guns, `IOWA_WEAPONS.naval`). |
+| `navalBattery.ts` | 353 | PURE state of a ship's main battery (no three.js): each turret trains and elevates at its real rates toward the deck angles the fire control asks for (inside its training arc — it never swings through the blind sector… |
+| `navalFireControl.ts` | 245 | PURE fire control of a ship's main battery (no three.js), driven by src/game/systems/navalGuns.ts and by the headless tests. |
+| `navalFx.ts` | 439 | PURE effects of the naval guns (no three.js): the particles and the sea-surface rings the renderer (src/combat/render/navalFxRender.ts) draws, plus the camera shake. |
+| `navalHub.ts` | 79 | What the naval-guns system shares with the naval HUD and sound systems, per scene (a WeakMap like the fx hub): the battery, the aim, each turret's solution, the shells in flight and the recent fall of shot. |
+| `navalRange.ts` | 336 | PURE naval gunnery range (no three.js): the layout at sea (`CONFIG.combat.gunnery`) and its runtime. |
+| `navalShells.ts` | 192 | PURE naval shells in flight (no three.js): a fixed pool of 16-inch shells flown with the naval ballistics (src/combat/naval.ts `stepShell`: gravity + drag with the ISA density), each frame's flight segment tested agai… |
 | `rng.ts` | 48 | Seeded PRNG for the weapons (gun dispersion, round types, smoke): mulberry32 + a Box–Muller Gaussian with the spare value cached. |
 | `rounds.ts` | 87 | PURE pool of gun rounds in flight: preallocated struct-of-arrays storage, a dense list of the live slots (`idx[0..count)`, O(1) removal by slot) and a free list. |
 | `targeting.ts` | 128 | Target selection for the missiles (T): the live vehicle nearest to where the nose points, within the selection cone and range and in plain view; pressing again cycles to the next one. |
 | `testTargets.ts` | 37 | PURE: the `?targets=test` debug set (owned by the weapons system) — a few vehicles on the ground at the target range for gun QA before the real range is populated: a T-72 showing its rear to the run-in, one head-on, o… |
-| `types.ts` | 155 | Shared combat contracts (no three.js): the ground targets, hits, the event stream and the weapons status. |
+| `types.ts` | 178 | Shared combat contracts (no three.js): the ground targets, hits, the event stream and the weapons status. |
 | `world.ts` | 363 | The combat world: every ground target, the hit/blast bookkeeping (armour by aspect), a seeker search, the combat event stream and the weapons status. |
 
 ### `src/combat/air/`
@@ -464,6 +495,8 @@ The four camera views (cockpit, chase, fly-by, orbit), their smooth transitions 
 | --- | ---: | --- |
 | `glow.ts` | 194 | Additive HDR light streaks in ONE instanced draw call: gun tracers (stretched along their velocity over ~1/60 s) and the muzzle flash. |
 | `gunGas.ts` | 78 | PURE: the GAU-8 gun-gas cloud — the grey propellant smoke that pours from the muzzle during a burst and wraps the nose (the air carries it back along the fuselage). |
+| `navalFxRender.ts` | 479 | Draws the naval guns' effects (src/combat/navalFx.ts) — two draw calls: particles camera-facing sprites (one instanced mesh, sorted back to front): white water spray and mist lit by the sun and the sky (brighter on th… |
+| `navalRangeRender.ts` | 392 | The naval gunnery range on screen (src/combat/navalRange.ts is the pure runtime): procedural models with vertex colours (no textures) — raft twin orange pontoons under a grated deck, a white-and-red target screen, a l… |
 | `tracers.ts` | 55 | PURE: what the gun looks like this frame, written into a GlowSink — every tracer round as a red-orange HDR streak stretched back along its velocity over `STREAK_S` (the eye's/camera's motion blur at 60 fps), burning o… |
 
 ### `src/combat/targets/`
@@ -498,7 +531,7 @@ The four camera views (cockpit, chase, fly-by, orbit), their smooth transitions 
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `index.ts` | 151 | The fleet registry: every aircraft (and vessel) the player can choose. |
+| `index.ts` | 232 | The fleet registry: every aircraft (and vessel) the player can choose. |
 | `types.ts` | 71 | The fleet: every flyable aircraft is an `AircraftDef` — its full physics config (same shape as CONFIG, with its own `aircraft` section), a 3D-model factory, and which HUD and engine sound it uses. |
 
 ### `src/fx/`
@@ -525,7 +558,7 @@ The game loop that ties everything together, the fixed-step timer, the FPS meter
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `app.ts` | 439 | The simulator application: wires the pure simulation (input → controls → fixed-step physics) to the renderer (atmosphere, aircraft, cameras) and to the auto-discovered systems in src/game/systems (terrain, water, airp… |
+| `app.ts` | 451 | The simulator application: wires the pure simulation (input → controls → fixed-step physics) to the renderer (atmosphere, aircraft, cameras) and to the auto-discovered systems in src/game/systems (terrain, water, airp… |
 | `deferredDispose.ts` | 57 | Dispose GPU resources a few rendered frames after the objects left the scene. |
 | `fps.ts` | 126 | Frame-rate meter (pure). |
 | `interpolate.ts` | 21 | Render-time interpolation between the last two fixed physics states (pure). |
@@ -541,7 +574,8 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | `airTargets.ts` | 160 | Enemy aircraft to shoot down (owned by src/combat/air): MiG-29 pairs on racetrack CAPs around the range, a Su-25 pair making attack passes at it, a Mi-24 pair circling low near it. |
 | `airTraffic.ts` | 88 | Other aircraft (owned by src/world/traffic): circuit traffic on the runway end most into the surface wind (36 with the windsocks' 330°/8 kt; touch-and-goes, full stops, go-arounds — held off while the player is on tha… |
 | `airport.ts` | 32 | Airport: pavement, markings, buildings, parked aircraft, lights, PAPI (owned by src/world/airport). |
-| `audio.ts` | 309 | Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop, F-16 F110, A-10 TF34s, the JetRanger's turboshaft + rotors, or a vessel's marine diesels + hull — the Princess V50, fed f… |
+| `audio.ts` | 312 | Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop, F-16 F110, A-10 TF34s, the JetRanger's turboshaft + rotors, or a vessel's marine diesels + hull — the Princess V50, fed f… |
+| `berthedShips.ts` | 346 | Berthed ships: when the player isn't driving the cruise ship ('cruise') or the battleship ('iowa'), that ship lies moored at its berth (src/world/harbour/berthedShips.ts says where and how high). |
 | `camerafx.ts` | 42 | Camera feel (owned by src/fx): a subtle speed-dependent widening of the field of view in the cockpit and chase views (fx.fov), eased so view changes never jump. |
 | `cars.ts` | 24 | Road traffic: moving cars, trucks, buses and tractors, parked cars (owned by src/world/cars). |
 | `combatfx.ts` | 189 | Combat effects (owned by src/combat/fx): listens to the combat world's events — 30 mm impacts, gun hits, Maverick detonations, vehicles destroyed — and plays them into the scene's shared fx pools (the fx system at ord… |
@@ -551,10 +585,17 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | `grass.ts` | 36 | Grass tufts and wildflowers near the camera (owned by src/world/grass). |
 | `hud.ts` | 106 | Instruments, HUD overlay and the live cockpit panel (owned by src/ui). |
 | `index.ts` | 115 | Discovers every `src/game/systems/*.ts` module (except this file and types.ts), creates them in `order`, and fans the frame hooks out to them. |
-| `loading.ts` | 84 | Start-up loading veil (owned by src/ui): a title card that covers the page from the moment the code loads until the world is streamed in and frames run smoothly, then fades to the aircraft on the runway (see src/ui/ve… |
+| `loading.ts` | 104 | Start-up loading veil (owned by src/ui): a title card that covers the page from the moment the code loads until the world is streamed in and frames run smoothly, then fades to the aircraft on the runway (see src/ui/ve… |
 | `menu.ts` | 164 | The app chrome (owned by src/ui): the branding top bar with Tater the mascot, the aircraft picker (upper right) and the ☰ button, and the pause menu (Esc / P / ☰). |
 | `missiles.ts` | 289 | The missiles (arcade): T picks the target nearest the nose (again = the next one) — a ground vehicle or an aircraft, whichever this aircraft can shoot — LOCK after a moment, and Z launches from the next loaded rail of… |
-| `playerWake.ts` | 320 | The player's wake and spray (vessels only: a def with `kind: 'vessel'` / a `watercraft` config). |
+| `navalAudio.ts` | 62 | The naval guns' sound (src/audio/naval.ts) in the shared mix: each gun's report as the navalFire event arrives and each shell's splash / burst on its detonation, all heard from the camera at the speed of sound (a salv… |
+| `navalGuns.ts` | 589 | A ship's main battery as a game feature (the USS Iowa's nine 16-inch/50 guns): active for any vehicle whose config has `weapons.naval` (dev harness: any vessel with `?naval=iowa`), inert otherwise. |
+| `navalHud.ts` | 195 | The naval fire-control HUD (src/ui/navalHud.ts) for vehicles with a naval battery: the panel at the right edge (dark glass like the marine helm HUD, clear of it) and a full-viewport overlay with the aim marker, the lo… |
+| `navalRange.ts` | 144 | The naval gunnery range at sea (src/combat/navalRange.ts + src/combat/render/navalRangeRender.ts): registers the floating targets with the combat world (so every weapon — the ship's 16-inch guns, the F-16's and A-10's… |
+| `offshore.ts` | 210 | Offshore scenery (src/world/offshore): the "Tater Alpha" oil platform with its burning flare and landable helideck, and the Tater Bank wind farm with its substation. |
+| `playerWake.ts` | 417 | The player's wake and spray (vessels only: a def with `kind: 'vessel'` / a `watercraft` config), for any vessel — a jet ski, the V50, a cruise ship or a battleship — sized from its station table (length, beam) and dri… |
+| `port.ts` | 61 | The big-ship port and the aids to navigation (src/world/harbour): the cruise terminal and the naval pier, the Gull Island lighthouse with its sweeping beams, the harbour lights on the marina's breakwater heads and the… |
+| `raceCourse.ts` | 183 | The jet-ski race course off Tater Beach (src/world/offshore/raceCourse.ts + raceModel.ts) and its lap timer (src/ui/raceHud.ts). |
 | `roads.ts` | 23 | Roads, bridges, street lights (owned by src/world/roads). |
 | `rotorWash.ts` | 139 | Rotor downwash (helicopters only: any aircraft whose config has a `rotorcraft` section). |
 | `ships.ts` | 85 | Ships and boats (owned by src/world/traffic): the Port Chateau marina and its moored boats, sailing yachts, motor yachts, fishing boats, the harbour launch, the bay ferry and its terminals, a container ship and a tank… |
@@ -566,6 +607,7 @@ Plug-ins added on top of the core loop (terrain, water, airport, roads, towns, t
 | `water.ts` | 33 | Sea, lakes and rivers (owned by src/world/water). |
 | `weapons.ts` | 128 | The aircraft's gun (A-10 GAU-8/A, F-16 M61A1; the Cessna has none), on the pure gun core (src/combat/gunnery.ts): sets Controls.gunFiring before the physics (recoil), flies the rounds, applies hits to the combat world… |
 | `weaponsHud.ts` | 469 | The weapons HUD (src/ui/weaponsHud.ts) for aircraft that carry weapons (A-10C, F-16C): gun cross, CCIP pipper, Maverick circle + lock box, target markers, range cue, stores/kills and short messages on a transparent fu… |
+| `wildlife.ts` | 138 | Marine wildlife (owned by src/world/wildlife): bottlenose dolphin pods in the bay and along the coast (they come over and ride the bow wave of a boat driven at 6–25 kt, and play in the big ships' bow waves), humpback … |
 
 ### `src/input/`
 
@@ -595,14 +637,14 @@ The flight model of the Cessna 172RG. Pure and deterministic — it never touche
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `aero.ts` | 435 | Aerodynamics of the C172RG: lift/drag coefficient curves (with a rounded stall peak collapsing to flat-plate behaviour) and the full airframe force/moment build-up from the stability derivatives in config.aircraft.aero. |
-| `aircraft.ts` | 797 | The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config passed to step() selects the ai… |
+| `aircraft.ts` | 798 | The flight model: state creation, the fixed-step 6-DOF integrator and the flight-phase state machine (ground → airborne → landed / crashed), for every aircraft in the fleet — the config passed to step() selects the ai… |
 | `atmosphere.ts` | 52 | International Standard Atmosphere (ISA) density. |
 | `engine.ts` | 148 | Lycoming O-360 + constant-speed propeller, simplified. |
 | `fbw.ts` | 250 | Fly-by-wire (F-16 style), a pure layer between the pilot's controls and the control surfaces. |
 | `flatEnv.ts` | 16 | The default physics environment: flat ground at y = 0 everywhere, all runway, no water, no obstacles, no wind. |
 | `frames.ts` | 105 | The single source of truth for frame conventions (see the header of src/types.ts). |
-| `ground.ts` | 357 | Ground interaction: spring-damper struts at the three wheels, tyre friction (rolling resistance by surface, brakes, cornering, nosewheel steering), the tail skid, and collision detection of the structural points again… |
-| `hull.ts` | 1254 | Boats and ships (PURE, deterministic): the hull, its engines and propulsors, for any vessel whose config sets `watercraft` — step() in ./aircraft.ts hands such a config to stepVessel() the way it hands a helicopter to… |
+| `ground.ts` | 371 | Ground interaction: spring-damper struts at the three wheels, tyre friction (rolling resistance by surface, brakes, cornering, nosewheel steering), the tail skid, and collision detection of the structural points again… |
+| `hull.ts` | 1859 | Boats and ships (PURE, deterministic): the hull, its engines and propulsors, for any vessel whose config sets `watercraft` — step() in ./aircraft.ts hands such a config to stepVessel() the way it hands a helicopter to… |
 | `index.ts` | 64 | Public API of the pure flight-physics module (Cessna 172RG, F-16C, A-10C, 747-400 and the Bell 206 JetRanger helicopter, and boats and ships such as the Princess V50 — the vehicle is chosen by the config passed to ste… |
 | `jet.ts` | 160 | Turbofan with afterburner (F-16: General Electric F110-GE-129), simplified. |
 | `placards.ts` | 22 | Placard speeds the instruments and the physics share, as tiny pure functions with no dependency but the config (the HUD imports this without pulling in the flight model). |
@@ -625,16 +667,22 @@ The code behind the developer preview pages in `preview/`.
 | `cars.ts` | 114 | Vehicle models preview: every model (near LOD in the front row, far LOD behind) on a plain asphalt apron under the real sky, lights and environment map, rendered through the same material as the traffic. |
 | `carsWorld.ts` | 165 | Cars world preview (a copy of the roads preview that exposes the GPU pass timings): the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera. |
 | `crash.ts` | 257 | Crash preview: the full crash sequence (break-up, fireball, fires, smoke, scorch, crash camera) with the real renderer, atmosphere, aircraft model and effects, simulated deterministically to a chosen time so screensho… |
+| `cruise.ts` | 179 | MS Tater Star (cruise ship) model preview: the ship floating on a calm water plane at its static waterline under a gradient-sky environment with a shadowing sun. |
 | `f16.ts` | 236 | F-16 model preview: the jet on a light apron under a gradient-sky environment with a shadowing sun. |
 | `fx.ts` | 222 | Effects preview: the crash fireball / smoke column / debris and touchdown tyre smoke, with the real renderer (HDR, tone mapping), atmosphere (sun, sky, aerial perspective) and the aircraft, simulated deterministically… |
 | `hud.ts` | 251 | HUD preview: a gradient sky/ground stand-in for the 3D view plus the HUD and the app chrome (top bar, aircraft picker, pause menu), fed synthetic readings from URL parameters, e.g. |
+| `iowa.ts` | 253 | USS Iowa (BB-61) model preview: the battleship on a calm water plane at her design waterline under a gradient-sky environment with a shadowing sun (a DirectionalLight named 'sun', as the game's, so the model's night l… |
+| `offshore.ts` | 156 | Offshore scenery preview: the "Tater Alpha" platform (flame, lights), one wind turbine turning in the configured wind, and the race course's marks, on a calm sea under a gradient sky. |
+| `port.ts` | 124 | The big-ship port and the aids to navigation (src/world/harbour/render.ts) on a flat sea with a patch of the real heightfield round the target, under the real sky. |
 | `roads.ts` | 103 | Roads + cars preview: the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera. |
+| `seadoo.ts` | 221 | Sea-Doo RXP-X 325 model preview: the ski and its rider floating on a calm water plane (static waterline at body y ≈ −0.17) under a gradient-sky environment with a shadowing sun. |
 | `ships.ts` | 87 | Vessel and harbour models preview: one model (or the marina) on a calm sea plane under the real sky, lights and environment map, drawn through the traffic batch material. |
 | `terrain.ts` | 209 | Terrain + water preview. |
 | `towns.ts` | 223 | Buildings preview (real renderer + atmosphere). |
 | `townsWorld.ts` | 157 | Towns world preview: the full world systems (terrain, water, airport, roads, cars, towns, vegetation — no aircraft, HUD, audio or fx) with a free camera, for photographing the towns and timing them on the GPU. |
 | `trees.ts` | 254 | Trees preview: the seven species on a lawn, lit by the real renderer + atmosphere. |
 | `v50.ts` | 237 | Princess V50 model preview: the yacht floating on a calm water plane (its static waterline at body y ≈ −0.45) under a gradient-sky environment with a shadowing sun. |
+| `wildlife.ts` | 148 | Marine wildlife models preview: the dolphin, humpback, gull (flying and perched) and harbour seal on a calm sea plane under the real sky, lights and environment map, animated by the same vertex shaders as in the game. |
 
 ### `src/render/`
 
@@ -680,7 +728,7 @@ The instruments and the on-screen HUD: steam gauges, compass, warnings, messages
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `controls.ts` | 292 | The Controls page shared by the menu and the H help overlay: every binding in config.controls.keys, grouped Flight · Engine & systems · Weapons · Cameras · Sim, plus the mouse and the jet / A-10 notes. |
+| `controls.ts` | 326 | The Controls page shared by the menu and the H help overlay: every binding in config.controls.keys, grouped Flight · Engine & systems · Weapons · Cameras · Sim, plus the mouse and the jet / A-10 notes. |
 | `gMeter.ts` | 178 | The G meter: a round accelerometer like the one on an aerobatic panel — a needle for the load factor now, orange tell-tale needles that stay at the highest and lowest g since the last reset, red marks at the aircraft'… |
 | `gauges.ts` | 1866 | Canvas-2D steam gauges of the Cessna 172RG, drawn from InstrumentReadings: the six-pack (airspeed, attitude, altimeter, turn coordinator, heading, vertical speed), the tachometer, compact system cells (throttle, flaps… |
 | `gearWarning.ts` | 122 | The 172RG landing-gear warning system, PURE (no DOM, no audio): what the gear position lights show, when the intermittent gear horn sounds, and the squat-switch and gear-speed cautions. |
@@ -689,18 +737,20 @@ The instruments and the on-screen HUD: steam gauges, compass, warnings, messages
 | `hud.ts` | 823 | The HUD overlay: DOM + canvases over the 3D view. |
 | `hudGlass.ts` | 487 | The jet HUD on its combiner glass (cockpit view). |
 | `hudStyle.ts` | 149 | The HUD's stylesheet (CSS-in-TS, system fonts only — nothing loads from the network). |
-| `instruments.ts` | 479 | The instrument model: turns the physics state into what the cockpit instruments show, in display units, with the behaviour of the real instruments — pitot-static needles that are smoothed, a VSI that lags, gyro attitu… |
+| `instruments.ts` | 505 | The instrument model: turns the physics state into what the cockpit instruments show, in display units, with the behaviour of the real instruments — pitot-static needles that are smoothed, a VSI that lags, gyro attitu… |
 | `jetHud.ts` | 420 | The F-16's head-up display, drawn on a transparent canvas over the centre of the view: a pitch ladder that rolls with the aircraft (a right bank rotates it counter-clockwise, exactly like the real horizon seen from th… |
-| `marineHud.ts` | 752 | The marine helm HUD style ('marine': boats and ships, `config.aircraft.watercraft` set): a clean chartplotter-style display drawn on canvases over the 3D view, fed by `readings.vessel` (src/ui/instruments.ts). |
+| `marineHud.ts` | 830 | The marine helm HUD style ('marine': boats and ships, `config.aircraft.watercraft` set): a clean chartplotter-style display drawn on canvases over the 3D view, fed by `readings.vessel` (src/ui/instruments.ts). |
 | `mascot.ts` | 162 | "Tater", the mascot of Tater's Flight Sim: a flying potato in brown-leather aviator goggles and a red cape, streaking up and to the right. |
 | `menu.ts` | 311 | The pause menu: a glass panel over the paused sim with Resume, Restart on runway, Start on final approach, the aircraft list, time of day, camera, sound and HUD switches, and the Controls page (the same sheet as the H… |
-| `messages.ts` | 205 | Text of the HUD's messages — landing toast, crash banner, annunciators, start hint and key labels. |
+| `messages.ts` | 218 | Text of the HUD's messages — landing toast, crash banner, annunciators, start hint and key labels. |
+| `navalHud.ts` | 427 | The naval fire-control display (ships with `weapons.naval`, the USS Iowa's main battery), in the marine helm HUD's look (dark glass, rounded panels, the same colours and fonts — src/ui/marineHud.ts) and clear of it (t… |
 | `picker.ts` | 288 | The aircraft picker: a compact dropdown (upper right of the top bar) listing the fleet with a one-line description each, built as an ARIA listbox so it works from the keyboard (Tab to it, Enter/↓ to open, ↑/↓/Home/End… |
+| `raceHud.ts` | 267 | The race lap-timer panel (jet-ski course): shown while a vessel is on or near the course, styled like the marine helm HUD (dark glass, rounded, cyan caps labels, SF numerals). |
 | `seekerView.ts` | 415 | The Maverick view: a picture-in-picture game camera on the locked target, with the look of the Maverick's black-and-white "white-hot" IR video (it is a camera, not a sensor model — the missiles are arcade). |
 | `topBar.ts` | 80 | The slim branding bar across the top: Tater the mascot and "Tater's Flight Sim" on the left, the aircraft picker and the ☰ menu button on the right. |
 | `uiBus.ts` | 50 | A tiny typed event bus between the UI's systems (hud, menu, weaponsHud), which the systems layer keeps apart: the menu asks the HUD to show/hide and tells it when the menu is up (the HUD then drops its PAUSED pill); t… |
 | `uiStyle.ts` | 157 | Stylesheet of the app chrome (top bar, aircraft picker, pause menu): CSS-in-TS with system fonts only — nothing is fetched. |
-| `veil.ts` | 613 | The start-up loading veil: a full-screen title card (Tater the mascot flying over "Tater's Flight Sim", the aircraft and airfield, a progress bar and what is being prepared) that hides the start-up hitch — the aircraf… |
+| `veil.ts` | 617 | The start-up loading veil: a full-screen title card (Tater the mascot flying over "Tater's Flight Sim", the aircraft and airfield, a progress bar and what is being prepared) that hides the start-up hitch — the aircraf… |
 | `weaponsHud.ts` | 1332 | The A-10C / F-16C weapons HUD — the real A-10C symbology, simplified — drawn on a transparent full-viewport canvas in the jet HUD's phosphor green (with the same faint dark halo): - gun cross on the gun line (the GAU-… |
 | `weaponsHudDemo.ts` | 129 | A debug driver for the weapons HUD (`window.sim.weaponsHudDemo(mode)`): until the gun and targets systems are in, it seeds a platoon of vehicles at the target range and writes a plausible weapons status every frame — … |
 | `weaponsHudLayout.ts` | 536 | Where the weapons HUD's text goes, so nothing overlaps (pure maths, no DOM): - `jetHudKeepOut` — the rectangles the jet HUD (src/ui/jetHud.ts) fills with its own text and scales in a HUD box: corner data (G / MAX / TH… |
@@ -713,6 +763,45 @@ The instruments and the on-screen HUD: steam gauges, compass, warnings, messages
 | `geom.ts` | 147 | Small geometry builders shared by the vessel models: a quad grid from a 2D array of points (winding chosen from an outward hint, smooth normals within the grid), a fan cap for a closed outline, planar UVs, and boxes /… |
 | `hullLoft.ts` | 310 | Generic hull loft: builds the drawn hull of any vessel from its station table (`HullStation[]`, the same table the physics floats — see src/vessels/hullSection.ts for the section shape and the PCHIP interpolation alon… |
 | `hullSection.ts` | 192 | Pure hull-section maths for any vessel whose hull is a table of transverse stations (`HullStation[]` in src/config.ts): each station is a hard-chine section — keel point (0, keelY), a straight V bottom to the chine (±… |
+
+### `src/vessels/cruise/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `animate.ts` | 56 | PURE mapping from the sim's visual state to the Tater Star's moving parts (no three.js): each shaft's rudder angle (rad) and propeller speed (rev/s), the tunnel thrusters' thrust fraction (−1 … +1, + pushing to starbo… |
+| `hull.ts` | 117 | MS Tater Star hull geometry: the shell lofted from the physics' station table (src/vessels/ hullLoft.ts), the main deck, the bulwarks round the bow and the stern, the anchors and hawse pipes, the bow and stern tunnel-… |
+| `index.ts` | 271 | Procedural MS Tater Star (Tater Line): a classic 1990s mid-size cruise ship in the Fantasy-class manner, kept plain and white — the hull lofted from the very station table the physics floats (CRUISE_AIRCRAFT.watercraf… |
+| `materials.ts` | 184 | MS Tater Star materials. |
+| `running.ts` | 138 | MS Tater Star running gear: the two four-bladed propellers on the shaft propulsors' positions (turned by `n`; outward-turning: the starboard screw clockwise seen from astern), the semi- balanced rudders behind them on… |
+| `shape.ts` | 160 | MS Tater Star — the drawn ship's dimensions (PURE, no three.js), in the BODY frame (origin = CG, +X starboard, +Y up, −Z bow, metres), derived from CRUISE_AIRCRAFT so the model and the physics agree: the hull is the p… |
+| `superstructure.ts` | 279 | MS Tater Star superstructure geometry (body frame, metres): the stacked tiers extruded from their plan outlines with window-atlas walls (one quad strip per deck — the windows are texture), their decks and wind-screen … |
+| `textures.ts` | 172 | MS Tater Star canvas textures, painted in code (browser only; null in node): - the window atlas: one row per style (balcony cabins, cabin windows, lounge glazing, plain wall, the set-in promenade), each row one deck h… |
+
+### `src/vessels/iowa/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `animate.ts` | 99 | PURE mapping from the sim's visual state to the USS Iowa model's moving parts (no three.js): each shaft's propeller speed and rudder angle, each turret's train, elevation, per-gun recoil and muzzle flash, and the lights. |
+| `hull.ts` | 327 | USS Iowa hull and main-deck geometry: the skin lofted from the physics' station table (the mesh the tests hold to the table), the teak main deck, the underwater details the two-segment sections can't carry (the bulbou… |
+| `index.ts` | 342 | Procedural USS Iowa (BB-61) as she is today — the 1984 modernisation, museum ship at San Pedro: a 270 m hull lofted from the very station table the physics floats (IOWA_AIRCRAFT.watercraft.hull .stations, via src/vess… |
+| `materials.ts` | 243 | USS Iowa materials. |
+| `props.ts` | 87 | The Iowa's four propellers and two rudders. |
+| `shape.ts` | 100 | USS Iowa (BB-61) shape tables (pure, no three.js). |
+| `superstructure.ts` | 405 | USS Iowa superstructure (the 1984 modernisation, as she lies today): the 01 / 02 / 03 level deckhouses, the armoured conning tower and the pilot house around the helm (04 level, glazed so the helm view looks out throu… |
+| `turretRig.ts` | 163 | The Iowa's three triple 16-inch turrets as rigs that follow the NavalTurretConfig contract exactly (see ./turrets.ts for the maths the gunnery shares): container (identity, a break-up part) └ train pivot at `position`… |
+| `turrets.ts` | 92 | USS Iowa turret geometry (PURE, no three.js): where each 16-inch muzzle is for a turret's train and elevation, in the ship's BODY frame (origin = CG, +X starboard, +Y up, −Z bow) — the same maths the 3D model's turret… |
+
+### `src/vessels/seadoo/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `animate.ts` | 77 | PURE mapping from the sim's visual state to the Sea-Doo model's moving parts (no scene graph): handlebars, nozzle steer and trim, the reverse bucket, and the rider (aboard, lean, crouch). |
+| `helm.ts` | 164 | The Sea-Doo's helm: the steering pod (console) between the hood and the seat, with its smoked visor, the dash display facing the rider and the two mirrors; and the handlebars on the tilted steering column (riser, swep… |
+| `hull.ts` | 480 | Sea-Doo hull, deck, hood, seat and jet pump geometry. |
+| `index.ts` | 232 | Procedural Sea-Doo RXP-X 325 (TATER JET) with its rider: a T3-R-style deep-V hull lofted from the very station table the physics floats (SEADOO_AIRCRAFT.watercraft.hull.stations, via src/vessels/hullLoft.ts) with chin… |
+| `materials.ts` | 60 | Sea-Doo materials. |
+| `rider.ts` | 471 | The Sea-Doo's rider: one skinned mesh (one draw call) on a flat 13-bone rig — pelvis, torso, head, upper / fore arms, thighs, shins, feet — every bone a direct child of the rider group and posed in the body frame each… |
+| `shape.ts` | 179 | Sea-Doo RXP-X 325 shape constants and small shape functions, all derived from SEADOO_AIRCRAFT so small calibration shifts of the hull (the station table), the jet (propulsors[0].position / jet.inlet) or the rider (geo… |
 
 ### `src/vessels/v50/`
 
@@ -735,14 +824,14 @@ The world: its geography (layout), terrain height and ground cover, the runway, 
 
 | File | Lines | What it is |
 | --- | ---: | --- |
-| `environment.ts` | 39 | The physics' view of the world (types.ts `Environment`), built from the same pure heightfield and landcover the terrain mesh is drawn from — what you see is what you hit. |
+| `environment.ts` | 86 | The physics' view of the world (types.ts `Environment`), built from the same pure heightfield and landcover the terrain mesh is drawn from — what you see is what you hit. |
 | `fields.ts` | 297 | The farm-field model shared by the CPU (landcover: woodlots, hedgerow trees for wave 2) and the terrain shader (field colours, rows, margins): the same integer hash (PCG) and value noise in TypeScript and GLSL, so bot… |
 | `heightfield.ts` | 330 | The terrain height function the whole sim shares: physics (Environment), the terrain mesh builder (worker) and wave-2 placement all call it, so what you see is what you hit. |
 | `landcover.ts` | 339 | What covers the ground: landcover weights for the terrain shader and wave-2 vegetation, the physics surface type, and tree density. |
 | `layout.ts` | 708 | The geography of the world as plain data, derived deterministically from config + seed: the airport (runway from runway.ts, taxiways, apron, building and parking spots), the coast with its bay and islands, lakes, the … |
 | `noise.ts` | 337 | Seeded, deterministic 2D noise for the procedural world. |
 | `polyline.ts` | 204 | Uniform-grid spatial index over polylines (rivers, roads) for fast "distance to the nearest line + interpolated per-vertex values" queries. |
-| `port.ts` | 216 | The player's port (PURE, no three.js): where a boat starts. |
+| `port.ts` | 408 | The player's port (PURE, no three.js): where a boat starts. |
 | `regional.ts` | 249 | Regional terrain: the big shapes of the world before any local carving — the coastline (sea to the south, with a bay), the sea floor, islands, the rolling farmland plains, the foothills and the main mountain range to … |
 | `runway.ts` | 177 | Runway geometry from config.world.airport.runway (36/18, the default for spawn and reset) and config.world.airport.runways (every runway, incl. |
 | `terrainIndex.ts` | 8 | Render-side entry point of the world module (what src/game/app.ts imports): the LOD terrain and the water surfaces. |
@@ -795,6 +884,31 @@ Grass tufts and wildflowers drawn close to the camera when flying low.
 | --- | ---: | --- |
 | `index.ts` | 455 | 3D grass near the camera: instanced tufts of curved blades (+ wildflower heads in meadows) on grass landcover, within `viewDistance` of the camera and only while the camera is low (taxi, take-off, landing, low passes). |
 | `placement.ts` | 229 | Deterministic grass-tuft placement. |
+
+### `src/world/harbour/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `berthedShips.ts` | 207 | Berthed ships (PURE, no three.js): when the player isn't driving the cruise ship or the battleship, that ship lies moored at its berth — the cruise ship at the cruise terminal, the battleship at the naval pier. |
+| `layout.ts` | 354 | The big-ship port (PURE, no three.js): the cruise terminal east of the Port Chateau marina and the naval pier west of it, as plain data in each pier's own frame — what the models draw (src/world/harbour/models.ts), wh… |
+| `models.ts` | 254 | Geometry for the big-ship port (three.js BufferGeometry via the traffic MeshBuilder, so it draws in the same batched PBR material as the marina: roughness / metalness per vertex, lit windows at dusk on glass): the cru… |
+| `navaidModels.ts` | 197 | Geometry for the aids to navigation (traffic MeshBuilder, batched PBR material): the Gull Island lighthouse (a tapered white tower with red bands, gallery, glazed lantern, domed cupola, the keeper's house) built round… |
+| `navaids.ts` | 400 | Aids to navigation (PURE, no three.js): the lighthouse on Gull Island, the harbour lights on the marina's breakwater heads, and the lit buoys (IALA region A, as in Europe) — lateral marks along the approaches to the m… |
+| `obstacles.ts` | 134 | The big-ship port's structures as physics obstacles (PURE): the cruise terminal and the naval pier (src/world/harbour/layout.ts) as obstacle columns in each pier's frame — `top(x, z)` = the height (m MSL) of whatever … |
+| `render.ts` | 464 | The big-ship port and the aids to navigation, drawn in THREE draw calls: 1. |
+
+### `src/world/offshore/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `materials.ts` | 151 | Materials for the offshore scenery (render). |
+| `platform.ts` | 266 | "Tater Alpha" offshore production platform (PURE): the dimensions the model is drawn from and the physics reads — what you see is what you hit. |
+| `platformModel.ts` | 532 | "Tater Alpha" platform model (render): procedural geometry from the dimensions in platform.ts, in the platform's local frame (origin at the jacket centre at sea level, +X toward the flare). |
+| `raceCourse.ts` | 517 | The jet-ski race course and its lap / checkpoint logic (PURE). |
+| `raceModel.ts` | 234 | Race course model (render): the inflatable marks, bobbing on the drawn waves. |
+| `sites.ts` | 74 | Offshore scenery sites (PURE): where the oil platform, the wind farm and the jet-ski race course stand, and the local ↔ world frame helpers they share. |
+| `windFarm.ts` | 182 | The offshore wind farm (PURE): turbine positions, the wind they turn in, their yaw and rotor speed, and their obstacles — the renderer and the physics read the same numbers. |
+| `windFarmModel.ts` | 251 | Wind farm model (render): every turbine in two instanced draw calls — the static part (monopile, yellow transition piece with its access platform and boat landing, white tapered tower, nacelle) and the rotor (hub, spi… |
 
 ### `src/world/roads/`
 
@@ -866,15 +980,15 @@ Other traffic: boats, ships, the marina and wakes; circuit aircraft, crossing ai
 | `clock.ts` | 44 | The traffic clock (PURE): seconds of traffic time. |
 | `compile.ts` | 20 | Compiles a traffic group's programs up front (hidden objects included) so no frame stalls on them. |
 | `daylight.ts` | 31 | Daylight for traffic (PURE + one three.js sync helper): how "night" it is for navigation lights, lamps and lit windows (0 in daylight, rising through the golden hour, 1 once the sun is 2° below the horizon), and copyi… |
-| `harbourObstacles.ts` | 402 | Harbour obstacles (PURE, no three.js): the Port Chateau marina's structures (quay wall and its bollards and lamps, the harbour works on the quay, rubble-mound breakwaters with their parapets and entrance beacons, floa… |
-| `hullTrack.ts` | 256 | The player's hull track for its wake and spray (PURE, no three.js, no allocation per frame). |
+| `harbourObstacles.ts` | 404 | Harbour obstacles (PURE, no three.js): the Port Chateau marina's structures (quay wall and its bollards and lamps, the harbour works on the quay, rubble-mound breakwaters with their parapets and entrance beacons, floa… |
+| `hullTrack.ts` | 262 | The player's hull track for its wake and spray (PURE, no three.js, no allocation per frame). |
 | `jobs.ts` | 75 | Time-sliced start-up work (PURE): long builds are written as generators that `yield` between small steps; `slicedJob` runs as many steps as fit in a frame's budget, so no frame ever stalls (the sea plan's route valida… |
-| `materials.ts` | 514 | Materials for traffic. |
+| `materials.ts` | 552 | Materials for traffic. |
 | `path.ts` | 415 | Paths for traffic: dense 3D polylines with arc-length and time tables, so a vehicle's pose is a pure function of the distance travelled (or of time). |
 | `points.ts` | 101 | A fixed-size, rewritten-every-frame point list for `createPointMaterial` (lights, spray, far dots): no allocation per frame, one draw call, only the used range is uploaded. |
 | `rng.ts` | 30 | Deterministic hashing helpers for traffic schedules (pure). |
-| `sea.ts` | 870 | Sea traffic plan (PURE): the Port Chateau marina (quay, breakwaters, pontoons, berths), the moored boats, and every moving vessel's route and schedule — sailing yachts on triangle courses that respect the wind, motor … |
-| `ships.ts` | 756 | Sea traffic renderer: everything on the water in THREE draw calls. |
+| `sea.ts` | 872 | Sea traffic plan (PURE): the Port Chateau marina (quay, breakwaters, pontoons, berths), the moored boats, and every moving vessel's route and schedule — sailing yachts on triangle courses that respect the wind, motor … |
+| `ships.ts` | 753 | Sea traffic renderer: everything on the water in THREE draw calls. |
 | `wake.ts` | 162 | Wake geometry (PURE, typed arrays, no allocation per call): for a moving hull, three ribbons on the water written from the hull's past track — - the turbulent foam trail straight behind the stern (widening, fading), -… |
 
 ### `src/world/traffic/models/`
@@ -920,14 +1034,30 @@ The sea, lakes and river: waves, ripples, water depth and shore foam, the river 
 | `bathymetry.worker.ts` | 50 | Water worker: bakes the bathymetry clipmap levels (depth, shore distance, land surface and tone for the reflections; half-float RGBA) and the detail tile's mip chain off the main thread, from the same pure heightfield… |
 | `detail.ts` | 210 | The water's small-scale detail: a seamless tile of wind-wave slopes baked once from an ocean spectrum with an inverse FFT (no downloaded textures), plus a CPU mip chain in LEAN-mapping form so distant water filters co… |
 | `index.ts` | 570 | Water surfaces: the open sea (a radial grid that follows the camera, with Gerstner displacement close in), the lakes (flat fans over their shorelines) and the Tater River (one continuous ribbon on its sloping surface,… |
-| `material.ts` | 165 | The three water materials (sea, lakes, river): MeshStandardMaterial extended with onBeforeCompile (shaders.ts), `fog: true`, transparent with depth writes. |
+| `material.ts` | 176 | The three water materials (sea, lakes, river): MeshStandardMaterial extended with onBeforeCompile (shaders.ts), `fog: true`, transparent with depth writes. |
 | `reeds.ts` | 380 | Reeds and rushes at the water's edge: patchy stands along the slow lowland reaches of the river (thicker on the inner, slack-water side of bends) and round the lowland lakes — none in the rapids, the mountains or roun… |
 | `river.ts` | 185 | The river as one continuous water ribbon (PURE geometry builder). |
-| `shaders.ts` | 708 | GLSL for the water materials (injected into MeshStandardMaterial by material.ts, so three's sun GGX specular, shadows, env map, depth modes and the atmosphere's aerial-perspective fog chunks all apply). |
+| `shaders.ts` | 862 | GLSL for the water materials (injected into MeshStandardMaterial by material.ts, so three's sun GGX specular, shadows, env map, depth modes and the atmosphere's aerial-perspective fog chunks all apply). |
 | `shading.ts` | 268 | Water shading model, PURE: the constants and functions the GLSL in shaders.ts mirrors (the numbers are interpolated into the shader source from here, so the two can't drift apart). |
-| `wakeField.ts` | 481 | The player hull's wake as a change of the sea surface (PURE, no three.js): the "wake field". |
-| `wakeMap.ts` | 191 | The wake map: a world-aligned half-float render target that follows the player's boat (its corner snapped to whole texels, so it never swims), redrawn every frame from the hull's track strip (wakeField.ts `buildWakeSt… |
+| `wakeField.ts` | 698 | A driven hull's wake as a change of the sea surface (PURE, no three.js): the "wake field", for ANY vessel — a 3 m jet ski, the 15.5 m Princess V50, a 270 m cruise ship or battleship — read from its length L, beam B, s… |
+| `wakeMap.ts` | 220 | The wake map: a world-aligned half-float render target that follows the player's boat (its corner snapped to whole texels, so it never swims), redrawn every frame from the hull's track strip (wakeField.ts `buildWakeSt… |
 | `waves.ts` | 257 | Analytic ocean waves: a handful of Gerstner (trochoidal) wave trains drawn from a Pierson–Moskowitz spectrum for the configured wind, spread around the wind direction. |
+
+### `src/world/wildlife/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `dolphins.ts` | 865 | Bottlenose dolphins (PURE, no three.js, no allocation per frame). |
+| `gulls.ts` | 615 | Herring gulls (PURE, no three.js, no allocation per frame). |
+| `index.ts` | 578 | Marine wildlife renderer: dolphins, humpback whales, herring gulls and harbour seals, plus their splashes, breath and blows — in FIVE draw calls: one InstancedMesh per species (vertex animation in the shader, material… |
+| `material.ts` | 177 | The animals' material: a MeshStandardMaterial (lit by the sun and the sky's environment like everything else, in the atmospheric fog) with vertex animation in the shader, driven by the geometry's `aBody` (models.ts) a… |
+| `models.ts` | 495 | Procedural animal models (three.js BufferGeometry, built once): a bottlenose dolphin, a humpback whale, a herring gull and a harbour seal. |
+| `seals.ts` | 47 | Harbour seals hauled out on Seal Rock (PURE): a few spots on the rock just above the waterline (terrain between `minH` and `maxH`, gentle slope), each with a heading (mostly facing the sea) and a size. |
+| `splash.ts` | 225 | Water effects of the animals as stateless particles (PURE, no allocation): every particle of an event is a closed-form function of the event's age and a per-particle hash, so nothing is pooled or simulated and a pause… |
+| `surface.ts` | 48 | The drawn sea under an animal (PURE, no allocation per call): the water shader only displaces its grid near the camera, with the trains its grid can carry, damped in shallow water — so an animal that "sits on the wave… |
+| `tuning.ts` | 159 | Marine wildlife tunables (PURE): counts, where the animals live, how they move, how far they are drawn. |
+| `whales.ts` | 330 | Humpback whales offshore (PURE, no three.js, no allocation per call). |
+| `zones.ts` | 113 | Where marine animals may be (PURE): water depth, the other features of the sea they keep away from (the naval gunnery range, the oil platform, the wind farm, the jet-ski race course, the cruise terminal and the naval … |
 
 ### `tests/`
 
@@ -1021,6 +1151,9 @@ Tests for the sound system (with a fake Web Audio context).
 | `marineDiesel.test.ts` | 429 | Functional: the Princess V50's 'marineDiesel' voice on the mock AudioContext and the vessel fields of the input tracker — firing rate rpm/20 from the D6s, the detuned starboard engine, load hardening the note, the tur… |
 | `marineMapping.test.ts` | 179 | Unit: the PURE marine-diesel mappings (marineMapping.ts) and the D6's cycle waveform — firing rate rpm/20, monotone and bounded levels, load hardening, the run-down, water levels vs speed and planing, slap rates, and … |
 | `mockAudio.ts` | 323 | Minimal WebAudio mock for node tests. |
+| `naval.test.ts` | 107 | The naval guns' sound (src/audio/naval.ts) on the mock WebAudio: each report / splash / burst is scheduled at its own distance / 343 m/s (a salvo 10 km away is heard ~29 s after the flash), far sounds are quieter and … |
+| `pwc.test.ts` | 393 | Functional: the Sea-Doo RXP-X 325's 'pwc' voice on the mock AudioContext and the waterjet fields of the input tracker — the Rotax triple's firing rate rpm/40, the supercharger whine, the pump (roar, ventilation sputte… |
+| `pwcMapping.test.ts` | 277 | Unit: the PURE jet-ski mappings (pwcMapping.ts) — the Rotax triple's firing rate rpm/40, the supercharger whine and impeller tone, the pump growing with flow and jet speed, ventilation taking the load and the water ro… |
 | `selftest.e2e.test.ts` | 95 | E2E: the audio self-test in a real browser (headless Chrome for Testing). |
 | `selftest.html` | 17 | Developer preview page. |
 | `selftest.test.ts` | 61 | Functional (node): the self-test machinery on a mock OfflineAudioContext — its timeline of suspend points really drives the synth (the crash's secondary explosions and the reset happen during the render), and the mix … |
@@ -1049,6 +1182,12 @@ Tests for the camera rig: modes, transitions, ground clearance, shake.
 | `gun.test.ts` | 202 | The rotary cannon: barrel spin-up / spin-down, rate of fire with sub-frame round times, ammo, the gunFiring logic, reload, and the circular-Gaussian dispersion. |
 | `missile.test.ts` | 75 | Tests. |
 | `missilesSystem.test.ts` | 184 | Tests. |
+| `naval.functional.test.ts` | 262 | Functional: the whole naval fire-control loop (src/combat/navalFireControl.ts) on a scripted ship over open sea — aim, the turrets train onto the solution, salvos ripple, shells fly tens of seconds, land in a pattern … |
+| `naval.test.ts` | 310 | Naval gunnery maths (src/combat/naval.ts): the 16-inch shell's ballistics against the real 16"/50 Mark 7 (≈ 38 km at 45°, ~95 s time of flight), the turret geometry contract with the ship's model (train / elevation / … |
+| `navalBattery.test.ts` | 252 | The main battery's state (src/combat/navalBattery.ts): turrets train and elevate at their real rates, never through the blind sector, salvos ripple from the loaded guns of the turrets on target, each gun reloads in `r… |
+| `navalFx.test.ts` | 157 | The naval guns' effects (src/combat/navalFx.ts, pure): a 16-inch splash throws a column of water 60–100 m high that collapses in seconds and leaves drifting mist and a foam ring; the muzzle blast makes an incandescent… |
+| `navalRange.test.ts` | 192 | The naval gunnery range (src/combat/navalRange.ts): its site in the real world (deep water, every target / buoy / the tow ≥ 1.5 km from the sea-traffic routes, off Long Key), the targets as combat targets any weapon c… |
+| `navalSystem.test.ts` | 154 | The navalGuns system (src/game/systems/navalGuns.ts) headless: inert for aircraft (no status.turrets), active for any vehicle whose config has weapons.naval (here the V50 with IOWA_WEAPONS — the harness the Iowa's fle… |
 | `targeting.test.ts` | 192 | Tests. |
 | `weapons-render.test.ts` | 172 | Gun visuals (built in node, no WebGL): the glow-streak buffer (tracers + muzzle flash), which rounds become tracers and how they burn out, the gun-gas emitter, the ?targets=test set, and the weapons system module. |
 | `weapons.functional.test.ts` | 136 | Functional: a headless A-10 (A10_WEAPONS GAU-8/A, the real muzzle and gun line) diving on vehicles over flat ground, flown kinematically along a straight dive with the pilot keeping the CCIP pipper on the target (the … |
@@ -1119,7 +1258,7 @@ End-to-end tests: start the real game in a headless test browser and drive it wi
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `fleet.test.ts` | 61 | Tests. |
-| `vessels.test.ts` | 63 | The fleet's vessels in the real world: every entry with `kind: 'vessel'` has a `watercraft` config (and every `watercraft` config is a vessel), the marine HUD and voice; it starts moored at the reserved visitors' bert… |
+| `vessels.test.ts` | 81 | The fleet's vessels in the real world: every entry with `kind: 'vessel'` has a `watercraft` config (and every `watercraft` config is a vessel), the marine HUD and voice; it starts moored at its berth in Port Chateau (… |
 
 ### `tests/functional/`
 
@@ -1180,9 +1319,11 @@ Tests for the loop, FPS meter, interpolation, `window.sim` and the systems layer
 
 | File | Lines | What it is |
 | --- | ---: | --- |
+| `berthedShips.test.ts` | 176 | The berthed-ships system (src/game/systems/berthedShips.ts + src/world/harbour/berthedShips.ts), driven in node with a fake context: it tolerates the cruise ship / battleship fleet ids being absent (they are built els… |
 | `boot.test.ts` | 167 | Tests. |
 | `deferredDispose.test.ts` | 79 | Deferred disposal (src/game/deferredDispose.ts): the old aircraft's GPU resources are freed a couple of rendered frames after it left the scene (see the file header for the three.js shadow-material reason), never lost… |
 | `loop.test.ts` | 166 | Tests. |
+| `offshore.test.ts` | 148 | Tests. |
 | `simApi.test.ts` | 91 | Tests. |
 | `systems.test.ts` | 95 | Tests. |
 
@@ -1227,6 +1368,10 @@ Tests for every rule of the flight model: lift, drag, thrust, stall, ground, lan
 | `b747-qapilot.test.ts` | 64 | The in-page QA pilot (scripts/qa-pilot.js) flies the 747 headless through the real keyboard pipeline and the real world (tests/functional/qa-pilot.harness.ts) — the same code and profile that fly it in Chrome for Test… |
 | `b747.test.ts` | 330 | Boeing 747-400 unit + property tests: the config against the real aircraft (220 t light), the lift and drag curves, the engines, and the airliner features the 747 adds to src/physics — spoilers (flight + automatic gro… |
 | `collision.test.ts` | 185 | Collision detection: terrain, wingtips, belly, water, obstacles, over-G, and the crash state that follows. |
+| `cruise-fuzz.test.ts` | 123 | MS Tater Star property tests (fast-check), after v50-fuzz: random helm scripts — the lever through ahead, neutral and astern, the rudders (A / D), the tunnel thrusters (← / →), the engine switch — driven for 60 s from… |
+| `cruise-helpers.ts` | 20 | Shared helpers for the MS Tater Star (cruise ship) hull tests: the fleet config, its calm-water twin, and a deep open sea deep enough for a 7.75 m draft (the V50's helpers do the driving). |
+| `cruise.test.ts` | 329 | MS Tater Star, the Fantasy-class cruise ship (src/physics/hull.ts, CRUISE_AIRCRAFT): the hull floats at the published 7.75 m draft, level, with a positive GM and a ~20 s roll; reaches the published ~22 kt at full powe… |
+| `deckLanding.test.ts` | 87 | FUNCTIONAL: landable decks (Environment.deckTop). |
 | `drag.test.ts` | 53 | Tests. |
 | `f16-accuracy-keyboard.test.ts` | 108 | F-16C (and A-10C) keyboard feel, through the real control system (src/input/controlSystem.ts updateControls, default key rates — what the app uses) and step(): F-16 roll: a short tap of → gives a modest bank change an… |
 | `f16-accuracy.test.ts` | 182 | F-16C Block 50 (F110-GE-129, 12,000 kg clean, full internal fuel) flight-performance accuracy audit: the sim's F16_AIRCRAFT pinned to published numbers within honest bands. |
@@ -1237,12 +1382,19 @@ Tests for every rule of the flight model: lift, drag, thrust, stall, ground, lan
 | `fuzz.test.ts` | 209 | Property-based (fuzz) tests with fast-check: random control scripts with random time steps (≤ fixedDt), flown for 60–300 simulated seconds from the runway, from the approach and from random airborne attitudes and speeds. |
 | `groundEffect.test.ts` | 40 | Tests. |
 | `helpers.ts` | 106 | Shared helpers for the physics tests: fly a state for N seconds with a fixed control set or a tiny "pilot" function, simple autopilot loops, and a flat test world with a real runway rectangle (grass elsewhere). |
+| `iowa-fuzz.test.ts` | 117 | USS Iowa property tests (fast-check): random helm scripts — the telegraph through ahead, stop and astern, the wheel, the engine switch — for 30 s from rest, from her lines and from random speeds, headings and attitude… |
+| `iowa-helpers.ts` | 80 | Shared helpers for the USS Iowa hull tests: the fleet config (calm and with the real sea), deep ocean, a shelving bank and a pier wall sized for a battleship, the steady lever for a speed, and a cached "steaming stead… |
+| `iowa.test.ts` | 294 | USS Iowa (BB-61) on the hull model (src/physics/hull.ts): she floats at her published full-load draft and metacentric height, rolls with a battleship's period and rights herself, makes ~33 kt at full power with the pr… |
 | `jet.test.ts` | 173 | The F-16's F110 turbofan: static thrust (dry / afterburner), lapse with density, ram effect, spool-up lag, the afterburner detent and ramp, core % as rpm, start/stop — plus a fuzz of random throttle histories. |
 | `landing.test.ts` | 177 | Landing state: touchdown detection and rating, landing crashes, bounces, touch-and-go, and a full approach flown hands-off with a simple flare. |
 | `lift.test.ts` | 108 | Tests. |
 | `motion.test.ts` | 165 | Acceleration, gravity, velocity/inertia and altitude: the aircraft as a point mass with momentum. |
 | `realism.test.ts` | 185 | Calibration against the Cessna 172RG POH: the numbers a pilot would notice. |
 | `recoil.test.ts` | 243 | Gun recoil (src/physics/recoil.ts + step()): while `controls.gunFiring` is true and the aircraft carries a gun (`cfg.weapons.gun`), the physics pushes back with `gun.recoilN` along the barrel (body +Z, tilted by the g… |
+| `seadoo-fuzz.test.ts` | 132 | Sea-Doo RXP-X 325 property tests (fast-check): random rider scripts — the throttle and the iBR lever through ahead, neutral and reverse, the brake, the handlebars, the rider's lean (← / →) and fore / aft (↑ / ↓), VTS … |
+| `seadoo-helpers.ts` | 30 | Shared helpers for the Sea-Doo RXP-X 325 tests: the fleet's config (calm and real sea, and a rough sea to jump off), and the V50's test seas and helm (tests/physics/v50-helpers.ts). |
+| `seadoo.test.ts` | 338 | Sea-Doo RXP-X 325 (src/physics/hull.ts, the 'jet' propulsor, the rider and righting): floats at its draft, launches 0–60 mph in ~3.4 s, planes in a couple of seconds, holds its governed ~58 kt, carves tight turns bank… |
+| `shipBerths.test.ts` | 109 | FUNCTIONAL: big ships at their berths in the real world (heightfield, marina, piers, buoys and the other berthed ship registered as obstacles, as the systems do). |
 | `spin.test.ts` | 265 | Spins (Cessna 172RG): entry from a full-aft, full-rudder stall at idle, the developed spin, the PARE recovery, and the difference between a spin and a spiral dive. |
 | `stall.test.ts` | 140 | Stall conditions and stall recovery. |
 | `takeoff.test.ts` | 72 | Functional: takeoff rotation the way a player flies it (full throttle, a firm keyboard pull at Vr), as reported from the live build. |
@@ -1250,7 +1402,10 @@ Tests for every rule of the flight model: lift, drag, thrust, stall, ground, lan
 | `turn-entry.test.ts` | 78 | Turn entry with the ailerons alone (a keyboard pilot: no rudder). |
 | `v50-fuzz.test.ts` | 116 | Princess V50 property tests (fast-check): random helm scripts — the lever through ahead, neutral and astern, the wheel, trim tabs, the engine switch — driven for 30 s from rest, from the berth and from random speeds, … |
 | `v50-helpers.ts` | 58 | Shared helpers for the Princess V50 hull tests: the fleet config, test seas (calm deep water, the real Gerstner sea, a shelving beach, a wall of pontoon) and a helm that holds the lever and wheel. |
-| `v50.test.ts` | 297 | Princess V50 (src/physics/hull.ts): the hull floats at its published draft, planes, reaches its published top speed at rated rpm, turns banking into the turn, stops, goes astern, rides the drawn sea, lies to its moori… |
+| `v50.test.ts` | 298 | Princess V50 (src/physics/hull.ts): the hull floats at its published draft, planes, reaches its published top speed at rated rpm, turns banking into the turn, stops, goes astern, rides the drawn sea, lies to its moori… |
+| `zz-roll.test.ts` | 14 | Tests. |
+| `zz-tr.test.ts` | 19 | Tests. |
+| `zz-turn.test.ts` | 22 | Tests. |
 
 ### `tests/render/`
 
@@ -1307,6 +1462,7 @@ Shared test helpers: the scripted pilot, test worlds, the e2e browser/server har
 | `fc.ts` | 29 | fast-check run parameters shared by every property test. |
 | `invariants.ts` | 83 | Reusable invariant checks for the fuzz and functional layers. |
 | `pilot.ts` | 284 | A scripted pilot for mission-style functional tests: cascaded PID loops that turn targets (pitch / bank / airspeed / vertical speed / altitude / heading / runway centreline) into elevator, aileron, rudder and throttle… |
+| `shipStandIn.ts` | 103 | Stand-in big ships for the port tests: the cruise ship and the battleship are built in parallel elsewhere (fleet ids 'cruise' / 'iowa'), so the berth, pier and berthed-ship tests use generic displacement hulls of the … |
 
 ### `tests/ui/`
 
@@ -1335,13 +1491,17 @@ Tests for the instruments, gauges, HUD layout, gear warning, messages and loadin
 | `jetHud.a10.test.ts` | 52 | Jet HUD, A-10 variant: with the GAU-8's gun line 2° below the datum the weapons HUD draws the real (conformal) gun cross, so the jet HUD drops its fixed boresight cross; the F-16 keeps it. |
 | `jetHud.test.ts` | 150 | F-16 head-up display: pure geometry (unit), the drawn result measured on a geometry-tracking context (functional), and fast-check fuzz (any readings → finite drawing, right senses). |
 | `layout.test.ts` | 162 | Tests. |
-| `marineHud.test.ts` | 557 | Tests. |
+| `marineHud-thrusters.test.ts` | 64 | The marine HUD on a ship with tunnel thrusters (MS Tater Star): the helm readings show one tach per shaft (the thrusters are not engines) and the bow / stern thruster groups' thrust; the engines block draws a THRUSTER… |
+| `marineHud.seadoo.test.ts` | 77 | Tests. |
+| `marineHud.test.ts` | 558 | Tests. |
 | `mascot.test.ts` | 59 | Tater the mascot: a self-contained SVG (nothing fetched, unique gradient ids so several copies can share a page) and the same figure on a canvas (finite geometry, garbage-proof). |
 | `menu.e2e.test.ts` | 99 | End-to-end in headless Chrome for Testing: the pause menu, the aircraft picker and the jet HUD in the real game — Esc opens/closes the menu, Restart works after a crash (twice), the picker switches to the F-16 (jet HU… |
 | `menu.test.ts` | 307 | Tests. |
 | `menuSystem.test.ts` | 240 | Tests. |
 | `messages.test.ts` | 129 | Tests. |
+| `navalHud.test.ts` | 176 | Tests. |
 | `picker.test.ts` | 164 | Tests. |
+| `raceHud.test.ts` | 140 | Tests. |
 | `seekerView.feedback.test.ts` | 124 | The Maverick picture-in-picture must never draw with a texture that is attached to the framebuffer it is drawing into: WebGL reports that as "GL_INVALID_OPERATION: Feedback loop formed between Framebuffer and active T… |
 | `seekerView.test.ts` | 234 | The Maverick view picture (picture-in-picture): the white-hot spots over the vehicles (pure, projected with the view camera), the corner blit, the ≤ maxHz refresh, and — with a recording stand-in for THREE.WebGLRender… |
 | `veil.test.ts` | 217 | Tests. |
@@ -1355,6 +1515,30 @@ Tests for the instruments, gauges, HUD layout, gear warning, messages and loadin
 | File | Lines | What it is |
 | --- | ---: | --- |
 | `hullLoft.test.ts` | 284 | The generic hull loft (src/vessels/hullLoft.ts, src/vessels/hullSection.ts): the PCHIP section interpolation passes through the station table and never overshoots it; the lofted skin has a ring exactly on every statio… |
+
+### `tests/vessels/cruise/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `anchors.test.ts` | 263 | The MS Tater Star model agrees with the physics (CRUISE_AIRCRAFT.watercraft / .geometry): the drawn hull passes through the station table the physics floats; the propellers are centred on the shaft propulsors with the… |
+| `functional.test.ts` | 245 | Functional: the whole MS Tater Star model built in node — render budget (draw calls, triangles) in every view and state, the distant LOD, build time, crash break-up parts (disjoint identity containers, masses summing … |
+
+### `tests/vessels/iowa/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `anchors.test.ts` | 273 | The USS Iowa model agrees with the physics and the gunnery contract (IOWA_AIRCRAFT, IOWA_WEAPONS): the drawn hull passes through the station table the physics floats; each turret turns about its config position; the d… |
+| `functional.test.ts` | 225 | Functional: the whole USS Iowa model built in node — the render budget (draw calls, triangles) in every view and state and from afar (the detail LODs drop out), build time, few shared materials, the crash break-up par… |
+| `turrets.test.ts` | 114 | The Iowa's turret contract, pure maths (src/vessels/iowa/turrets.ts — what the naval gunnery imports): a muzzle is at position + R_y(train) · ((x_k, trunnionHeight, −trunnionForward) + R_x(elev) · (0, 0, −barrelLength… |
+
+### `tests/vessels/seadoo/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `anchors.test.ts` | 236 | The Sea-Doo model agrees with the physics (SEADOO_AIRCRAFT.watercraft / .geometry) within a few cm: the drawn hull passes through the station table the physics floats, the nozzle exit is on the propulsor position with… |
+| `animation.test.ts` | 268 | The Sea-Doo's moving parts go the right way: + steer (bow to starboard) turns the bars right and swings the nozzle's exit to starboard (the jet pushes the stern to port); + trim aims the jet down; the bucket comes dow… |
+| `functional.test.ts` | 229 | Functional: the whole Sea-Doo model built in node — render budget (≤ 25 draw calls, triangles) in every view and state, build time, crash break-up parts (disjoint identity containers, masses summing to craft + rider) … |
+| `helpers.ts` | 108 | Shared helpers for the Sea-Doo model tests: visual / vessel states, body-frame vertices and bounds, draw calls. |
 
 ### `tests/vessels/v50/`
 
@@ -1434,6 +1618,28 @@ Tests for grass placement and geometry.
 | --- | ---: | --- |
 | `grass.test.ts` | 140 | Tests. |
 
+### `tests/world/harbour/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `berths.test.ts` | 246 | Berths by size (src/world/port.ts): the registry, choosing a berth for a vessel (by fleet id, else warship → naval, else by size), each ship berth's depth and clearance for the largest ship it takes and for stand-ins … |
+| `navaids.test.ts` | 234 | Aids to navigation (src/world/harbour/navaids.ts): light characters as charted, the Gull Island lighthouse's rotating optic showing Fl(2) W 10s from every bearing, the lateral buoys on the right sides of each channel … |
+| `obstacles.test.ts` | 176 | What you see is what you hit: the cruise terminal's and the naval pier's obstacle columns (src/world/harbour/obstacles.ts) against their drawn geometry (models.ts), the landable decks, the navaid obstacles (buoys, lig… |
+| `render.test.ts` | 116 | The port renderer (src/world/harbour/render.ts) driven in node (no WebGL: the BatchedMesh and point bookkeeping is plain JS): the draw-call budget (three: structures + buoys, lights, beams), time-sliced build, buoys r… |
+| `routes.test.ts` | 76 | The traffic keeps clear of the big-ship port: every sea route still validates (none rejected) and keeps well away from the piers and from each berth's reserved water (the largest ship it takes), the marina's harbour l… |
+
+### `tests/world/offshore/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `helideck.test.ts` | 96 | Functional (pure physics): the Bell 206 JetRanger lands on Tater Alpha's helideck and sits on it. |
+| `helpers.ts` | 20 | Shared helpers for the offshore scenery tests. |
+| `hull.test.ts` | 75 | Hulls against the offshore scenery (pure physics, the Princess V50's hull model): an inflatable race buoy is a SOFT obstacle — driven into at speed, the boat bumps off it and slows, nothing crashes (a hard obstacle of… |
+| `models.test.ts` | 225 | Offshore models (render, run in Node): finite geometry, triangle budgets and LOD, the helideck drawn where the physics has it, the turbine instances yawed into the wind with the rotor turning at the commanded rpm, the… |
+| `platform.test.ts` | 177 | "Tater Alpha" (src/world/offshore/platform.ts): where it stands (water depth, the traffic routes, the islands), its obstacles (the topside wall down to the sea bed, the derrick, the flare boom), the helideck as a land… |
+| `raceCourse.test.ts` | 383 | The jet-ski race course (src/world/offshore/raceCourse.ts): placement (depth for a jet ski, clearance from the traffic routes, the marina and the beach), the course's shape (lap length, left and right turns), the chec… |
+| `windFarm.test.ts` | 148 | The Tater Bank wind farm (src/world/offshore/windFarm.ts): placement (depth 15–45 m, clear of Seal Rock, the islands and every traffic route, inside its box, spacing), the wind the turbines turn in (config sea wind, o… |
+
 ### `tests/world/roads/`
 
 Tests for the road plan, ribbons, markings and depth pull.
@@ -1492,7 +1698,7 @@ Tests for traffic paths, sea routes, wakes, air circuits and models.
 | `clock.test.ts` | 55 | Tests. |
 | `daylight.test.ts` | 42 | Tests. |
 | `harbourObstacles.test.ts` | 204 | Tests. |
-| `hullTrack.test.ts` | 101 | Tests. |
+| `hullTrack.test.ts` | 126 | Tests. |
 | `jobs.test.ts` | 101 | Tests. |
 | `models.test.ts` | 303 | Tests. |
 | `path.test.ts` | 117 | Tests. |
@@ -1529,7 +1735,22 @@ Tests for waves, bathymetry, river and the water system.
 | `reeds.test.ts` | 131 | Tests. |
 | `river.test.ts` | 205 | Tests. |
 | `shading.test.ts` | 237 | Tests. |
-| `wakeField.test.ts` | 118 | The player's wake field (src/world/water/wakeField.ts): Kelvin geometry (the 19.47° cusp, the Rabaud–Moisy narrowing at planing speed, the dispersion-relation wavelength), realistic heights, decay with distance, nothi… |
+| `wake.e2e.test.ts` | 80 | End-to-end: the player's wake in the real page (headless Chrome for Testing, GPU WebGL). |
+| `wakeField.test.ts` | 120 | The player's wake field (src/world/water/wakeField.ts): Kelvin geometry (the 19.47° cusp, the Rabaud–Moisy narrowing at planing speed, the dispersion-relation wavelength), realistic heights, decay with distance, nothi… |
+| `wakeVessels.test.ts` | 281 | The wake for ANY vessel (src/world/water/wakeField.ts): a 3.3 m jet ski, the 15.5 m Princess V50 and a 265 m ship read the same field, scaled by their length, beam, speed, planing fraction and propulsor load. |
 | `water.e2e.test.ts` | 70 | End-to-end: the water in the real page (headless Chrome for Testing, GPU WebGL). |
 | `water.functional.test.ts` | 152 | Tests. |
 | `waves.test.ts` | 236 | Tests. |
+
+### `tests/world/wildlife/`
+
+| File | Lines | What it is |
+| --- | ---: | --- |
+| `audio.test.ts` | 103 | Tests. |
+| `dolphins.test.ts` | 347 | Tests. |
+| `effects.test.ts` | 123 | Tests. |
+| `gulls.test.ts` | 270 | Tests. |
+| `render.test.ts` | 165 | Tests. |
+| `support.ts` | 24 | Shared fixtures for the wildlife tests: the default world's water, layout and marina. |
+| `system.test.ts` | 67 | Tests. |
+| `whales.test.ts` | 144 | Tests. |

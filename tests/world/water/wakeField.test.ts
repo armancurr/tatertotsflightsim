@@ -48,7 +48,9 @@ describe('wake field: heights', () => {
       expect(max).toBeGreaterThan(0.1);
       expect(max).toBeLessThan(1.0);
     }
-    expect(wakeAmplitude(14.7, B, 0.75)).toBeLessThan(0.6);
+    // the source amplitude is raised on the plane (the hull filter removes the long waves; the short
+    // diverging ones carry the energy) — the drawn field above stays under a metre
+    expect(wakeAmplitude(14.7, B, 0.75)).toBeLessThan(0.8);
   });
 
   it('the waves decay behind the boat', () => {

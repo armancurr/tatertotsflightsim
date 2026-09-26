@@ -183,7 +183,7 @@ state (the HUD, the audio, the model and `window.sim.rotor` read it).
 
 ### 5c. Boats and ships (`hull.ts`)
 
-A config with a `watercraft` section (the Princess V50) is handed whole to `stepVessel()` in
+A config with a `watercraft` section (every vessel) is handed whole to `stepVessel()` in
 `hull.ts`: a vessel has no wing, gear or runway, and its phase is `'afloat'` (or `'crashed'`). One
 model covers every size — a battleship would be a different station table and different numbers:
 
@@ -216,9 +216,38 @@ model covers every size — a battleship would be a different station table and 
 
 The **sea clock** is shared: the vessel carries `vessel.seaTime` and the app hands it to every
 system as `SystemFrame.waveTime`, so the water is drawn at exactly the time the hull floats on (the
-sea pauses with the sim while a vessel is driven). The port — the reserved visitors' berth in the
-Port Chateau marina and an open-sea start — is `src/world/port.ts`; `R` goes back to the berth,
+sea pauses with the sim while a vessel is driven).
+
+Four vessels use it: the Princess V50 (planing, IPS pods), the Sea-Doo RXP-X 325 (a `'jet'`
+propulsor — pump flow, steerable nozzle, iBR bucket — on strip-theory planing, with a rider who
+leans and rights a capsize), the MS Tater Star (displacement, two shafts and rudders, six `'thruster'`
+tunnel thrusters on the aileron axis) and the USS Iowa (four shafts, twin rudders). An at-speed
+start (`createVesselState` with `speedKt`) pre-runs the hull in calm water, holding the speed and
+the shafts at the lever's rpm while the helmsman trims the lever on the surge acceleration, so a
+jet ski and a battleship both start in gear at the speed asked for.
+
+**The port** (`src/world/port.ts`, structures in `src/world/harbour/`): three berths chosen by
+vessel (`vesselBerth(def)`: the marina's visitors' pontoon, the cruise terminal east of it, the
+naval pier west of it — piers on piles built out to deep enough water), an open-sea start, the
+Gull Island lighthouse, the marina's harbour lights and IALA-A channel buoys. The berthed-ships
+system shows the cruise ship and the Iowa at their berths when you aren't driving them. Pier decks
+and a berthed ship's deck are **landable decks** (`Environment.deckTop`, `registerDeckSource`):
+aircraft stand on them and measure AGL from them (the helicopter lands on the Iowa's helipad or the
+oil rig's helideck); vessels ignore decks and hit the obstacle. **Soft obstacles**
+(`softObstacleTop`: the race buoys) push a hull away without damage. `R` goes back to the berth,
 `Shift+R` starts underway offshore.
+
+**Offshore and wildlife** (`src/world/offshore/`, `src/world/wildlife/`, docs/OFFSHORE.md): the
+Tater Alpha platform with its helideck and flare, a 16-turbine wind farm yawing with the wind, the
+jet-ski race course with a lap timer (`src/ui/raceHud.ts`), and dolphins (pods that come and ride
+a moving bow), humpbacks (blows, fluke dives, breaches), gulls and seals — instanced, animated in
+the vertex shader, a handful of draw calls.
+
+**The wake** (`src/game/systems/playerWake.ts`, `src/world/water/wake*.ts`) is part of the sea
+surface: the player's hull renders a Kelvin wave field plus a foam-density and track-direction map
+that the sea shader samples — marbled propwash that ages into lace, aerated turquoise water, the
+centreline slick, whitecaps on the steep wake crests — scaled from the hull's length, beam, speed and
+engine load, from a jet ski's rooster tail to a battleship's kilometre-long lane.
 
 ## 6. Controls, cameras and the loop
 
@@ -458,6 +487,15 @@ nothing). Keys: hold **Q** / Enter to fire the gun, **T** to pick a target, **Z*
 missile. `?spawn=range` starts you near the targets; `window.sim.combat` shows it all, and
 `window.sim.combatDebug` / `window.sim.airTargets` help QA. Adding target classes is covered in
 [docs/ADDING_VEHICLES_AND_TARGETS.md](docs/ADDING_VEHICLES_AND_TARGETS.md).
+
+**Naval guns** (`src/combat/naval*.ts`; systems `navalGuns`, `navalHud`, `navalRange`, `navalAudio`):
+any vehicle whose `config.weapons.naval` is set (the USS Iowa) gets turrets that train and elevate
+at their real rates toward a ballistic fire-control solution for the point under the mouse (or a
+locked target), respect their training arcs, and fire rippled salvos on Q from the guns that are
+loaded and on target. Shells are unguided (drag, flight times up to ~90 s); water columns, muzzle
+blast and a pressure ring are effect meshes. `WeaponsStatus.turrets` drives the ship's model
+(`AircraftVisualState.turrets`). The gunnery range (`CONFIG.combat.gunnery`) floats rafts, hulked
+freighters and a towed sled as combat targets (`SeaKind`) — the jets' guns and Mavericks hit them too.
 
 ## 10. The aircraft on screen (src/aircraft)
 

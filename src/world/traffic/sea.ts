@@ -523,7 +523,9 @@ export function* defineRoutesJob(layout: WorldLayout, marina: MarinaLayout, cfg:
 
   // ── Motor yachts: long loops along the coast at planing speed ──
   const motorLoops: XZ[][] = [
-    [{ x: -3900, z: 8480 }, { x: -1500, z: 8560 }, { x: -350, z: 8880 }, { x: -1600, z: 9180 }, { x: -4100, z: 8980 }],
+    // (its inshore leg runs ~1 km off the beach: clear of the cruise terminal's pier head and its
+    // channel buoys, src/world/harbour/layout.ts, and of the jet-ski course off the beach)
+    [{ x: -3750, z: 8760 }, { x: -1500, z: 8620 }, { x: -350, z: 8880 }, { x: -1600, z: 9180 }, { x: -4100, z: 8980 }],
     [{ x: -500, z: 10650 }, { x: 2500, z: 10500 }, { x: 5600, z: 10250 }, { x: 4600, z: 11050 }, { x: 1000, z: 11250 }],
     [{ x: -7200, z: 8250 }, { x: -9800, z: 8150 }, { x: -12200, z: 8450 }, { x: -11000, z: 8950 }, { x: -8000, z: 8750 }],
   ];

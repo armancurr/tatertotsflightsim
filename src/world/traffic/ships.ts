@@ -14,8 +14,8 @@
  *     as the sea.
  *  3. One point list: bow spray of planing boats (pooled particles),
  *     navigation lights at dusk/dawn (sidelights, masthead, stern, trawler
- *     lights, anchor lights), quay lamps, pier lamps and the flashing
- *     harbour-entrance beacons.
+ *     lights, anchor lights), quay lamps and pier lamps (the harbour-
+ *     entrance beacons are lit by the port system: src/world/harbour).
  *
  * Built as a time-sliced job (`build(budgetMs)`: the sea plan's route
  * validation, then one model per step) so no frame stalls. Nothing here
@@ -316,15 +316,12 @@ export function createShips(opts: ShipsOptions = {}): Ships {
         staticLamps.push({ x: tm.x + ax * x - az * 4.4, y: 11.5, z: tm.z + az * x + ax * 4.4, c: WARM, size: 0.5, flash: 0, phase: 0 });
       }
     }
-    // marina lamps: quay lamps and the entrance beacons (Fl.R / Fl.G 4 s)
+    // marina lamps: the quay lamps (the entrance beacons' Fl R 4s / Fl G 4s are lit with the other aids
+    // to navigation: src/world/harbour/navaids.ts, drawn by the port system)
     const q = marina.quay;
     for (let u = q.u0 + 30; u < q.u1; u += 60) {
       const p = toWorld(f, u, q.w0 + 4.3);
       staticLamps.push({ x: p.x, y: q.top + 6.0, z: p.z, c: WARM, size: 0.5, flash: 0, phase: 0 });
-    }
-    for (const b of marina.beacons) {
-      const p = toWorld(f, b.u, b.w);
-      staticLamps.push({ x: p.x, y: 9.0, z: p.z, c: b.color === 'red' ? RED : GREEN, size: 1.1, flash: 4, phase: b.color === 'red' ? 0 : 2 });
     }
     // ── moving vessels ──
     for (const r of plan.routes) {

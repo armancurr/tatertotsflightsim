@@ -35,7 +35,7 @@ export const HARBOUR_DIMS = {
 // ─── Primitives (in a local frame: u along, w across; heights m MSL) ────────────────────────────
 
 /** Axis-aligned box. */
-interface BoxP {
+export interface BoxP {
   k: 0;
   u0: number;
   u1: number;
@@ -44,7 +44,7 @@ interface BoxP {
   top: number;
 }
 /** Vertical cylinder. */
-interface DiscP {
+export interface DiscP {
   k: 1;
   u: number;
   w: number;
@@ -52,7 +52,7 @@ interface DiscP {
   top: number;
 }
 /** Cone / mound: flat top y1 within r1, falling linearly to y0 at r0. */
-interface ConeP {
+export interface ConeP {
   k: 2;
   u: number;
   w: number;
@@ -62,7 +62,7 @@ interface ConeP {
   y0: number;
 }
 /** A profile swept along a segment: height = lerp(y0, y1, t) + prof(d), d = distance from the segment. */
-interface SweepP {
+export interface SweepP {
   k: 3;
   au: number;
   aw: number;
@@ -73,7 +73,8 @@ interface SweepP {
   /** [d, y] pairs, ascending d; beyond the last d nothing. */
   prof: readonly (readonly [number, number])[];
 }
-type Prim = BoxP | DiscP | ConeP | SweepP;
+/** An obstacle primitive (also used by the big-ship port, src/world/harbour/obstacles.ts). */
+export type Prim = BoxP | DiscP | ConeP | SweepP;
 
 const CELL = 6;
 
@@ -115,7 +116,8 @@ function primBounds(p: Prim): [number, number, number, number] {
   }
 }
 
-function buildSet(frame: { ox: number; oz: number; ux: number; uz: number; wx: number; wz: number }, prims: Prim[]): ObstacleSet {
+/** Buckets primitives (in the frame's u, w) into an obstacle set. */
+export function buildSet(frame: { ox: number; oz: number; ux: number; uz: number; wx: number; wz: number }, prims: Prim[]): ObstacleSet {
   let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
   const bounds = prims.map(primBounds);
   for (const [p0, p1, q0, q1] of bounds) {

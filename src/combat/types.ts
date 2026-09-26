@@ -16,8 +16,15 @@ import type { Quat, SurfaceType, Vec3 } from '../types';
 /** Ground vehicles (the range) and aircraft to shoot down (CONFIG.combat.targets[kind].air). */
 export type GroundKind = 'tank' | 'ifv' | 'apc' | 'truck' | 'aaa';
 export type AirKind = 'fighter' | 'attack' | 'helo';
-export type TargetKind = GroundKind | AirKind;
-export type WeaponKind = 'gun' | 'missile';
+/**
+ * Floating targets at the naval gunnery range (src/combat/navalRange.ts): a raft with a radar-reflector
+ * frame, a hulked freighter, a towed target sled. Like a ground vehicle their box stands on `position`,
+ * which is the KEEL (the box spans keel … top, so it reaches below the waterline).
+ */
+export type SeaKind = 'raft' | 'hulk' | 'sled';
+export type TargetKind = GroundKind | AirKind | SeaKind;
+/** 'shell': a ship's gun shell (the naval guns, src/combat/navalShells.ts) — blast damage, no armour factor. */
+export type WeaponKind = 'gun' | 'missile' | 'shell';
 export type HullFace = 'front' | 'side' | 'rear' | 'top' | 'bottom';
 
 export interface GroundTarget {
@@ -93,7 +100,9 @@ export type CombatEvent =
   | { type: 'detonation'; time: number; weapon: WeaponKind; position: Vec3; targetId: number | null; blastRadiusM: number; surface: ImpactSurface }
   | { type: 'lock'; time: number; targetId: number }
   | { type: 'lockLost'; time: number; targetId: number | null }
-  | { type: 'reload'; time: number };
+  | { type: 'reload'; time: number }
+  /** A ship's gun fired (naval guns): the muzzle (world), the bore direction (unit), turret / gun index, calibre. */
+  | { type: 'navalFire'; time: number; turret: number; gun: number; position: Vec3; direction: Vec3; caliberMm: number };
 
 export type CombatListener = (e: CombatEvent) => void;
 
@@ -135,6 +144,20 @@ export interface WeaponsStatus {
   /** Slant range to the CCIP point, m. */
   ccipRangeM: number | null;
   missilesInFlight: number;
+  /** Ships with turrets (CONFIG.weapons.naval.turrets order): written by the naval-gunnery system. Absent = none. */
+  turrets?: TurretStatus[];
+}
+
+/** One ship's turret, live (drives the 3D model and the HUD). */
+export interface TurretStatus {
+  /** Train (deg, relative to the bow, + starboard) and gun elevation (deg). */
+  trainDeg: number;
+  elevDeg: number;
+  /** Per gun: recoil 0..1 (1 = fully back, just fired) and muzzle flash 0..1. */
+  recoil: number[];
+  flash: number[];
+  /** Per gun: loaded and ready to fire. */
+  ready: boolean[];
 }
 
 export interface CombatStats {

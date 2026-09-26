@@ -64,6 +64,16 @@ export interface MarineEngineAudioInputs {
   propRps: number;
   /** Propeller thrust, N (+ ahead). */
   thrustN: number;
+  // Sea-Doo (pwc) voice: waterjet fields (from PropulsorState.jet; present only on 'jet' propulsors).
+  /** Pump flow, m³/s. */
+  flow?: number;
+  /** Jet speed out of the nozzle, m/s. */
+  jetSpeed?: number;
+  /** 0 = intake full of water … 1 = sucking air (airborne): the pump ventilates. */
+  ventilation?: number;
+  /** Reverse bucket (iBR) 0 = up (ahead) … 1 = down (astern). */
+  bucket?: number;
+  // End Sea-Doo (pwc) voice.
 }
 
 /**
@@ -134,7 +144,7 @@ export interface AudioSystem {
   update(a: AudioInputs, dt: number): void;
   setMuted(m: boolean): void;
   readonly muted: boolean;
-  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'), the JetRanger's Allison 250 + rotors ('turboshaft'), the Princess V50's D6 diesels + IPS drives + hull ('marineDiesel'). */
+  /** Which engine voice plays: the Cessna's O-360 + prop ('piston'), the F-16's F110 ('jet'), the A-10's TF34s ('turbofan'), the JetRanger's Allison 250 + rotors ('turboshaft'), the Princess V50's D6 diesels + IPS drives + hull ('marineDiesel'), the Sea-Doo RXP-X's Rotax 1630 + jet pump ('pwc'). */
   setEngine(kind: EngineSound): void;
   readonly engine: EngineSound;
   /** An explosion near the wreck (the crash effects' `sim:explosion`); size 0..1, distance from the camera, m. */
@@ -151,6 +161,8 @@ export interface AudioSystem {
   meter(): AudioMeter | null;
   /** The AudioContext once created (null before resume() or when WebAudio is unavailable). */
   readonly context: BaseAudioContext | null;
+  /** The master bus input (mute, pause, compressor, limiter) for other sound modules — the naval guns (src/audio/naval.ts); null before the context exists. */
+  readonly masterInput: AudioNode | null;
   /** QA/debug: the last target of every channel (gains 0..1, Hz for filters/oscillators) + counters. */
   levels(): Readonly<AudioLevels>;
   dispose(): void;
@@ -252,6 +264,15 @@ export interface AudioLevels {
   grind: number;
   /** Gearbox shifts heard since start (ahead / neutral / astern). */
   gearClunks: number;
+  // ── Sea-Doo (pwc) voice: the Rotax 1630 + jet pump + hull (1 while the 'pwc' voice plays; it reuses the marine
+  //    channels — marineRpm, engineLoad, turbo / turboHz = the supercharger whine, hullRush, skim, wash, slapRate,
+  //    hullSlaps, grind, gearClunks = iBR bucket clunks — and firingHz, cycleHz, bladeHz = impeller blades, exhaust,
+  //    mechanical = the snarl, prop = impeller tone, starter; all 0 for the other voices) ──
+  pwc: number;
+  /** Water roaring through the pump 0..1, and the ventilation sputter 0..1 (the intake sucking air). */
+  pump: number;
+  pumpVent: number;
+  // End Sea-Doo (pwc) voice.
   // ── Combat ──
   /** Gun gate (1 while rounds leave the barrel), its fundamental (firing rate, Hz), the exterior delay d / c (s). */
   gun: number;
