@@ -181,6 +181,74 @@ integration are shared — but `rotor.ts` replaces the wing (`aero.ts`) and the 
 `Controls.throttle` is the collective; `AircraftState.rotor` carries the rotor, engine and assist
 state (the HUD, the audio, the model and `window.sim.rotor` read it).
 
+### 5c. Boats and ships (`hull.ts`)
+
+A config with a `watercraft` section (every vessel) is handed whole to `stepVessel()` in
+`hull.ts`: a vessel has no wing, gear or runway, and its phase is `'afloat'` (or `'crashed'`). One
+model covers every size — a battleship would be a different station table and different numbers:
+
+- **The hull is a table of stations** (`hull.stations`: keel, chine, deck edge; bow → stern) that
+  the physics resamples into a grid of vertical **columns** and the 3D model lofts
+  (`src/vessels/hullLoft.ts`) — what floats is what you see.
+- **Buoyancy:** each column's wet part displaces water (ρ g V at its centroid) against the **same
+  Gerstner sea the renderer draws** (`src/world/water/waves.ts`, with the shader's shoaling),
+  sampled on a coarse grid over the hull at the vessel's wave clock. Heave, pitch, roll, righting
+  moment and riding the waves come from the shape. Columns also feel linear + quadratic vertical
+  damping relative to the moving surface.
+- **The hull's own wave:** a Kelvin transverse wave (λ = 2πU²/g, crest at the bow, zero mean) added
+  to the surface the columns see: near Fn 0.5 its trough sits under the stern — the hump trim of a
+  planing hull, the sinkage and trim of a ship.
+- **Planing (Savitsky):** dynamic lift ½ρV²B²C_Lβ from the running trim (flow angle + the wet
+  bottom's rocker) and the wetted length/beam, at Savitsky's centre of pressure, laterally at the
+  wet bottom's immersion centroid shifted toward the side leading into a skid (so a V-bottom banks
+  into its turns), with the pitch damping of the lift spread along the bottom. At planing speed
+  most of the hydrostatic pressure turns into this lift (the transom runs dry).
+- **Resistance:** ITTC-57 friction × form factor on the live wetted surface; a residuary Cr(Fn)
+  table (the hump); windage. **Manoeuvring:** Clarke's linear derivatives from the live length,
+  draft, beam and block coefficient, strip cross-flow drag, added mass by immersion.
+- **Propulsion:** per propulsor, a governed marine diesel (torque rise, turbo lag) on a shaft whose
+  speed comes from the torque balance with a propeller's KT(J)/KQ(J) curves; pods turn the thrust
+  line, shaft drives have a rudder in the slipstream; the leg or rudder is also a foil. Trim tabs,
+  a helm lever through neutral into astern, mooring lines at the berth.
+- **Contacts:** points round the hull against the sea bed and the shore (`groundHeight`) and
+  structures (`obstacleTop`: the marina's pontoons, quays and moored boats); a hard or fast hit
+  holes the hull; lying past 75° capsizes it.
+
+The **sea clock** is shared: the vessel carries `vessel.seaTime` and the app hands it to every
+system as `SystemFrame.waveTime`, so the water is drawn at exactly the time the hull floats on (the
+sea pauses with the sim while a vessel is driven).
+
+Four vessels use it: the Princess V50 (planing, IPS pods), the Sea-Doo RXP-X 325 (a `'jet'`
+propulsor — pump flow, steerable nozzle, iBR bucket — on strip-theory planing, with a rider who
+leans and rights a capsize), the MS Tater Star (displacement, two shafts and rudders, six `'thruster'`
+tunnel thrusters on the aileron axis) and the USS Iowa (four shafts, twin rudders). An at-speed
+start (`createVesselState` with `speedKt`) pre-runs the hull in calm water, holding the speed and
+the shafts at the lever's rpm while the helmsman trims the lever on the surge acceleration, so a
+jet ski and a battleship both start in gear at the speed asked for.
+
+**The port** (`src/world/port.ts`, structures in `src/world/harbour/`): three berths chosen by
+vessel (`vesselBerth(def)`: the marina's visitors' pontoon, the cruise terminal east of it, the
+naval pier west of it — piers on piles built out to deep enough water), an open-sea start, the
+Gull Island lighthouse, the marina's harbour lights and IALA-A channel buoys. The berthed-ships
+system shows the cruise ship and the Iowa at their berths when you aren't driving them. Pier decks
+and a berthed ship's deck are **landable decks** (`Environment.deckTop`, `registerDeckSource`):
+aircraft stand on them and measure AGL from them (the helicopter lands on the Iowa's helipad or the
+oil rig's helideck); vessels ignore decks and hit the obstacle. **Soft obstacles**
+(`softObstacleTop`: the race buoys) push a hull away without damage. `R` goes back to the berth,
+`Shift+R` starts underway offshore.
+
+**Offshore and wildlife** (`src/world/offshore/`, `src/world/wildlife/`, docs/OFFSHORE.md): the
+Tater Alpha platform with its helideck and flare, a 16-turbine wind farm yawing with the wind, the
+jet-ski race course with a lap timer (`src/ui/raceHud.ts`), and dolphins (pods that come and ride
+a moving bow), humpbacks (blows, fluke dives, breaches), gulls and seals — instanced, animated in
+the vertex shader, a handful of draw calls.
+
+**The wake** (`src/game/systems/playerWake.ts`, `src/world/water/wake*.ts`) is part of the sea
+surface: the player's hull renders a Kelvin wave field plus a foam-density and track-direction map
+that the sea shader samples — marbled propwash that ages into lace, aerated turquoise water, the
+centreline slick, whitecaps on the steep wake crests — scaled from the hull's length, beam, speed and
+engine load, from a jet ski's rooster tail to a battleship's kilometre-long lane.
+
 ## 6. Controls, cameras and the loop
 
 - **Controls (`src/input`)** — pure `updateControls(state, inputFrame, dt)`. Keys move the yoke
@@ -350,7 +418,7 @@ the same wiring file.
 ## 9b. The fleet (src/fleet) — more than one aircraft
 
 Every flyable aircraft is an `AircraftDef` in `src/fleet/index.ts`: an id (`c172rg`, `f16`, `a10`,
-`b747`, `b206`),
+`b747`, `b206`, and the yacht `v50`),
 names, a **full config** (the same shape as `CONFIG`, with its own `aircraft` and `weapons` sections
 and optional camera overrides — the physics, cameras, instruments and weapons just receive it),
 which HUD it uses (`steam` gauges or a `jet` head-up display), which engine sound (`piston`, `jet`
@@ -367,6 +435,12 @@ restarts on the runway, and every system hears `onAircraftChange(def, model)`.
 | `a10` | A-10C Thunderbolt II | jet | turbofan | GAU-8/A, 4 × AGM-65, 2 × AIM-9 (`A10_WEAPONS`) |
 | `b747` | Boeing 747-400 (flown light, ~220 t) | steam | turbofan | none |
 | `b206` | Bell 206B-3 JetRanger III (helicopter, `rotorcraft` config) | steam (dual tach, torquemeter) | turboshaft | none |
+| `v50` | Princess V50 motor yacht (`kind: 'vessel'`, `watercraft` config) | marine (helm display) | marineDiesel | none |
+
+A **vessel** is a fleet entry too (`kind: 'vessel'`, a `watercraft` config section, the model under
+`src/vessels/<name>/`): the picker lists it under "Vessels", it starts at its berth instead of a
+runway, and [docs/ADDING_A_VESSEL.md](docs/ADDING_A_VESSEL.md) walks through adding one (a
+runabout, a ferry, a cruise ship, a warship).
 
 **To add an aircraft:** (1) add its section to `src/config.ts` with the same shape as
 `CONFIG.aircraft` — geometry first, because the physics contact points and the 3D model share it;
@@ -413,6 +487,15 @@ nothing). Keys: hold **Q** / Enter to fire the gun, **T** to pick a target, **Z*
 missile. `?spawn=range` starts you near the targets; `window.sim.combat` shows it all, and
 `window.sim.combatDebug` / `window.sim.airTargets` help QA. Adding target classes is covered in
 [docs/ADDING_VEHICLES_AND_TARGETS.md](docs/ADDING_VEHICLES_AND_TARGETS.md).
+
+**Naval guns** (`src/combat/naval*.ts`; systems `navalGuns`, `navalHud`, `navalRange`, `navalAudio`):
+any vehicle whose `config.weapons.naval` is set (the USS Iowa) gets turrets that train and elevate
+at their real rates toward a ballistic fire-control solution for the point under the mouse (or a
+locked target), respect their training arcs, and fire rippled salvos on Q from the guns that are
+loaded and on target. Shells are unguided (drag, flight times up to ~90 s); water columns, muzzle
+blast and a pressure ring are effect meshes. `WeaponsStatus.turrets` drives the ship's model
+(`AircraftVisualState.turrets`). The gunnery range (`CONFIG.combat.gunnery`) floats rafts, hulked
+freighters and a towed sled as combat targets (`SeaKind`) — the jets' guns and Mavericks hit them too.
 
 ## 10. The aircraft on screen (src/aircraft)
 

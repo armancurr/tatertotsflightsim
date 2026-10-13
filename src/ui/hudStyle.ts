@@ -57,6 +57,7 @@ export const HUD_CSS = `
 }
 .fsh-ann.fsh-warning { background: linear-gradient(180deg, #f0443a, #b8160d); color: #fff; box-shadow: 0 0 22px rgba(255,50,35,0.55), inset 0 1px 0 rgba(255,255,255,0.35); text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
 .fsh-ann.fsh-caution { background: linear-gradient(180deg, #ffc043, #e08a0b); color: #231400; box-shadow: 0 0 16px rgba(255,170,40,0.35), inset 0 1px 0 rgba(255,255,255,0.4); }
+.fsh-ann.fsh-advisory { background: linear-gradient(180deg, rgba(20,60,88,0.86), rgba(8,32,52,0.9)); color: #bfeaff; border-color: rgba(111,211,255,0.55); letter-spacing: 0.08em; box-shadow: 0 0 14px rgba(57,198,255,0.25), inset 0 1px 0 rgba(255,255,255,0.12); }
 .fsh-ann.fsh-dim { opacity: 0.28; }
 .fsh-ann[data-ann="stall"] { font-size: 1.35em; padding: 0.38em 1.1em; }
 

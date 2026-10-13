@@ -52,6 +52,13 @@ export interface SystemFrame {
   dt: number;
   /** Seconds since start (keeps running while paused). */
   time: number;
+  /**
+   * The sea's wave clock, s: what the water (and anything floating on it) animates with. Runs with
+   * `time` while an aircraft is flown; while a vessel is driven it is the vessel's own physics wave
+   * clock (VesselState.seaTime, interpolated), so the hull sits on exactly the waves that are drawn
+   * — it then pauses with the sim.
+   */
+  waveTime: number;
   paused: boolean;
   cameraMode: CameraMode;
   fps: { fps: number; avg: number; min: number; onePercentLow: number; longFrames: number; frames: number };

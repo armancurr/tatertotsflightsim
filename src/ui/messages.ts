@@ -1,6 +1,8 @@
 /**
  * Text of the HUD's messages — landing toast, crash banner, annunciators,
  * start hint and key labels. Pure (no DOM) so every wording is unit-tested.
+ * Vessels (`cfg.aircraft.watercraft` set) get their own annunciators (AGROUND, SHALLOW WATER,
+ * MOORED, ENGINES OFF — nothing about stalls or gear), start hint and crash-banner hint.
  */
 import { CONFIG, type Config, type WeaponsConfig } from '../config';
 import type { TargetKind, WeaponKind } from '../combat/types';
@@ -8,13 +10,16 @@ import { gunShortName, missileLongName } from './weaponsHudMath';
 import type { CrashRecord, InstrumentReadings, TouchdownRecord } from '../types';
 import { gearFlags } from './gearWarning';
 import { flapPlacardKt } from '../physics/placards';
+import { shallowAlarm } from './marineHud';
 
 export type MessageLevel = 'info' | 'warn' | 'good';
 
 export type AnnunciationId =
   | 'stall' | 'gearUnsafe' | 'overspeed' | 'flapOverspeed' | 'gearOverspeed' | 'gearSquat' | 'engineFailed' | 'engineOff'
   // Helicopters (InstrumentReadings.rotor):
-  | 'lowRotor' | 'overTorque' | 'vortexRing' | 'bladeStall';
+  | 'lowRotor' | 'overTorque' | 'vortexRing' | 'bladeStall'
+  // Boats and ships (InstrumentReadings.vessel):
+  | 'aground' | 'shallow' | 'moored';
 
 /** Vortex-ring-state intensity above which the VORTEX RING caution lights. */
 export const VRS_CAUTION = 0.5;
@@ -24,8 +29,8 @@ export const BLADE_STALL_CAUTION = 0.3;
 export interface Annunciation {
   id: AnnunciationId;
   text: string;
-  /** 'warning' = red (STALL and GEAR flash), 'caution' = amber. */
-  level: 'warning' | 'caution';
+  /** 'warning' = red (STALL and GEAR flash), 'caution' = amber, 'advisory' = cyan (status, e.g. MOORED). */
+  level: 'warning' | 'caution' | 'advisory';
 }
 
 const MINUS = '−';
@@ -51,12 +56,23 @@ export function describeTouchdown(td: TouchdownRecord): { text: string; level: M
   return { text: parts.join(' · '), level };
 }
 
-export function crashText(crash: CrashRecord): { title: string; hint: string } {
+export function crashText(crash: CrashRecord, cfg?: Config): { title: string; hint: string } {
+  if (cfg?.aircraft.watercraft) return { title: `WRECKED — ${crash.reason}`, hint: 'R back to the berth · Shift+R open sea · Esc menu' };
   return { title: `CRASHED — ${crash.reason}`, hint: 'R restart · Shift+R approach · Esc menu' };
 }
 
 /** Every annunciator the HUD can show, most urgent first (static per config). */
 export function annunciationList(cfg: Config = CONFIG): Annunciation[] {
+  if (cfg.aircraft.watercraft) {
+    const n = cfg.aircraft.watercraft.propulsors.length;
+    return [
+      { id: 'aground', text: 'AGROUND', level: 'warning' },
+      { id: 'engineFailed', text: 'ENGINE FAILURE', level: 'warning' },
+      { id: 'shallow', text: 'SHALLOW WATER', level: 'caution' },
+      { id: 'engineOff', text: `${n > 1 ? 'ENGINES' : 'ENGINE'} OFF · ${keysOf('engine', cfg)} to start`, level: 'caution' },
+      { id: 'moored', text: 'MOORED · lever ahead or astern to cast off', level: 'advisory' },
+    ];
+  }
   return [
     { id: 'stall', text: 'STALL', level: 'warning' },
     { id: 'gearUnsafe', text: 'GEAR', level: 'warning' },
@@ -76,6 +92,18 @@ export function annunciationList(cfg: Config = CONFIG): Annunciation[] {
 /** Is this annunciator lit for these readings? (Nothing is lit once crashed — the crash banner says it all.) */
 export function annunciationActive(id: AnnunciationId, r: InstrumentReadings, cfg: Config = CONFIG): boolean {
   if (r.state === 'crashed') return false;
+  const v = r.vessel;
+  if (v) {
+    // A boat: only the helm's flags (and the engine ones) — nothing about stalls, flaps or gear.
+    switch (id) {
+      case 'aground': return v.aground === true;
+      case 'shallow': return !v.aground && shallowAlarm(v);
+      case 'moored': return v.moored === true;
+      case 'engineFailed': return r.engineStatus === 'FAILED';
+      case 'engineOff': return r.engineStatus === 'OFF';
+      default: return false;
+    }
+  }
   const ias = Number.isFinite(r.airspeedKt) ? r.airspeedKt : 0;
   switch (id) {
     case 'stall': return r.stallWarning;
@@ -90,6 +118,10 @@ export function annunciationActive(id: AnnunciationId, r: InstrumentReadings, cf
     case 'overTorque': return r.rotor?.overTorque === true;
     case 'vortexRing': return (r.rotor?.vrs ?? 0) > VRS_CAUTION;
     case 'bladeStall': return (r.rotor?.bladeStall ?? 0) > BLADE_STALL_CAUTION;
+    case 'aground':
+    case 'shallow':
+    case 'moored':
+      return false;
   }
 }
 
@@ -147,6 +179,23 @@ export function keysOf(action: KeyAction, cfg: Config = CONFIG): string {
 /** One-line hint shown for the first seconds of a session (a helicopter gets its own). */
 export function startHint(cfg: Config = CONFIG): string {
   const k = (a: KeyAction) => keysOf(a, cfg);
+  if (cfg.aircraft.watercraft) {
+    const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
+    // Sea-Doo: a waterjet's rider — throttle, iBR, lean
+    if (cfg.aircraft.watercraft.propulsors[0]?.type === 'jet') {
+      return `${k('throttleUp')} throttle · ${k('throttleDown')} iBR neutral / reverse · ${k('brake')} brake · ${k('rollLeft')}/${k('rollRight')} steer + lean · ${k('pitchDown')}/${k('pitchUp')} lean fore / aft · ${k('trimNoseDown')}/${k('trimNoseUp')} nozzle trim · ${k('help')} controls · ${menu} menu`;
+    }
+    // a ship with tunnel thrusters (cruise-ship work): ← / → run them; no trim tabs
+    // a warship's main battery: aim with the mouse, Q fires, T locks, Z the rangefinder; no trim tabs on a ship
+    const extra = cfg.weapons?.naval
+      ? `mouse aim · ${k('fireGun')} fire · ${k('lockTarget')} lock · ${k('fireMissile')} rangefinder`
+      : cfg.aircraft.watercraft.propulsors.some((p) => p.type === 'thruster')
+        ? `${k('rollLeft')}/${k('rollRight')} thrusters`
+        : cfg.aircraft.watercraft.trimTabs
+          ? `${k('trimNoseDown')}/${k('trimNoseUp')} trim tabs`
+          : '';
+    return `${k('engine')} engines · ${k('throttleUp')}/${k('throttleDown')} lever ahead / astern · ${k('yawLeft')}/${k('yawRight')} steer · ${extra ? `${extra} · ` : ''}${k('help')} controls · ${menu} menu`;
+  }
   if (cfg.aircraft.rotorcraft) {
     const menu = keyLabel(cfg.controls.keys.pause[cfg.controls.keys.pause.length - 1] ?? 'Escape');
     return `${k('engine')} engine · ${k('throttleUp')}/${k('throttleDown')} collective · arrows cyclic · ${k('yawLeft')}/${k('yawRight')} pedals · ${k('stabilityAssist')} stability assist · ${k('help')} controls · ${menu} menu`;

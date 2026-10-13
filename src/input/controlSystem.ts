@@ -287,12 +287,17 @@ export function updateControls(
   }, t, cfg);
 
   // ── Throttle & trim ──────────────────────────────────────────────────────
+  // A boat's helm lever runs from full astern (−1) through neutral (0) to full ahead (+1); the
+  // keyboard stops at neutral on the way through (hold the key on to carry on into the other gear).
+  const vessel = cfg.aircraft.watercraft != null;
+  const lo = vessel ? -1 : 0;
   let throttle: number;
   if (gp && gp.throttle !== null && Number.isFinite(gp.throttle)) {
-    throttle = clamp(gp.throttle, 0, 1);
+    throttle = vessel ? clamp(gp.throttle * 2 - 1, -1, 1) : clamp(gp.throttle, 0, 1);
   } else {
     const dir = (isDown(keys.throttleUp) ? 1 : 0) - (isDown(keys.throttleDown) ? 1 : 0);
-    throttle = clamp(prev.throttle + dir * c.throttleRate * t, 0, 1);
+    throttle = clamp(prev.throttle + dir * c.throttleRate * t, lo, 1);
+    if (vessel && prev.throttle !== 0 && Math.sign(throttle) !== Math.sign(prev.throttle)) throttle = 0;
   }
   const trimDir = (isDown(keys.trimNoseUp) ? 1 : 0) - (isDown(keys.trimNoseDown) ? 1 : 0);
   const elevatorTrim = clamp(prev.elevatorTrim + trimDir * c.trimRate * t, -1, 1);

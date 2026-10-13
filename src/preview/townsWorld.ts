@@ -143,7 +143,7 @@ async function main() {
     renderer.info.reset();
     focus.copy(camera.position);
     atmosphere.update(camera, dt, focus);
-    systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, paused: false, cameraMode: 'orbit', fps, readings: null, def, aircraft: stubAircraft });
+    systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, waveTime: time, paused: false, cameraMode: 'orbit', fps, readings: null, def, aircraft: stubAircraft });
     rend.render(scene, camera);
     measureTowns();
     if (!window.__ready && time > settle) window.__ready = true;

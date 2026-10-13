@@ -6,7 +6,8 @@
  * fingers and piles, gangways, and the working harbour on the free east end
  * of the quay: a mobile harbour crane working the container yard (its boom
  * slewed along the quay, a box on the spreader), and a boatyard (a travel-lift
- * hoist carrying a yacht, boats on stands).
+ * hoist carrying a yacht, boats on stands), and the visitors' pontoon off the
+ * central pontoon's outer end (the player's berth: cleats, piles, a sign).
  * Also the bay ferry terminals (trestle pier, transfer ramp, berthing
  * dolphins, terminal building).
  */
@@ -14,6 +15,7 @@ import { MeshBuilder, mat, type Mat } from './builder';
 import { buildHull } from './vessels';
 import { h01 } from '../rng';
 import type { MarinaLayout } from '../sea';
+import { HARBOUR_DIMS } from '../harbourObstacles';
 
 const CONCRETE = mat(0xa8a49a, 0.85);
 const CONCRETE_DARK = mat(0x7d7a73, 0.9);
@@ -32,6 +34,9 @@ const GREEN = mat(0x1f7a3a, 0.5);
 const WHITE = mat(0xeeeeea, 0.4);
 const GLASS = mat(0x10161c, 0.08, 0.1, 0, -1); // lit windows at dusk
 const TIMBER = mat(0x5b4a3a, 0.85);
+const SIGN_YELLOW = mat(0xe8b81c, 0.5);
+const SIGN_BLUE = mat(0x1d3f8f, 0.5);
+const FENDER = mat(0x1e2a44, 0.6);
 
 /**
  * Geometry for the marina (origin = marina frame origin, +x = u along the coast, +z = w out to
@@ -57,7 +62,7 @@ export function buildMarina(m: MarinaLayout, lod = 0): MeshBuilder {
   // ── Beacons at the heads (red to port, green to starboard entering) ──
   for (const bc of m.beacons) {
     const col = bc.color === 'red' ? RED : GREEN;
-    b.cylinder([bc.u, 3.2, bc.w], [bc.u, 8.5, bc.w], 0.9, 0.75, 12, col);
+    b.cylinder([bc.u, 3.2, bc.w], [bc.u, 8.5, bc.w], HARBOUR_DIMS.beaconRadius, 0.75, 12, col);
     b.cylinder([bc.u, 6.4, bc.w], [bc.u, 7.2, bc.w], 0.83, 0.8, 12, WHITE, false);
     b.cylinder([bc.u, 8.5, bc.w], [bc.u, 9.4, bc.w], 0.35, 0.35, 8, GLASS);
     b.cylinder([bc.u, 9.4, bc.w], [bc.u, 9.8, bc.w], 0.5, 0.1, 8, col);
@@ -77,13 +82,42 @@ export function buildMarina(m: MarinaLayout, lod = 0): MeshBuilder {
     });
   }
   if (!lod) {
-    for (const f of m.fingers) b.box((f.u0 + f.u1) / 2, 0.3, f.w, f.u1 - f.u0, 0.5, 2 * f.half, PONTOON_SIDE, { bottom: true });
-    for (const pl of m.piles) {
-      b.cylinder([pl.u, -3, pl.w], [pl.u, 2.9, pl.w], 0.24, 0.24, 8, PILE, false);
-      b.cylinder([pl.u, 2.9, pl.w], [pl.u, 3.05, pl.w], 0.26, 0.2, 8, PILE_CAP);
-    }
+    const D = HARBOUR_DIMS;
+    for (const f of m.fingers) b.box((f.u0 + f.u1) / 2, D.fingerTop - 0.25, f.w, f.u1 - f.u0, 0.5, 2 * f.half, PONTOON_SIDE, { bottom: true });
+    for (const pl of [...m.piles, ...m.visitor.piles]) pile(b, pl.u, pl.w);
   }
+  buildVisitorPontoon(b, m.visitor, lod);
   return b;
+}
+
+function pile(b: MeshBuilder, u: number, w: number): void {
+  const D = HARBOUR_DIMS;
+  b.cylinder([u, -3, w], [u, D.pileTop - 0.15, w], D.pileRadius - 0.02, D.pileRadius - 0.02, 8, PILE, false);
+  b.cylinder([u, D.pileTop - 0.15, w], [u, D.pileTop, w], D.pileRadius, 0.2, 8, PILE_CAP);
+}
+
+/** The visitors' pontoon: a plain floating pontoon, cleats and fenders on the berth face, a sign at the end. */
+function buildVisitorPontoon(b: MeshBuilder, v: MarinaLayout['visitor'], lod: number): void {
+  const D = HARBOUR_DIMS;
+  const len = v.w1 - v.w0;
+  const wc = (v.w0 + v.w1) / 2;
+  b.box(v.u, 0.12, wc, 2 * v.half, 0.86, len, PONTOON_SIDE, { bottom: true });
+  b.box(v.u, v.top + 0.01, wc, 2 * v.half - 0.1, 0.02, len - 0.1, PONTOON_DECK, { bottom: true });
+  if (lod) return;
+  const edge = v.u + v.side * v.half;
+  for (const c of v.cleats) {
+    // a horn cleat: base plate and horns along the edge
+    b.box(c.u, v.top + 0.06, c.w, 0.16, 0.1, 0.22, BOLLARD);
+    b.box(c.u, v.top + D.cleatTop - 0.04, c.w, 0.1, 0.08, 0.4, BOLLARD);
+  }
+  // rubbing strip and fenders along the berth face
+  b.box(edge + v.side * 0.05, 0.3, wc, 0.1, 0.35, len, FENDER);
+  for (let w = v.w0 + 2; w < v.w1 - 1; w += 4) b.cylinder([edge + v.side * 0.12, 0.05, w], [edge + v.side * 0.12, 0.55, w], 0.1, 0.1, 6, FENDER);
+  // the sign at the outer end: a post and a board facing the harbour entrance
+  const s = v.sign;
+  b.cylinder([s.u, v.top, s.w], [s.u, v.top + D.signTop - 0.9, s.w], 0.05, 0.05, 6, BOLLARD, false);
+  b.box(s.u, v.top + D.signTop - 0.45, s.w, 1.1, 0.9, 0.08, SIGN_BLUE);
+  b.box(s.u, v.top + D.signTop - 0.45, s.w + 0.05, 0.8, 0.25, 0.02, SIGN_YELLOW);
 }
 
 function buildBreakwater(b: MeshBuilder, bw: MarinaLayout['breakwaters'][number], lod: number): void {

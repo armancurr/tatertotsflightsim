@@ -1,6 +1,6 @@
 /**
  * Public API of the pure flight-physics module (Cessna 172RG, F-16C, A-10C, 747-400 and the Bell 206
- * JetRanger helicopter — the aircraft is chosen by the config passed to step()).
+ * JetRanger helicopter, and boats and ships such as the Princess V50 — the vehicle is chosen by the config passed to step()).
  * The renderer never touches this module; this module never imports three.js
  * or touches the DOM.
  */
@@ -39,6 +39,18 @@ export { propThrust, powerTarget, throttleForPower, stepEngine, engineThrust, en
 export { groundContacts } from './ground';
 export { solveTrim, type TrimRequest, type TrimResult } from './trim';
 export { gunRecoil, type BodyWrench } from './recoil';
+export {
+  createVesselState,
+  stepVessel,
+  staticFloat,
+  hullGeometry,
+  stationAt,
+  hullBottomY,
+  leverCommand,
+  maxSteerAt,
+  vesselSurfaceAt,
+  type VesselStart,
+} from './hull';
 export {
   rotorcraftForces,
   inducedVelocity,

@@ -4,11 +4,15 @@
  * Doppler closing speed from the camera's motion). Keep one tracker per app; call it every frame.
  * Helicopters (state.rotor present): the rotor/turboshaft fields for the 'turboshaft' voice and the
  * low rotor RPM horn; the fixed-wing stall and gear horns stay silent.
+ * Vessels (state.vessel present): engines / propulsors and the hull for the 'marineDiesel' voice (the hull's
+ * vertical speed relative to the waves from the surface level's rate); no horns, gear or flap motors,
+ * touchdowns or tyres.
  */
 import { CONFIG, MS_TO_KT } from '../config';
 import type { AircraftState, CameraMode, Controls, SurfaceType, Vec3 } from '../types';
-import type { AudioInputs, RotorAudioInputs } from './types';
+import type { AudioInputs, MarineEngineAudioInputs, RotorAudioInputs, VesselAudioInputs } from './types';
 import { lowRotorRpmHorn, rotorPct } from './turboshaftMapping';
+import { gearSign } from './marineMapping';
 import { gearWarning as gearWarningOf } from '../ui/gearWarning';
 import { gearStateFromPos } from '../ui/instruments';
 import { qRotate } from '../math/quat';
@@ -42,6 +46,10 @@ const TAIL = { x: 0, y: 0, z: 1 };
 const DECEL_TAU = 0.5;
 const RAD_S_TO_RPM = 60 / (2 * Math.PI);
 const clampTo = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, f(v)));
+/** Smoothing of the hull's vertical speed relative to the water, s. */
+const HEAVE_TAU = 0.08;
+/** Propulsors a vessel reports to the sound (a fixed pool). */
+const MAX_PROPULSORS = 4;
 
 export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => AudioInputs {
   let first = true;
@@ -63,12 +71,19 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
   let lastHs = Number.NaN;
   let decel = 0;
   let rotorHorn = false;
+  // Vessels: reused inputs, the surface level's last value (for the hull's motion relative to the waves).
+  const vessel: VesselAudioInputs = {
+    engines: Array.from({ length: MAX_PROPULSORS }, (): MarineEngineAudioInputs => ({ rpm: 0, load: 0, boost: 0, gear: 0, propRps: 0, thrustN: 0 })),
+    engineCount: 0, speedMs: 0, planing: 0, trimDeg: 0, aground: false, heaveMs: 0, pitchRate: 0, rollRate: 0, moored: false,
+  };
+  let lastSurfaceY = Number.NaN;
+  let heave = 0;
   // Reused output object: no per-frame allocation. Callers must not keep it across frames.
   const out: AudioInputs = {
     rpm: 0, power: 0, engineRunning: false, starting: false, airspeedKt: 0, onGround: true, groundSpeedKt: 0,
     stallWarning: false, gearMoving: false, flapsMoving: false, touchdownFpm: null, crashed: false,
     cameraMode: 'chase', paused: false, brake: 0, surface: 'runway', gearWarning: false,
-    afterburner: 0, speedBrakeMoving: false, aft: 0, rotor: undefined, lowRotorRpm: false,
+    afterburner: 0, speedBrakeMoving: false, aft: 0, rotor: undefined, lowRotorRpm: false, vessel: undefined,
   };
 
   return (s) => {
@@ -187,9 +202,64 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
       rotorHorn = false;
     }
 
+    // Vessel: engines / propulsors, the hull in the water.
+    const vs = st.vessel;
+    if (vs) {
+      const props = Array.isArray(vs.propulsors) ? vs.propulsors : [];
+      const n = Math.min(MAX_PROPULSORS, props.length);
+      for (let i = 0; i < n; i++) {
+        const p = props[i];
+        const e = vessel.engines[i];
+        e.rpm = clampTo(p?.rpm, 0, 1e5);
+        e.load = clampTo(p?.load, 0, 5);
+        e.boost = clampTo(p?.boost, 0, 1);
+        e.gear = gearSign(p?.gear);
+        e.propRps = clampTo(p?.n, -1e4, 1e4);
+        e.thrustN = clampTo(p?.thrust, -1e8, 1e8);
+        // Sea-Doo (pwc) voice: the waterjet's pump state (only on 'jet' propulsors; the keys are absent otherwise).
+        const j = p?.jet;
+        if (j) {
+          e.flow = clampTo(j.flow, 0, 100);
+          e.jetSpeed = clampTo(j.jetSpeed, -500, 500);
+          e.ventilation = clampTo(j.ventilation, 0, 1);
+          e.bucket = clampTo(j.bucket, 0, 1);
+        } else if (e.flow !== undefined) {
+          delete e.flow;
+          delete e.jetSpeed;
+          delete e.ventilation;
+          delete e.bucket;
+        }
+        // End Sea-Doo (pwc) voice.
+      }
+      vessel.engineCount = n;
+      vessel.speedMs = clampTo(vs.speedMs, -200, 200);
+      vessel.planing = clampTo(vs.planing, 0, 3);
+      vessel.trimDeg = clampTo(vs.trimDeg, -90, 90);
+      vessel.aground = !!vs.aground;
+      vessel.moored = !!vs.mooring;
+      const w = st.angularVelocity;
+      vessel.pitchRate = clampTo(w?.x, -20, 20);
+      vessel.rollRate = clampTo(w?.z, -20, 20);
+      // The hull's vertical speed relative to the water under it (the waves' own rise and fall removed).
+      const sy = f(vs.surfaceY, Number.NaN);
+      if (Number.isFinite(sy) && Number.isFinite(lastSurfaceY) && dt > 0 && !first) {
+        const rel = clampTo(f(st.velocity.y) - (sy - lastSurfaceY) / dt, -30, 30);
+        heave += (rel - heave) * (1 - Math.exp(-dt / HEAVE_TAU));
+        if (!Number.isFinite(heave)) heave = 0;
+      } else if (!Number.isFinite(lastSurfaceY) || first) {
+        heave = clampTo(st.velocity.y, -30, 30);
+      }
+      lastSurfaceY = sy;
+      vessel.heaveMs = clampTo(heave, -30, 30);
+    } else {
+      lastSurfaceY = Number.NaN;
+      heave = 0;
+    }
+
     first = false;
     const gearHorn =
       !r &&
+      !vs &&
       (s.gearWarning ??
       gearWarningOf(
         {
@@ -203,17 +273,17 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
     out.engineRunning = !!st.engine.running;
     out.starting = !!st.engine.starting;
     out.airspeedKt = iasKt;
-    out.onGround = !!st.onGround;
+    out.onGround = !!st.onGround && !vs;
     out.groundSpeedKt = kt(d.groundSpeed);
-    out.stallWarning = !!stallWarning && !r; // a helicopter has no stall-warning vane
-    out.gearMoving = gearMoving;
-    out.flapsMoving = flapsMoving;
-    out.touchdownFpm = touchdownFpm;
+    out.stallWarning = !!stallWarning && !r && !vs; // a helicopter (or a boat) has no stall-warning vane
+    out.gearMoving = gearMoving && !vs;
+    out.flapsMoving = flapsMoving && !vs;
+    out.touchdownFpm = vs ? null : touchdownFpm;
     out.crashed = crashed;
     out.cameraMode = s.cameraMode;
     out.paused = !!s.paused;
     out.brake = Math.max(0, Math.min(1, f(s.controls.brake)));
-    out.surface = s.surface ?? 'runway';
+    out.surface = vs ? 'water' : (s.surface ?? 'runway');
     out.listenerDistanceM = listenerDistanceM;
     out.closingSpeedMs = closingSpeedMs;
     out.crashSpeedKt = crashed && st.crash ? f(st.crash.speedKt, iasKt) : undefined;
@@ -223,6 +293,7 @@ export function createAudioInputTracker(cfg = CONFIG): (s: AudioInputSource) => 
     out.aft = aft;
     out.rotor = r ? rotor : undefined;
     out.lowRotorRpm = rotorHorn;
+    out.vessel = vs ? vessel : undefined;
     return out;
   };
 }

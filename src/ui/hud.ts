@@ -9,6 +9,10 @@
  * Layout is computed in JS (computeHudLayout, pure and property-tested) and
  * applied as px; it scales with the viewport. Canvases are sized at
  * devicePixelRatio and only redrawn when what they show has changed.
+ *
+ * Styles: 'steam' (the six-pack above), 'jet' (head-up display), 'glass' (747 PFD + EICAS,
+ * src/ui/glassHud.ts) and 'marine' (boats: the helm display of src/ui/marineHud.ts under the
+ * compass tape, with "Cast off" / "Aground!" toasts and no landing toasts).
  */
 import { CONFIG, type Config } from '../config';
 import type { AircraftState, CameraMode, Controls, InstrumentReadings } from '../types';
@@ -23,6 +27,7 @@ import { topBarHeight } from './topBar';
 import { drawJetHud, createJetHudState, trackJetHud, jetHudGeometryOnGlass, type JetReadings } from './jetHud';
 import { clipToGlass, createHudGlass, hudGlassKey, projectHudGlassObjects, HUD_GLASS_KEY_LENGTH } from './hudGlass';
 import { computeGlassHudLayout, createGlassHudView, type GlassHudLayout, type GlassHudView, type GlassReadings } from './glassHud';
+import { computeMarineHudLayout, createMarineHudView, type MarineHudLayout, type MarineHudView } from './marineHud';
 import type { HudStyle } from '../fleet/types';
 import type * as THREE from 'three';
 
@@ -62,6 +67,8 @@ export interface HudLayout {
   jet: Rect | null;
   /** Airliner glass style (747): the mini PFD / EICAS blocks (src/ui/glassHud.ts); `strip` is then its systems block. */
   glass: GlassHudLayout | null;
+  /** Marine style (vessels): the nav and engines blocks (src/ui/marineHud.ts); `strip` is then the engines block. */
+  marine: MarineHudLayout | null;
   /** Height of the branding top bar the HUD sits below. */
   topInset: number;
   chip: { x: number; y: number; h: number; maxW: number };
@@ -93,8 +100,9 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   const g = mode === 'cockpitCompact' ? Math.round(g0 * 0.72) : g0;
   const jetStyle = style === 'jet';
   const glassStyle = style === 'glass';
-  const clustersVisible = mode !== 'cockpitHidden' && !jetStyle && !glassStyle;
-  const heli = !jetStyle && !glassStyle && cfg.aircraft.rotorcraft != null;
+  const marineStyle = style === 'marine';
+  const clustersVisible = mode !== 'cockpitHidden' && !jetStyle && !glassStyle && !marineStyle;
+  const heli = !jetStyle && !glassStyle && !marineStyle && cfg.aircraft.rotorcraft != null;
   const stripKind: StripKind = heli ? 'heli' : 'fixed';
   const rightGauges = heli ? 4 : 3;
   const margin = Math.round(clamp(w * 0.012, 10, 20));
@@ -149,6 +157,12 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     strip = glass.systems;
     stripRows = 1;
   }
+  // Marine (vessels): the helm blocks replace the clusters; the engines block (or the cockpit strip) is the strip.
+  const marine = marineStyle ? computeMarineHudLayout(w, h, cfg, mode) : null;
+  if (marine) {
+    strip = marine.engines;
+    stripRows = 1;
+  }
 
   const topInset = cfg.hud.topBar ? topBarHeight(w, cfg) : 0;
   const top = topInset + Math.round(margin * 0.6);
@@ -160,7 +174,13 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
   const annunciatorY = jetStyle || glassStyle ? top + 2 : compass.y + compass.h + 10;
   const pausedY = annunciatorY + Math.round(fontSize * 3.2);
   const bannerY = Math.round(Math.min(Math.max(h * 0.2, pausedY + fontSize * 4.4), h / 3 - fontSize * 7));
-  const bottomTop = clustersVisible ? Math.min(left.y, strip.y) : glass?.pfd ? Math.min(glass.pfd.y, strip.y) : strip.y;
+  const bottomTop = clustersVisible
+    ? Math.min(left.y, strip.y)
+    : glass?.pfd
+      ? Math.min(glass.pfd.y, strip.y)
+      : marine?.nav
+        ? Math.min(marine.nav.y, strip.y)
+        : strip.y;
   let jet: Rect | null = null;
   if (jetStyle) {
     const j = cfg.hud.jet;
@@ -196,6 +216,7 @@ export function computeHudLayout(width: number, height: number, cfg: Config = CO
     compassVisible: !jetStyle && !glassStyle,
     jet,
     glass,
+    marine,
     topInset,
     chip,
     annunciatorY,
@@ -243,7 +264,7 @@ export interface HudOptions {
   aircraft?: { setPanelDrawer(fn: PanelDrawerFn): void };
   /** Config override (tests, or the aircraft's own config); defaults to CONFIG. */
   config?: Config;
-  /** 'steam' (six-pack, the Cessna), 'jet' (F-16 head-up display) or 'glass' (747 PFD + EICAS). */
+  /** 'steam' (six-pack, the Cessna), 'jet' (F-16 head-up display), 'glass' (747 PFD + EICAS) or 'marine' (boats' helm). */
   style?: HudStyle;
 }
 
@@ -367,6 +388,9 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   let menuOpen = false;
   // Airliner glass style (747): the mini PFD and EICAS (src/ui/glassHud.ts).
   const airliner: GlassHudView | null = style === 'glass' ? createGlassHudView(doc, instruments, cfg) : null;
+  // Marine style (boats and ships): the helm display (src/ui/marineHud.ts).
+  const helm: MarineHudView | null = style === 'marine' ? createMarineHudView(doc, instruments, cfg) : null;
+  const vesselCfg = cfg.aircraft.watercraft != null;
 
   // Message layer.
   const messages = div('fsh-messages', el);
@@ -410,6 +434,8 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   let hintTime = 0;
   let lastTouchdown: number | null = null;
   let lastCrash: string | null = null;
+  let lastMoored: boolean | null = null;
+  let lastAground: boolean | null = null;
   let pausedShown = false;
   let hintState = 0; // 0 visible, 1 fading, 2 gone
   const toasts: Toast[] = [];
@@ -456,8 +482,9 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     leftEl.hidden = !L.clustersVisible;
     rightEl.hidden = !L.clustersVisible;
     compassEl.hidden = !L.compassVisible;
-    stripEl.hidden = !!airliner;
+    stripEl.hidden = !!airliner || !!helm;
     if (airliner && L.glass) airliner.place(L.glass, dpr);
+    if (helm && L.marine) helm.place(L.marine, dpr);
     if (L.jet && onGlass) {
       place(jetEl, { x: 0, y: 0, w: vw, h: vh });
       sizeSlot(jetSlot, 0, 0, vw, vh, dpr);
@@ -504,6 +531,14 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
   const drawInstruments = (r: InstrumentReadings) => {
     if (airliner) {
       airliner.draw(r as GlassReadings);
+      return;
+    }
+    if (helm) {
+      helm.draw(r, time);
+      if (layout.compassVisible && changed(compassSlot, Math.round(r.headingDeg * 10), 0, 0, 0)) {
+        const c = begin(compassSlot);
+        if (c) drawCompassTape(c, 0, 0, compassSlot.w, compassSlot.h, r.headingDeg);
+      }
       return;
     }
     if (layout.clustersVisible) {
@@ -688,15 +723,27 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     if (reason !== lastCrash) {
       lastCrash = reason;
       if (crash) {
-        const t = crashText(crash);
+        const t = crashText(crash, cfg);
         bannerTitle.textContent = t.title;
         bannerSub.textContent = t.hint;
       }
       bannerEl.hidden = !crash;
     }
 
-    // Landing toast, once per touchdown.
-    const td = info.state.touchdown;
+    // Vessels: casting off (the mooring lines let go) and running aground are confirmed.
+    const vr = r.vessel;
+    if (vr) {
+      if (lastMoored === true && !vr.moored && !crash) flash('Cast off', 'good', 2.4);
+      if (lastAground === false && vr.aground && !crash) flash('Aground!', 'warn', 3);
+      lastMoored = vr.moored;
+      lastAground = vr.aground;
+    } else {
+      lastMoored = null;
+      lastAground = null;
+    }
+
+    // Landing toast, once per touchdown (never on a boat: nothing lands).
+    const td = vesselCfg || vr ? null : info.state.touchdown;
     if (!td) lastTouchdown = null;
     else if (td.time !== lastTouchdown) {
       lastTouchdown = td.time;
@@ -745,6 +792,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
         compassSlot.dirty = true;
         jetDirty = true;
         airliner?.markDirty();
+        helm?.markDirty();
         chipTimer = Infinity;
       }
     },
@@ -755,6 +803,9 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
     onReset() {
       jetState.maxG = 1;
       jetDirty = true;
+      // A restart moves the boat (berth / open sea): no "Cast off" / "Aground!" from the jump.
+      lastMoored = null;
+      lastAground = null;
     },
     style,
     resize: applyLayout,
@@ -763,6 +814,7 @@ export function createHud(root: HTMLElement, opts: HudOptions = {}): Hud {
       disposed = true;
       win.removeEventListener('resize', onResize);
       airliner?.dispose();
+      helm?.dispose();
       el.remove();
       removeHudStyle(doc);
     },

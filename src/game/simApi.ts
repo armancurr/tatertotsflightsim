@@ -45,6 +45,12 @@ export interface SimSnapshotFull extends SimSnapshot {
    * ring / blade stall 0..1, thrust (N). null for fixed-wing aircraft.
    */
   rotor: null | { nr: number; torque: number; n1: number; collective: number; sas: boolean; vrs: number; bladeStall: number; thrust: number };
+  /**
+   * Boats and ships: speed through the water (kt), engine rpm per engine, gear, drive angle (deg),
+   * trim tabs 0..1, running trim (deg), planing 0..1, depth under the keel (m, null = deep),
+   * moored, aground. null for aircraft.
+   */
+  vessel: null | { speedKt: number; rpm: number[]; gear: string; steerDeg: number; tabs: number; trimDeg: number; planing: number; depthM: number | null; moored: boolean; aground: boolean };
   position: { x: number; y: number; z: number };
   time: number;
 }
@@ -125,6 +131,20 @@ export function buildSimSnapshot(args: {
           vrs: Math.round(state.rotor.vrs * 100) / 100,
           bladeStall: Math.round(state.rotor.bladeStall * 100) / 100,
           thrust: Math.round(state.rotor.thrust),
+        }
+      : null,
+    vessel: state.vessel
+      ? {
+          speedKt: r1(state.vessel.speedMs * 1.943844),
+          rpm: state.vessel.propulsors.map((p) => Math.round(p.rpm)),
+          gear: state.vessel.propulsors[0]?.gear ?? 'neutral',
+          steerDeg: r1(state.vessel.propulsors[0]?.steerDeg ?? 0),
+          tabs: Math.round(state.vessel.tabs * 100) / 100,
+          trimDeg: r1(state.vessel.trimDeg),
+          planing: Math.round(state.vessel.planing * 100) / 100,
+          depthM: Number.isFinite(state.vessel.depthUnderKeel) ? r1(state.vessel.depthUnderKeel) : null,
+          moored: state.vessel.mooring !== null,
+          aground: state.vessel.aground,
         }
       : null,
     position: { x: r1(state.position.x), y: r1(state.position.y), z: r1(state.position.z) },

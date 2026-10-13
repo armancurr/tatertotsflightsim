@@ -356,3 +356,39 @@ every runway end and that nothing stands on a runway or taxiway.
 Run the world suite with `npx vitest run tests/world`, then the whole suite and
 `npx tsc --noEmit -p .`, then fly over your change at dawn, midday and golden hour and compare it
 with photos of the real thing.
+
+## Marine wildlife
+
+Dolphins, humpback whales, herring gulls and harbour seals live in `src/world/wildlife` and are
+drawn by the `wildlife` system (`src/game/systems/wildlife.ts`; `?no=wildlife` switches it off).
+Every tunable — counts, where each pod and whale lives, speeds, draw distances, the zones they keep
+out of — is in `src/world/wildlife/tuning.ts`.
+
+- **Where they may be** (`src/world/wildlife/zones.ts`): open sea deep enough for the species, and
+  none of the gunnery range (every species keeps 4 km off it), the oil platform, the wind farm, the
+  jet-ski course, the cruise terminal and naval pier, the marina's structures or the islands. Each
+  pod and whale swims a wandering loop that `fitLoop` validates against all of that (it shrinks
+  and nudges a loop until it fits, or leaves the animal out). A new feature at sea that animals
+  should avoid is one more entry in `WILDLIFE.zones` and one line in `exclusionAt`.
+- **Motion is a pure function of the sea clock** (`SystemFrame.waveTime`): pods on their loops
+  with a breathing cycle (`src/world/wildlife/dolphins.ts`), whales through surfacing sequences,
+  blows, fluke-up dives and breaches (`src/world/wildlife/whales.ts`), flocks wheeling
+  (`src/world/wildlife/gulls.ts`). Only the reactions are stateful: a pod coming over to ride the
+  bow wave of the player's vessel at 6–25 kt (approach → ride → peel off → home), a pod dodging a
+  boat that drives through it, gulls flushed from their perches or shying away from a boat or an
+  aircraft. The gulls that trail the fishing boats follow the traffic plan's poses (traffic clock).
+- **On the drawn sea:** `src/world/wildlife/surface.ts` samples exactly the waves the water shader
+  displaces near the camera (the same model the traffic floats on), so a surfacing back or a
+  blow sits on the visible water. Submerged cetaceans near the camera are drawn "through" the
+  opaque water as soft shapes pressed onto the surface (`createUnderwaterMaterial`).
+- **Rendering:** one instanced mesh per species with the animation in the vertex shader
+  (`src/world/wildlife/material.ts`, models in `src/world/wildlife/models.ts`), one point list for
+  splashes, breath, blows and far gulls as dots (`src/world/wildlife/splash.ts`: stateless
+  particles, a closed-form function of each event's age). The CPU cost is ~0.1 ms a frame.
+- **Sound:** `src/audio/wildlife.ts` (its own context, unlocked on the first gesture, following
+  the M key and pause): gull calls near flocks, a burst when birds are flushed, a dolphin's breath
+  close by, a humpback's blow (heard late — sound takes distance / 343 s) and the thunder of a breach.
+- **Preview:** `preview/wildlife.html` (`?show=dolphin|whale|gull|seal|under`).
+- **Tests:** `tests/world/wildlife` — placement against depth and every zone, continuity of every
+  motion, the bow-riding state machine (never inside the hull, fuzzed over random manoeuvres),
+  flock bounds and scattering, the camera clearance, determinism, the draw-call budget and cost.

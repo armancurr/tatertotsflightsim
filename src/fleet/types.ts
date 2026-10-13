@@ -43,12 +43,17 @@ export interface AircraftModelHandle {
   dispose(): void;
 }
 
-/** 'steam' six-pack (Cessna), 'jet' head-up display (F-16, A-10), 'glass' airliner PFD + EICAS overlay (747). */
-export type HudStyle = 'steam' | 'jet' | 'glass';
-/** Engine voice: Cessna O-360 + prop, F-16 F110 afterburning jet, A-10 TF34 high-bypass turbofans, JetRanger turboshaft + rotors. */
-export type EngineSound = 'piston' | 'jet' | 'turbofan' | 'turboshaft';
+/** 'steam' six-pack (Cessna), 'jet' head-up display (F-16, A-10), 'glass' airliner PFD + EICAS overlay (747), 'marine' helm display (boats and ships). */
+export type HudStyle = 'steam' | 'jet' | 'glass' | 'marine';
+/** Engine voice: Cessna O-360 + prop, F-16 F110 afterburning jet, A-10 TF34 high-bypass turbofans, JetRanger turboshaft + rotors, marine diesels + props + hull, personal watercraft (Sea-Doo (pwc) voice: Rotax triple + supercharger + jet pump + hull). */
+export type EngineSound = 'piston' | 'jet' | 'turbofan' | 'turboshaft' | 'marineDiesel' | 'pwc'; // Sea-Doo (pwc) voice: 'pwc'
+
+/** What the player drives: an aircraft (starts on the runway) or a vessel (starts at the marina; `config.aircraft.watercraft` set). */
+export type VehicleKind = 'aircraft' | 'vessel';
 
 export interface AircraftDef {
+  /** 'vessel' for boats and ships (absent = 'aircraft'). Must agree with `config.aircraft.watercraft`. */
+  kind?: VehicleKind;
   /** Stable id used in URLs (`?aircraft=f16`) and saved settings. */
   id: string;
   /** Full display name, e.g. "Cessna 172RG Cutlass". */

@@ -1,7 +1,8 @@
 /**
  * Functional: the `audio` system plug-in — engine sound per aircraft (initial aircraft, the
  * onAircraftChange hook, and the frame's def), the crash effects' window events `sim:explosion` /
- * `sim:impact`, reset, and the QA hooks on window (runAudioSelfTest, simAudio).
+ * `sim:impact`, reset, and the QA hooks on window (runAudioSelfTest, simAudio); a vessel (the V50's
+ * 'marineDiesel' voice fed from state.vessel, no aircraft horns).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import mod from '../../src/game/systems/audio';
@@ -17,6 +18,7 @@ const KEYS = ['AudioContext', 'addEventListener', 'removeEventListener', 'dispat
 
 const piston = { id: 'c172rg', sound: 'piston' } as unknown as AircraftDef;
 const jet = { id: 'f16', sound: 'jet' } as unknown as AircraftDef;
+const boat = { id: 'v50', kind: 'vessel', sound: 'marineDiesel' } as unknown as AircraftDef;
 
 function state(p: Partial<AircraftState> = {}): AircraftState {
   return {
@@ -135,6 +137,38 @@ describe('audio system', () => {
     expect(g.simAudio).toBeUndefined();
     expect(g.runAudioSelfTest).toBeUndefined();
     sys = undefined as unknown as SimSystem;
+  });
+
+  it('a vessel plays the marine diesels from state.vessel, with no stall or gear horn', async () => {
+    current = boat;
+    sys = await mod.create(ctxStub());
+    await unlock();
+    const prop = { rpm: 3000, n: 27.5, gear: 'ahead', thrust: 14000, steerDeg: 0, load: 0.8, boost: 0.9 };
+    const vessel = {
+      seaTime: 1, propulsors: [prop, { ...prop }], tabs: 0, mooring: null, speedMs: 14.4, leewayDeg: 0, trimDeg: 4, planing: 0.9,
+      wettedLength: 9, wettedArea: 30, displacedVolume: 12, resistance: 26000, depthUnderKeel: Infinity, aground: false, capsizeTime: 0, surfaceY: 0,
+    };
+    const s = state({
+      phase: 'afloat', onGround: false, gearPos: 1, vessel,
+      engine: { running: true, starting: false, startTimer: 0, failed: false, power: 0.75, rpm: 3000, thrust: 28000 },
+    } as Partial<AircraftState>);
+    const f = { ...frame(boat, s), readings: { stallWarning: true, gearHorn: true } } as unknown as SystemFrame;
+    sys.update!(f);
+    sys.update!(f);
+    const L = stats();
+    expect(L.marine).toBe(1);
+    expect(L.marineRpm).toBeCloseTo(3000, 6); // (firingHz carries the Doppler shift: the boat runs away from the camera)
+    expect(L.firingHz).toBeGreaterThan(100);
+    expect(L.hullRush).toBeGreaterThan(0);
+    expect(L.skim).toBeGreaterThan(0);
+    expect(L.horn).toBe(0);
+    expect(L.gearHorn).toBe(0);
+    expect(L.rolling).toBe(0);
+    // Back to an aircraft.
+    sys.onAircraftChange!(piston, {} as never);
+    sys.update!(frame(piston, state({ engine: { running: true, starting: false, startTimer: 0, failed: false, power: 0.8, rpm: 2400, thrust: 0 } })));
+    expect(stats().marine).toBe(0);
+    expect(stats().exhaust).toBeGreaterThan(0);
   });
 
   it('override (QA hook) forces inputs on top of the live state', async () => {

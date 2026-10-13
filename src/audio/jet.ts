@@ -18,6 +18,7 @@
 import { CONFIG } from '../config';
 import type { AudioInputs, AudioLevels } from './types';
 import { zeroRotorLevels } from './turboshaftMapping';
+import { zeroMarineLevels } from './marineMapping';
 import { createBuilder, retireGraph, type EngineVoice, type VoiceFrame, type VoiceOutputs } from './builder';
 import { abLightOff, jetCorePct, jetDirectivity, jetFanHz, jetFanPct, jetIntakeHz, jetMix, jetRoarCutoffHz, jetShaftHz, jetWhineHz } from './jetMapping';
 import { buzzsawWaveform, crackleSamples, whineWaveform } from './waves';
@@ -263,6 +264,7 @@ export function createJetVoice(ctx: BaseAudioContext, out: VoiceOutputs, rnd: ()
       L.gear = 0;
       L.flap = 0;
       zeroRotorLevels(L);
+      zeroMarineLevels(L);
 
       let shots = 0;
       const abNow = crashed ? 0 : ab;

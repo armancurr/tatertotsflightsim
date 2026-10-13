@@ -43,7 +43,7 @@ describe('fleet registry', () => {
   });
 
   it('every aircraft spawns resting on its gear on the runway and stays put at idle', () => {
-    for (const d of FLEET) {
+    for (const d of FLEET.filter((f) => f.kind !== 'vessel')) {
       let s = createInitialState(FLAT_ENV, d.config);
       expect(s.phase).toBe('ground');
       for (let i = 0; i < 120 * 5; i++) s = step(s, { ...defaultControls(), parkingBrake: true }, 1 / 120, FLAT_ENV, d.config);

@@ -90,7 +90,7 @@ async function main() {
     renderer.info.reset();
     focus.copy(camera.position);
     atmosphere.update(camera, dt, focus);
-    systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, paused: false, cameraMode: 'orbit', fps, readings: null, def, aircraft: stubAircraft });
+    systems.update({ state, controls: controlState.controls, controlState, camera, dt, time, waveTime: time, paused: false, cameraMode: 'orbit', fps, readings: null, def, aircraft: stubAircraft });
     rend.render(scene, camera);
     if (!window.__ready && time > settle) window.__ready = true;
     if (frames % 30 === 0) label.textContent = `calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1e6).toFixed(2)}M  cam ${camera.position.x.toFixed(0)},${camera.position.y.toFixed(0)},${camera.position.z.toFixed(0)}  ${JSON.stringify(systems.timings())}`;

@@ -6,6 +6,11 @@
  * ping-pong with dwell), a container ship and a tanker 6–10 km offshore, and
  * boats on Tater Lake.
  *
+ * The marina also has a visitors' pontoon off the outer end of the central
+ * pontoon: one alongside berth kept free for the player's yacht (see
+ * src/world/port.ts). No moored boat is placed there and every route keeps
+ * clear of it.
+ *
  * Everything is a pure function of (config, layout, time): `vesselPose(route,
  * t, out)` gives position, hull heading, course, speed, heave/pitch/roll, sail
  * trim. Routes are hand-shaped around the layout's landmarks (coast, bay,
@@ -124,8 +129,30 @@ export interface Berth {
   variant: number;
 }
 
+/**
+ * The visitors' pontoon: a floating pontoon (no fingers) continuing the central pontoon out toward
+ * the harbour entrance, with cleats along the berth side and two piles on the other. Its berth (an
+ * alongside berth on the `side` face, bow toward the entrance) is reserved for the player.
+ */
+export interface VisitorPontoon {
+  u: number;
+  w0: number;
+  w1: number;
+  half: number;
+  top: number;
+  /** Face of the pontoon the berth is on: +1 = the +u (east) face. */
+  side: 1 | -1;
+  /** The reserved water of the berth (marina u, w): no moored boat, no route, no structure. */
+  berth: { u0: number; u1: number; w0: number; w1: number };
+  cleats: { u: number; w: number }[];
+  piles: { u: number; w: number }[];
+  /** A small "VISITORS" board on a post at the outer end. */
+  sign: { u: number; w: number };
+}
+
 export interface MarinaLayout {
   frame: MarinaFrame;
+  visitor: VisitorPontoon;
   quay: { u0: number; u1: number; w0: number; w1: number; top: number };
   breakwaters: Breakwater[];
   pontoons: { u: number; w0: number; w1: number; half: number; top: number }[];
@@ -141,6 +168,11 @@ const PONTOON_W0 = 6;
 const PONTOON_W1 = 188;
 const FINGER_STEP = 5.4;
 const FINGER_LEN = 9;
+/** The visitors' pontoon: continues the central pontoon (the one nearest the entrance axis). */
+const VISITOR_PONTOON = 2;
+const VISITOR_LEN = 28;
+/** Width of the reserved berth water beside the visitors' pontoon (a 4.1 m beam + fenders + room). */
+const VISITOR_BERTH_W = 5.6;
 
 export function marinaFrame(layout: WorldLayout, cfg: Config = CONFIG): MarinaFrame {
   const x0 = cfg.world.traffic.sea.marinaX;
@@ -166,6 +198,20 @@ export function createMarina(layout: WorldLayout, cfg: Config = CONFIG): MarinaL
   const fingers: MarinaLayout['fingers'] = [];
   const piles: MarinaLayout['piles'] = [];
   const berths: Berth[] = [];
+  const vp = pontoons[VISITOR_PONTOON];
+  const vEdge = vp.u + vp.half;
+  const visitor: VisitorPontoon = {
+    u: vp.u,
+    w0: vp.w1,
+    w1: vp.w1 + VISITOR_LEN,
+    half: vp.half,
+    top: vp.top,
+    side: 1,
+    berth: { u0: vEdge, u1: vEdge + VISITOR_BERTH_W, w0: vp.w1, w1: vp.w1 + VISITOR_LEN + 2 },
+    cleats: [4, 14, 24].map((d) => ({ u: vEdge - 0.25, w: vp.w1 + d })),
+    piles: [8, 22].map((d) => ({ u: vp.u - vp.half - 0.5, w: vp.w1 + d })),
+    sign: { u: vp.u - vp.half + 0.3, w: vp.w1 + VISITOR_LEN - 0.6 },
+  };
   const fill = cfg.world.traffic.sea.berthFill;
   let bi = 0;
   for (const p of pontoons) {
@@ -190,6 +236,9 @@ export function createMarina(layout: WorldLayout, cfg: Config = CONFIG): MarinaL
         const scale = clamp(want / ref, 0.6, 1.2);
         const len = ref * scale;
         const u = p.u + side * (p.half + 0.4 + len / 2);
+        // the visitors' berth is kept free (its box plus 1.5 m of water around it)
+        const vb = visitor.berth;
+        if (u + len / 2 > vb.u0 - 1.5 && u - len / 2 < vb.u1 + 1.5 && wb + 3 > vb.w0 - 1.5 && wb - 3 < vb.w1 + 1.5) continue;
         const pos = toWorld(frame, u, wb);
         // bow toward the pontoon (bow-in) for motor boats, stern-to for sailing yachts, mixed by hash
         const bowIn = kind === 'motor' ? h01(seed, 7004, bi) < 0.7 : h01(seed, 7004, bi) < 0.35;
@@ -205,6 +254,7 @@ export function createMarina(layout: WorldLayout, cfg: Config = CONFIG): MarinaL
   }
   return {
     frame,
+    visitor,
     quay: { u0: -360, u1: 360, w0: -26, w1: 0, top: 1.7 },
     breakwaters,
     pontoons,
@@ -231,8 +281,20 @@ export function marinaStructureDistance(m: MarinaLayout, x: number, z: number): 
     for (let i = 1; i < b.pts.length; i++) d = Math.min(d, segDist(u, w, b.pts[i - 1].u, b.pts[i - 1].w, b.pts[i].u, b.pts[i].w) - half);
   }
   for (const p of m.pontoons) d = Math.min(d, boxDist(u, w, p.u - p.half - FINGER_LEN, p.u + p.half + FINGER_LEN, p.w0, p.w1));
+  const v = m.visitor;
+  d = Math.min(d, boxDist(u, w, v.u - v.half - 1, v.u + v.half, v.w0, v.w1));
   return d;
 }
+
+/** Distance (m) from a world point to the visitors' reserved berth (negative inside). */
+export function visitorBerthDistance(m: MarinaLayout, x: number, z: number): number {
+  const { u, w } = toLocal(m.frame, x, z);
+  const b = m.visitor.berth;
+  return boxDist(u, w, b.u0, b.u1, b.w0, b.w1);
+}
+
+/** Every route (the harbour launch too) keeps this far (m) from the visitors' berth. */
+export const VISITOR_BERTH_CLEARANCE = 25;
 
 function boxDist(u: number, w: number, u0: number, u1: number, w0: number, w1: number): number {
   const du = Math.max(u0 - u, 0, u - u1);
@@ -406,13 +468,16 @@ export function* validateRouteJob(route: SeaRoute, water: WaterWorld, marina: Ma
   // ferry berths are dredged: check depth only away from the terminals
   const depth = yield* routeMinDepthJob(route, water, route.path.length > 50000 ? 60 : 20);
   if (depth < (route.mode === 'ferry' ? 1 : need)) return false;
-  if (marina && route.kind !== 'launch') {
+  if (marina) {
     const smp = newPathSample();
     const m = Math.ceil(route.path.length / 25);
+    const f = marina.frame;
     for (let i = 0; i <= m; i++) {
       if (i > 0 && i % 1500 === 0) yield;
       samplePath(route.path, (i / m) * route.path.length, smp);
-      if (marinaStructureDistance(marina, smp.x, smp.z) < 120) return false;
+      if (route.kind !== 'launch' && marinaStructureDistance(marina, smp.x, smp.z) < 120) return false;
+      // the visitors' berth (the player's yacht) is never driven through
+      if (Math.abs(smp.x - f.ox) < 1000 && Math.abs(smp.z - f.oz) < 1000 && visitorBerthDistance(marina, smp.x, smp.z) < VISITOR_BERTH_CLEARANCE) return false;
     }
   }
   return true;
@@ -458,7 +523,9 @@ export function* defineRoutesJob(layout: WorldLayout, marina: MarinaLayout, cfg:
 
   // ── Motor yachts: long loops along the coast at planing speed ──
   const motorLoops: XZ[][] = [
-    [{ x: -3900, z: 8480 }, { x: -1500, z: 8560 }, { x: -350, z: 8880 }, { x: -1600, z: 9180 }, { x: -4100, z: 8980 }],
+    // (its inshore leg runs ~1 km off the beach: clear of the cruise terminal's pier head and its
+    // channel buoys, src/world/harbour/layout.ts, and of the jet-ski course off the beach)
+    [{ x: -3750, z: 8760 }, { x: -1500, z: 8620 }, { x: -350, z: 8880 }, { x: -1600, z: 9180 }, { x: -4100, z: 8980 }],
     [{ x: -500, z: 10650 }, { x: 2500, z: 10500 }, { x: 5600, z: 10250 }, { x: 4600, z: 11050 }, { x: 1000, z: 11250 }],
     [{ x: -7200, z: 8250 }, { x: -9800, z: 8150 }, { x: -12200, z: 8450 }, { x: -11000, z: 8950 }, { x: -8000, z: 8750 }],
   ];

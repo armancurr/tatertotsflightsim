@@ -1,7 +1,7 @@
 /**
  * E2E: the audio self-test in a real browser (headless Chrome for Testing). Every sound is rendered
  * offline through the real WebAudio graph and output chain (compressor → limiter → soft clipper) and
- * measured: levels, pitch (piston firing rate, turbine whine, horns), the crash's secondary
+ * measured: levels, pitch (piston and marine-diesel firing rates, turbine whine, horns), the crash's secondary
  * explosions, silence after a reset — and the mix checks (relative levels, nothing clips).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -58,6 +58,11 @@ describe('audio self-test in Chrome for Testing', () => {
       ['gear warning horn (cockpit)', -30, -12],
       ['wind 120 kt (engine off)', -34, -18],
       ['crash (impact + secondary explosions)', -16, -2],
+      ['marine idle 700 rpm (moored)', -34, -24],
+      ['marine cruise 3000 rpm, planing 28 kt', -26, -16],
+      ['marine full 3500 rpm, 34 kt', -25, -15],
+      ['marine cruise, cockpit (saloon helm)', -29, -18],
+      ['marine water at 30 kt (engines silent)', -33, -22],
     ];
     const off = want.filter(([n, lo, hi]) => !(get(n).db >= lo && get(n).db <= hi)).map(([n, lo, hi]) => `${n}: ${get(n).db.toFixed(1)} (want ${lo}…${hi})`);
     expect(off).toEqual([]);

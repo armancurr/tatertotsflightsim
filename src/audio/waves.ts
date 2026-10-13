@@ -93,6 +93,33 @@ export function engineCycleWaveform(n: number): Float32Array {
   return normalise(s);
 }
 
+/**
+ * One full 4-stroke cycle (two crank revolutions) of a 6-cylinder in-line diesel (Volvo Penta D6):
+ * six combustion pulses 1/6 of a cycle apart (firing order 1-5-3-6-2-4). A diesel's pressure rise
+ * is much steeper than a spark engine's (the "knock" of compression ignition) and its pulses are
+ * shorter; small cylinder-to-cylinder differences give the faint half-order roughness.
+ */
+export function dieselCycleWaveform(n: number): Float32Array {
+  const s = new Float32Array(n);
+  const amps = [1, 0.9, 0.96, 0.86, 0.94, 0.9];
+  const shift = [0, 0.006, -0.004, 0.005, -0.006, 0.003];
+  const decay = [0.018, 0.02, 0.017, 0.021, 0.019, 0.018];
+  for (let j = 0; j < n; j++) {
+    const t = j / n;
+    let v = 0;
+    for (let c = 0; c < 6; c++) {
+      let dt = t - (c / 6 + shift[c]);
+      dt -= Math.floor(dt);
+      // Fast rise (≈0.1 % of a cycle), then the blowdown; a small damped ring after the knock.
+      const rise = 1 - Math.exp(-dt / 0.0012);
+      const ring = 0.18 * Math.exp(-dt / 0.008) * Math.sin(2 * Math.PI * dt * 55);
+      v += amps[c] * (rise * (Math.exp(-dt / decay[c]) - 0.1 * Math.exp(-dt / (decay[c] * 3)) * Math.min(1, dt / decay[c])) + ring);
+    }
+    s[j] = v;
+  }
+  return normalise(s);
+}
+
 /** One blade passage of the propeller: a sharp loading pulse with a slower recovery (buzz-saw character). */
 export function propWaveform(n: number): Float32Array {
   const s = new Float32Array(n);

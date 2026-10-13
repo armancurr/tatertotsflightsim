@@ -2,7 +2,7 @@
  * Functional self-test of the real synth graph: renders each sound in an OfflineAudioContext
  * (faster than real time, no speakers needed) through the full output chain (glue compressor →
  * limiter → soft clipper) and measures it — RMS level (dBFS), peak, the pitch of tonal parts
- * (piston firing rate, jet turbine whine, horns), the crash's secondary explosions and the silence
+ * (piston, marine-diesel and jet-ski firing rates, jet turbine and supercharger whine, horns), the crash's secondary explosions and the silence
  * after a reset — then checks the mix: relative levels and that nothing clips.
  *
  * In the live page: `await runAudioSelfTest()` (window hook installed by the audio system), or
@@ -16,7 +16,9 @@ import { firingFrequency } from './mapping';
 import { jetWhineHz } from './jetMapping';
 import { tf34WhistleHz } from './turbofanMapping';
 import { TURBOSHAFT, bladePassHz, compressorWhineHz } from './turboshaftMapping';
-import type { RotorAudioInputs } from './types';
+import type { MarineEngineAudioInputs, RotorAudioInputs, VesselAudioInputs } from './types';
+import { MARINE, marineFiringHz } from './marineMapping';
+import { PWC, pwcFiringHz, superchargerWhineHz } from './pwcMapping'; // Sea-Doo (pwc) voice
 import type { CombatAudioFrame } from './combat';
 import type { AirAudioFrame } from './airTargets';
 import { airDoppler } from './airTargetsMapping';
@@ -205,6 +207,53 @@ const HELI_BVI: Partial<AudioInputs> = { ...HELI_HOVER, airspeedKt: 60, power: 0
 /** The rotor horn alone (rotor stopped, engine off) so it can be measured without the rest of the helicopter. */
 const HORN_ONLY: Partial<AudioInputs> = { lowRotorRpm: true, onGround: false, airspeedKt: 0, cameraMode: 'cockpit' };
 
+/** Princess V50: both D6s the same (the voice detunes the starboard one), a hull state (chase camera 25 m astern). */
+const v50Engine = (rpm: number, load: number, boost: number, gear: number, thrustN: number): MarineEngineAudioInputs => ({
+  rpm, load, boost, gear, propRps: gear === 0 ? 0 : (gear * rpm) / MARINE.gearRatio / 60, thrustN,
+});
+const v50 = (e: MarineEngineAudioInputs, hull: Partial<VesselAudioInputs> = {}): VesselAudioInputs => ({
+  engines: [e, { ...e }], engineCount: 2, speedMs: 0, planing: 0, trimDeg: 0, aground: false, heaveMs: 0.05, pitchRate: 0.01,
+  rollRate: 0.01, moored: false, ...hull,
+});
+const V50_BASE: Partial<AudioInputs> = { onGround: false, surface: 'water', listenerDistanceM: 25, aft: 0.9 };
+const V50_IDLE: Partial<AudioInputs> = { ...V50_BASE, rpm: 700, power: 0.05, engineRunning: true, vessel: v50(v50Engine(700, 0.08, 0.05, 0, 0), { moored: true }) };
+const V50_CRUISE: Partial<AudioInputs> = {
+  ...V50_BASE, rpm: 3000, power: 0.75, engineRunning: true, airspeedKt: 29,
+  vessel: v50(v50Engine(3000, 0.8, 0.9, 1, 14000), { speedMs: 14.4, planing: 0.9, trimDeg: 4, heaveMs: 0.3, pitchRate: 0.04 }),
+};
+const V50_FULL: Partial<AudioInputs> = {
+  ...V50_BASE, rpm: 3500, power: 1, engineRunning: true, airspeedKt: 35,
+  vessel: v50(v50Engine(3500, 1, 1, 1, 15500), { speedMs: 17.5, planing: 1, trimDeg: 3.5, heaveMs: 0.35, pitchRate: 0.05 }),
+};
+/** Engines stopped, the hull working in a short chop (heave and pitch). */
+const V50_CHOP: Partial<AudioInputs> = { ...V50_BASE, vessel: v50(v50Engine(0, 0, 0, 0, 0), { heaveMs: 0.8, pitchRate: 0.12, rollRate: 0.1 }) };
+
+// Sea-Doo (pwc) voice: the RXP-X 325 — one jet propulsor, a small planing hull (chase camera ≈9 m behind).
+const pwcJet = (rpm: number, load: number, boost: number, gear: number, jet: Partial<MarineEngineAudioInputs> = {}): MarineEngineAudioInputs => ({
+  rpm, load, boost, gear, propRps: rpm / 60, thrustN: 0, flow: 0, jetSpeed: 0, ventilation: 0, bucket: gear < 0 ? 1 : gear === 0 ? 0.5 : 0, ...jet,
+});
+const pwcHull = (e: MarineEngineAudioInputs, hull: Partial<VesselAudioInputs> = {}): VesselAudioInputs => ({
+  engines: [e], engineCount: 1, speedMs: 0, planing: 0, trimDeg: 0, aground: false, heaveMs: 0.05, pitchRate: 0.02, rollRate: 0.02,
+  moored: false, ...hull,
+});
+const PWC_BASE: Partial<AudioInputs> = { onGround: false, surface: 'water', listenerDistanceM: 9, aft: 0.9 };
+const PWC_IDLE: Partial<AudioInputs> = {
+  ...PWC_BASE, rpm: PWC.idleRpm, power: 0.05, engineRunning: true, vessel: pwcHull(pwcJet(PWC.idleRpm, 0.08, 0.05, 0, { flow: 0.03, jetSpeed: 6 })),
+};
+const PWC_FULL: Partial<AudioInputs> = {
+  ...PWC_BASE, rpm: PWC.maxRpm, power: 1, engineRunning: true, airspeedKt: 55,
+  vessel: pwcHull(pwcJet(PWC.maxRpm, 1, 1, 1, { flow: 0.28, jetSpeed: 47, thrustN: 6000 }), { speedMs: 28.3, planing: 1, trimDeg: 3, heaveMs: 0.4, pitchRate: 0.08, rollRate: 0.05 }),
+};
+/** Off a wave: the intake sucks air, the ECU holds 4,200 rpm, the load is gone. */
+const PWC_AIR: Partial<AudioInputs> = {
+  ...PWC_BASE, rpm: PWC.ventRpm, power: 0.2, engineRunning: true, airspeedKt: 50,
+  vessel: pwcHull(pwcJet(PWC.ventRpm, 0.12, 0.3, 1, { flow: 0.04, jetSpeed: 18, ventilation: 1 }), { speedMs: 25, planing: 0, heaveMs: -1.5, pitchRate: 0.2 }),
+};
+const PWC_REV: Partial<AudioInputs> = {
+  ...PWC_BASE, rpm: 6000, power: 0.5, engineRunning: true, vessel: pwcHull(pwcJet(6000, 0.45, 0.6, 0, { flow: 0.18, jetSpeed: 30 })),
+};
+// End Sea-Doo (pwc) voice
+
 const CRASH_FROM: Partial<AudioInputs> = { rpm: 2500, power: 0.9, engineRunning: true, onGround: false, airspeedKt: 90 };
 
 export const SCENARIOS: Scenario[] = [
@@ -325,6 +374,119 @@ export const SCENARIOS: Scenario[] = [
       return { ok, detail: `peak ${f} Hz (want ${want}), steady rms ${lo.toFixed(4)}…${hi.toFixed(4)}, ${fmtDb(rms(s))}` };
     },
   },
+  // ── Princess V50: twin D6-435 diesels on IPS 600 drives, and the hull (chase camera 25 m astern) ──
+  { name: 'marine idle 700 rpm (moored)', engine: 'marineDiesel', base: V50_IDLE, check: tonalAt(marineFiringHz(700)) },
+  { name: 'marine cruise 3000 rpm, planing 28 kt', engine: 'marineDiesel', base: V50_CRUISE, check: tonalAt(marineFiringHz(3000)) },
+  { name: 'marine full 3500 rpm, 34 kt', engine: 'marineDiesel', base: V50_FULL, check: tonalAt(marineFiringHz(3500)) },
+  { name: 'marine cruise, cockpit (saloon helm)', engine: 'marineDiesel', base: { ...V50_CRUISE, cameraMode: 'cockpit' }, check: tonalAt(marineFiringHz(3000)) },
+  {
+    name: 'marine start (crank, catch)', engine: 'marineDiesel', tick: 0.05, seconds: 2, window: [0, 2],
+    base: { ...V50_BASE, rpm: 180, starting: true, vessel: v50(v50Engine(180, 0, 0, 0, 0), { moored: true }) },
+    events: [{ at: 1.0, inputs: { starting: false, engineRunning: true, rpm: 700, vessel: v50(v50Engine(700, 0.1, 0.05, 0, 0), { moored: true }) } }],
+    check: (s, sr, _all, lv) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const crank = win(0.1, 0.9);
+      const run = win(1.4, 1.95);
+      return { ok: crank > 1e-3 && run > 1e-3 && lv.oneShots >= 1, detail: `cranking ${fmtDb(crank)}, running ${fmtDb(run)}, ${lv.oneShots} catch` };
+    },
+  },
+  {
+    name: 'marine stop (run-down)', engine: 'marineDiesel', tick: 0.05, seconds: 2.5, window: [0, 2.5], base: V50_IDLE,
+    events: [{ at: 0.6, inputs: { engineRunning: false, rpm: 0, vessel: v50(v50Engine(0, 0, 0, 0, 0), { moored: true }) } }],
+    check: (s, sr, _all, lv) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const idle = win(0.3, 0.6);
+      const down = win(0.62, 0.95);
+      const after = win(1.9, 2.5);
+      return {
+        ok: down > after * 1.5 && after < idle * 0.4 && lv.oneShots >= 1,
+        detail: `idle ${fmtDb(idle)}, running down ${fmtDb(down)}, stopped ${fmtDb(after)}, ${lv.oneShots} shudder`,
+      };
+    },
+  },
+  {
+    name: 'marine gearbox clunk (ahead → neutral)', engine: 'marineDiesel', tick: 0.05, window: [0.45, 1],
+    base: { ...V50_IDLE, vessel: v50(v50Engine(700, 0.15, 0.05, 1, 1500), { moored: true }) },
+    events: [{ at: 0.5, inputs: { vessel: v50(v50Engine(700, 0.08, 0.05, 0, 0), { moored: true }) } }],
+    check: (s, _sr, _all, lv) => ({ ok: lv.gearClunks === 2 && rms(s) > 2e-3, detail: `${lv.gearClunks} clunks (both drives), ${fmtDb(rms(s))}` }),
+  },
+  {
+    name: 'marine hull slap in a chop (engines off)', engine: 'marineDiesel', tick: 0.02, seconds: 3, window: [0, 3], base: V50_CHOP,
+    check: (s, _sr, _all, lv) => ({ ok: lv.hullSlaps >= 4 && rms(s) > 1e-3, detail: `${lv.hullSlaps} slaps (${lv.slapRate.toFixed(1)}/s expected), ${fmtDb(rms(s))}` }),
+  },
+  {
+    name: 'marine water at 30 kt (engines silent)', engine: 'marineDiesel', tick: 0.05,
+    base: { ...V50_BASE, airspeedKt: 30, vessel: v50(v50Engine(0, 0, 0, 0, 0), { speedMs: 15.4, planing: 0.9, heaveMs: 0.3, pitchRate: 0.04 }) },
+    check: audible(3e-3),
+  },
+  {
+    name: 'marine aground (grinding)', engine: 'marineDiesel', tick: 0.05, window: [0.1, 2],
+    base: { ...V50_IDLE, vessel: v50(v50Engine(900, 0.4, 0.2, 1, 5000), { speedMs: 2, aground: true }) },
+    check: (s, _sr, _all, lv) => ({ ok: lv.grind > 0.3 && rms(s) > 3e-3, detail: `grind ${lv.grind.toFixed(2)}, ${fmtDb(rms(s))}` }),
+  },
+  // ── Sea-Doo (pwc) voice: RXP-X 325 — Rotax 1630 triple + supercharger + jet pump + hull (chase camera ≈9 m behind) ──
+  { name: 'pwc idle 1700 rpm', engine: 'pwc', base: PWC_IDLE, check: tonalAt(pwcFiringHz(PWC.idleRpm)) },
+  { name: 'pwc full 8000 rpm, 55 kt', engine: 'pwc', base: PWC_FULL, check: tonalAt(pwcFiringHz(PWC.maxRpm)) },
+  { name: 'pwc full, rider view (cockpit)', engine: 'pwc', base: { ...PWC_FULL, cameraMode: 'cockpit' }, check: tonalAt(pwcFiringHz(PWC.maxRpm)) },
+  {
+    name: 'pwc airborne, pump ventilating (ECU 4200 rpm)', engine: 'pwc', base: PWC_AIR,
+    check: (s, sr, _all, lv) => {
+      const r = tonalAt(pwcFiringHz(PWC.ventRpm))(s, sr);
+      return { ok: r.ok && lv.pumpVent > 0.5 && lv.pump < 0.1, detail: `${r.detail}, vent ${lv.pumpVent.toFixed(2)}, pump roar ${lv.pump.toFixed(2)}` };
+    },
+  },
+  { name: 'pwc revving 6000 rpm in neutral (supercharger whine)', engine: 'pwc', base: PWC_REV, check: whineAt(superchargerWhineHz(6000)) },
+  {
+    name: 'pwc start (crank, catch)', engine: 'pwc', tick: 0.05, seconds: 2, window: [0, 2],
+    base: { ...PWC_BASE, rpm: 500, starting: true, vessel: pwcHull(pwcJet(500, 0, 0, 0)) },
+    events: [{ at: 1.2, inputs: { starting: false, engineRunning: true, rpm: PWC.idleRpm, vessel: PWC_IDLE.vessel } }],
+    check: (s, sr, _all, lv) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const crank = win(0.1, 1.1);
+      const run = win(1.5, 1.95);
+      return { ok: crank > 1e-3 && run > 1e-3 && lv.oneShots >= 1, detail: `cranking ${fmtDb(crank)}, running ${fmtDb(run)}, ${lv.oneShots} catch` };
+    },
+  },
+  {
+    name: 'pwc stop (tether pulled, run-down)', engine: 'pwc', tick: 0.05, seconds: 2, window: [0, 2], base: PWC_IDLE,
+    events: [{ at: 0.6, inputs: { engineRunning: false, rpm: 0, vessel: pwcHull(pwcJet(0, 0, 0, 0)) } }],
+    check: (s, sr, _all, lv) => {
+      const win = (a: number, b: number) => rms(s.subarray(Math.round(a * sr), Math.round(b * sr)));
+      const idle = win(0.3, 0.6);
+      const down = win(0.62, 0.85);
+      const after = win(1.5, 2);
+      return {
+        ok: down > after * 1.5 && after < idle * 0.5 && lv.oneShots >= 1,
+        detail: `idle ${fmtDb(idle)}, running down ${fmtDb(down)}, stopped ${fmtDb(after)}, ${lv.oneShots} cough`,
+      };
+    },
+  },
+  {
+    name: 'pwc throttle chop at 7500 rpm (blow-off)', engine: 'pwc', tick: 0.02, seconds: 1.5, window: [0, 1.5],
+    base: { ...PWC_FULL, rpm: 7500, vessel: pwcHull(pwcJet(7500, 1, 1, 1, { flow: 0.26, jetSpeed: 45 }), { speedMs: 25, planing: 1 }) },
+    events: [{ at: 0.6, inputs: { rpm: 5200, power: 0.05, vessel: pwcHull(pwcJet(5200, 0.05, 0.4, 1, { flow: 0.1, jetSpeed: 25 }), { speedMs: 25, planing: 1 }) } }],
+    check: (s, _sr, _all, lv) => ({ ok: lv.oneShots >= 1 && rms(s) > 2e-3, detail: `${lv.oneShots} blow-off, ${fmtDb(rms(s))}` }),
+  },
+  {
+    name: 'pwc iBR bucket clunk (neutral → reverse)', engine: 'pwc', tick: 0.05, window: [0.45, 1.2], base: PWC_IDLE,
+    events: [{ at: 0.5, inputs: { vessel: pwcHull(pwcJet(PWC.idleRpm, 0.1, 0.05, -1, { flow: 0.03, jetSpeed: 6 })) } }],
+    check: (s, _sr, _all, lv) => ({ ok: lv.gearClunks === 1 && rms(s) > 2e-3, detail: `${lv.gearClunks} bucket clunk, ${fmtDb(rms(s))}` }),
+  },
+  {
+    name: 'pwc landing a jump (slam + splash)', engine: 'pwc', tick: 0.02, seconds: 2, window: [0.8, 1.3], base: PWC_AIR,
+    events: [{ at: 0.8, inputs: { rpm: 7600, power: 0.9, vessel: pwcHull(pwcJet(7600, 0.95, 0.9, 1, { flow: 0.25, jetSpeed: 44 }), { speedMs: 24, planing: 0.8, heaveMs: -3 }) } }],
+    check: (s, sr, all, lv) => {
+      const before = rms(all.subarray(Math.round(0.4 * sr), Math.round(0.78 * sr)));
+      const r = rms(s);
+      return { ok: lv.oneShots >= 1 && r > before * 1.3, detail: `in the air ${fmtDb(before)}, landing ${fmtDb(r)}, ${lv.oneShots} one-shot(s)` };
+    },
+  },
+  {
+    name: 'pwc slapping chop at 40 kt', engine: 'pwc', tick: 0.02, seconds: 2, window: [0, 2],
+    base: { ...PWC_FULL, rpm: 6500, vessel: pwcHull(pwcJet(6500, 0.7, 0.8, 1, { flow: 0.22, jetSpeed: 38 }), { speedMs: 20.6, planing: 0.9, heaveMs: 0.9, pitchRate: 0.25, rollRate: 0.1 }) },
+    check: (s, _sr, _all, lv) => ({ ok: lv.hullSlaps >= 8 && rms(s) > 3e-3, detail: `${lv.hullSlaps} slaps (${lv.slapRate.toFixed(1)}/s expected), ${fmtDb(rms(s))}` }),
+  },
+  // End Sea-Doo (pwc) voice
   // ── Combat: the gun, explosions, missiles ──
   { name: 'GAU-8/A burst (outside, 30 m)', base: {}, combat: GAU8, tick: 0.05, window: [0.4, 2], check: fundamentalAt(65) },
   { name: 'GAU-8/A burst (cockpit)', base: { cameraMode: 'cockpit' }, combat: { ...GAU8, cockpit: true }, tick: 0.05, window: [0.4, 2], check: fundamentalAt(65) },
@@ -412,6 +574,21 @@ export function mixChecks(r: SelfTestResult[]): SelfTestResult[] {
   rel('mix: the JetRanger is about as loud as the Cessna at full power', 'piston full power 2700 rpm', 'turboshaft hover (rotor)', -6, 6);
   rel('mix: the F-16 at MIL is louder than the JetRanger', 'turboshaft hover (rotor)', 'jet MIL (100 %)', 2);
   rel('mix: the rotor horn is audible over the JetRanger cabin', 'turboshaft hover, cockpit', 'low rotor RPM horn (cockpit)', -12, 10);
+  rel('mix: marine idle < cruise', 'marine idle 700 rpm (moored)', 'marine cruise 3000 rpm, planing 28 kt', 4);
+  rel('mix: marine cruise ≤ full', 'marine cruise 3000 rpm, planing 28 kt', 'marine full 3500 rpm, 34 kt', 0.3);
+  // The saloon of a sports yacht is quiet: the engines are under the floor, the hull around you.
+  rel('mix: marine saloon quieter than on deck', 'marine cruise, cockpit (saloon helm)', 'marine cruise 3000 rpm, planing 28 kt', 1, 15);
+  rel('mix: water noise is a big part of the V50 at speed', 'marine cruise 3000 rpm, planing 28 kt', 'marine water at 30 kt (engines silent)', -12, 0);
+  rel('mix: the F-16 at MIL is louder than the V50 flat out', 'marine full 3500 rpm, 34 kt', 'jet MIL (100 %)', 3);
+  rel('mix: the V50 flat out is about as loud as the Cessna at full power', 'piston full power 2700 rpm', 'marine full 3500 rpm, 34 kt', -8, 4);
+  // Sea-Doo (pwc) voice
+  rel('mix: pwc idle < full throttle', 'pwc idle 1700 rpm', 'pwc full 8000 rpm, 55 kt', 6);
+  rel('mix: pwc airborne (ventilating) is quieter than full throttle', 'pwc airborne, pump ventilating (ECU 4200 rpm)', 'pwc full 8000 rpm, 55 kt', 1.5);
+  // No cabin: the rider hears about what the chase camera does (the engine under the seat, the water all around).
+  rel('mix: pwc rider view about as loud as the chase view', 'pwc full 8000 rpm, 55 kt', 'pwc full, rider view (cockpit)', -4, 6);
+  rel('mix: the F-16 at MIL is louder than the jet ski flat out', 'pwc full 8000 rpm, 55 kt', 'jet MIL (100 %)', 3);
+  rel('mix: the jet ski flat out is about as loud as the V50 flat out', 'marine full 3500 rpm, 34 kt', 'pwc full 8000 rpm, 55 kt', -3, 8);
+  // End Sea-Doo (pwc) voice
   const maxPeak = Math.max(...r.map((x) => x.peak));
   out.push({ name: 'mix: nothing clips (limiter + soft clipper)', rms: 0, db: db(maxPeak), peak: maxPeak, ok: maxPeak <= 0.99, detail: `max peak ${maxPeak.toFixed(3)} (${fmtDb(maxPeak)})` });
   return out;

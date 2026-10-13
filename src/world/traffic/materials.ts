@@ -9,7 +9,10 @@
  *    pattern of warm windows at dusk (`uNight`), and hulls below the waterline
  *    fade into the water colour.
  *  - `createWakeMaterial`: foam trail + Kelvin arm ribbons, displaced by the
- *    same Gerstner trains as the drawn sea (`packSeaWaves`).
+ *    same Gerstner trains as the drawn sea (`packSeaWaves`). The trail uses the
+ *    player wake's look (src/world/water/shaders.ts): foam as a world-space
+ *    lace between upwelling boils, thresholded by a density that decays with
+ *    age (wakeField.ts foamCoverage), over a turquoise band of aerated water.
  *  - `createPointMaterial`: ONE point sprite material for nav/strobe/landing
  *    lights (additive), bow spray and far-aircraft dots (alpha, sun-lit) via
  *    premultiplied blending; lights only lose light to the haze, dots/spray
@@ -231,6 +234,9 @@ vec3 seaDisplace( vec3 wp ) {
 }
 `;
 
+/** Traffic wake foam cell size (m): the lace between boils, as the player's wake draws it for a ~40 m hull. */
+export const TRAFFIC_FOAM_CELL = 2.2;
+
 export function createWakeMaterial(shared: LightingUniforms, waves: SeaWaveUniforms): THREE.ShaderMaterial {
   const m = new THREE.ShaderMaterial({
     name: 'traffic.wake',
@@ -240,12 +246,14 @@ export function createWakeMaterial(shared: LightingUniforms, waves: SeaWaveUnifo
       attribute float aType;
       varying vec4 vWake;
       varying float vType;
+      varying vec2 vWorld;
       ${SEA_DISPLACE_GLSL}
       #include <fog_pars_vertex>
       void main() {
         vWake = aWake;
         vType = aType;
         vec4 wp = modelMatrix * vec4( position, 1.0 );
+        vWorld = wp.xz;
         // sea wakes ride the drawn waves (lakes are flat)
         if ( position.y < 1.0 ) wp.xyz += seaDisplace( wp.xyz );
         vec4 mvPosition = viewMatrix * wp;
@@ -259,8 +267,23 @@ export function createWakeMaterial(shared: LightingUniforms, waves: SeaWaveUnifo
       uniform float uTime;
       varying vec4 vWake;
       varying float vType;
+      varying vec2 vWorld;
       #include <fog_pars_fragment>
       ${NOISE_GLSL}
+      vec2 tHash2( vec2 p ) { return vec2( tHash( p ), tHash( p + 17.13 ) ); }
+      // the player wake's boils (shaders.ts wFoamCells, isotropic): 1 at a boil's centre, → 0 between boils
+      float tBoils( vec2 p, float t ) {
+        vec2 i = floor( p ); vec2 f = p - i;
+        float best = 0.0;
+        for ( int yy = -1; yy <= 1; yy++ ) for ( int xx = -1; xx <= 1; xx++ ) {
+          vec2 g = vec2( float( xx ), float( yy ) );
+          vec2 h = tHash2( i + g );
+          vec2 o = g + 0.5 + 0.25 * sin( t * ( 0.55 + 0.6 * h.yx ) + 6.2831 * h ) - f;
+          float r = 0.6 + 0.8 * fract( h.x * 7.13 + h.y * 3.71 );
+          best = max( best, exp( - 3.14159 * dot( o, o ) / ( r * r ) ) );
+        }
+        return best;
+      }
       void main() {
         float along = vWake.x;
         float across = vWake.y;
@@ -270,14 +293,29 @@ export function createWakeMaterial(shared: LightingUniforms, waves: SeaWaveUnifo
         float a;
         float white;
         if ( vType < 0.5 ) {
-          // turbulent wake: white churn at the stern turning into a pale band of bubbles that breaks into streaks
+          // turbulent wake: the player wake's look — a foam density that decays with age, drawn as
+          // lace between upwelling boils (wakeField.ts foamCoverage: 0.9 d^0.9 threshold), over a
+          // band of turquoise aerated water that outlasts the white
           float prof = pow( max( 1.0 - across * across, 0.0 ), 0.7 );
-          vec2 q = vec2( along * 0.32, across * 4.5 );
-          float n = tNoise( q + vec2( 0.0, uTime * 0.12 ) ) * 0.5 + tNoise( q * 2.3 + 5.1 ) * 0.3 + tNoise( q * 5.3 + vec2( 1.7, uTime * 0.3 ) ) * 0.2;
-          float streak = smoothstep( 0.28 + 0.4 * age, 0.85, n );
-          float core = exp( -across * across * 4.0 ) * ( 1.0 - smoothstep( 0.0, 0.3, age ) );
-          a = strength * prof * mix( 0.12 + 0.88 * streak, 1.0, core ) * ( 1.0 - 0.6 * age );
-          white = mix( 0.35 + 0.65 * streak, 1.0, core ) * ( 1.0 - smoothstep( 0.15, 0.7, age ) * 0.6 );
+          float streak = tNoise( vec2( along / 11.0, across * 2.2 ) ) * 0.6 + tNoise( vec2( along / 4.5, across * 4.0 ) + 7.3 ) * 0.4;
+          float fresh = exp( - age * 9.0 );
+          float dens = strength * prof * ( fresh * ( 0.9 + 0.4 * streak ) + ( 1.0 - fresh ) * ( 0.25 + 0.6 * streak ) * ( 1.0 - age ) );
+          float kf = 0.9 * exp( 0.9 * log( max( dens, 1e-4 ) ) );
+          float gate = smoothstep( 0.0, 0.08, dens );
+          float cov = gate * clamp( kf, 0.0, 1.0 );
+          float fwp = max( length( fwidth( vWorld ) ), 1e-3 );
+          float res = 1.0 - smoothstep( 0.2 * ${TRAFFIC_FOAM_CELL.toFixed(1)}, 0.75 * ${TRAFFIC_FOAM_CELL.toFixed(1)}, fwp );
+          if ( res > 0.0 && dens > 0.004 ) {
+            vec2 q = vWorld / ${TRAFFIC_FOAM_CELL.toFixed(1)};
+            q += ( vec2( tNoise( q * 0.23 + 3.1 ), tNoise( q * 0.23 - 7.7 ) ) - 0.5 ) * 1.9;
+            float e = tBoils( q, uTime * 0.9 ) + ( tNoise( q * 5.0 ) - 0.5 ) * 0.3;
+            float soft = max( 0.13, 1.3 * fwp / ${TRAFFIC_FOAM_CELL.toFixed(1)} );
+            cov = mix( cov, gate * ( 1.0 - smoothstep( kf - soft, kf + soft, e ) ), res );
+          }
+          // aerated water under and around it
+          float aer = strength * prof * ( 1.0 - age ) * ( 0.35 + 0.25 * streak );
+          a = max( cov, aer * 0.55 );
+          white = cov / max( a, 1e-3 );
         } else {
           // Kelvin arm: a train of short feathered crests, angled across the arm, strongest near its inner edge
           // (across −1 inner edge … +1 outer): crests run obliquely across the band, echelon-fashion
@@ -297,7 +335,7 @@ export function createWakeMaterial(shared: LightingUniforms, waves: SeaWaveUnifo
         // lit foam (Lambert, facing up) with a touch of sky; bubbles under the surface look pale turquoise
         float ndl = max( uSunDir.y, 0.0 );
         vec3 lit = 0.9 * ( uSunColor * ndl + uSky ) / 3.14159;
-        vec3 col = lit * mix( vec3( 0.42, 0.72, 0.74 ), vec3( 1.0 ), white );
+        vec3 col = lit * mix( vec3( 0.14, 0.38, 0.36 ), vec3( 0.92, 0.95, 0.95 ), white );
         gl_FragColor = vec4( col, a );
         #include <fog_fragment>
         #include <tonemapping_fragment>

@@ -4,8 +4,9 @@ import { getHeightfield } from '../../../src/world/heightfield';
 import { getLayout } from '../../../src/world/layout';
 import {
   createSeaPlan, createMarina, relWind, sailingTriangle, trapezoidTime, trapezoidDist, vesselPose, vesselTrack, mooredPose, newVesselPose,
-  routeMinDepth, marinaStructureDistance, toLocal, VESSEL_DIMS, type SeaPlan,
+  routeMinDepth, marinaStructureDistance, toLocal, toWorld, validateRoute, visitorBerthDistance, VESSEL_DIMS, VISITOR_BERTH_CLEARANCE, type SeaPlan, type SeaRoute,
 } from '../../../src/world/traffic/sea';
+import { createPath } from '../../../src/world/traffic/path';
 import { samplePath, newPathSample } from '../../../src/world/traffic/path';
 import { CONFIG } from '../../../src/config';
 
@@ -104,6 +105,47 @@ describe('sea traffic: marina', () => {
         });
         expect(separated, `berths ${i} and ${j} overlap`).toBe(true);
       }
+  });
+
+  it('the visitors\' berth is reserved: no moored boat in or beside it, even with every berth filled', () => {
+    const full = structuredClone(CONFIG);
+    full.world.traffic.sea.berthFill = 1;
+    for (const m of [createMarina(getLayout()), createMarina(getLayout(), full)]) {
+      const vb = m.visitor.berth;
+      expect(vb.u1 - vb.u0).toBeGreaterThan(5);
+      expect(vb.w1 - vb.w0).toBeGreaterThan(25);
+      for (const b of m.berths) {
+        const d = VESSEL_DIMS[b.kind];
+        // the boat's footprint (along ±u for pontoon berths) stays out of the box + 1 m
+        const { u, w } = toLocal(m.frame, b.x, b.z);
+        const hl = (d.length * b.scale) / 2;
+        const hb = (d.beam * b.scale) / 2;
+        const overlap = u + hl > vb.u0 - 1 && u - hl < vb.u1 + 1 && w + hb > vb.w0 - 1 && w - hb < vb.w1 + 1;
+        expect(overlap).toBe(false);
+      }
+      // the reservation removes nothing the default marina had (its boats are unchanged)
+      expect(m.visitor.w0).toBe(m.pontoons[2].w1);
+    }
+  });
+
+  it('a route through the visitors\' berth is rejected (the launch too)', () => {
+    const m = createMarina(getLayout());
+    const vb = m.visitor.berth;
+    const loc: [number, number][] = [[(vb.u0 + vb.u1) / 2, 150], [(vb.u0 + vb.u1) / 2, 300], [60, 300], [60, 150]];
+    const pts = loc.map(([u, w]) => toWorld(m.frame, u, w));
+    const route: SeaRoute = { id: 'launch-test', kind: 'launch', mode: 'loop', path: createPath(pts.map((p) => ({ ...p, y: 0, v: 3 })), true, 5), level: 0, phase: 0, scale: 1, variant: 0, sea: 1 };
+    expect(validateRoute(route, water, m)).toBe(false);
+    // (the same loop 45 m to the east is fine)
+    const east = loc.map(([u, w]) => toWorld(m.frame, u + 45 * (u < 0 ? 1 : 0) + (u < 0 ? 0 : 5), w));
+    expect(validateRoute({ ...route, path: createPath(east.map((p) => ({ ...p, y: 0, v: 3 })), true, 5) }, water, m)).toBe(true);
+    // … and every real route keeps its distance
+    for (const r of plan.routes) {
+      const s = newPathSample();
+      for (let d = 0; d < r.path.length; d += 20) {
+        samplePath(r.path, d, s);
+        if (Math.abs(s.x - m.frame.ox) < 1500 && Math.abs(s.z - m.frame.oz) < 1500) expect(visitorBerthDistance(m, s.x, s.z)).toBeGreaterThan(VISITOR_BERTH_CLEARANCE - 1);
+      }
+    }
   });
 
   it('berths are clear of the breakwaters and quay', () => {

@@ -65,6 +65,8 @@ export const UI_CSS = `
 .tfs-picker-list [role="option"].tfs-active { background: rgba(255,193,92,0.13); }
 .tfs-picker-list [role="option"][aria-selected="true"]::after { content: "✓"; position: absolute; right: 11px; top: 9px; color: var(--tfs-gold); font-weight: 800; }
 .tfs-opt-name { display: block; font-size: 13.5px; font-weight: 700; }
+.tfs-picker-list .tfs-picker-group { margin: 6px 4px 2px; padding: 6px 7px 2px; border-top: 1px solid rgba(255,255,255,0.09); font-size: 10.5px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(143,211,255,0.85); cursor: default; }
+.tfs-card .tfs-tag { display: inline-block; margin-left: 7px; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 800; font-style: normal; letter-spacing: 0.1em; vertical-align: 2px; color: #bfeaff; background: rgba(57,198,255,0.16); border: 1px solid rgba(111,211,255,0.4); }
 .tfs-opt-desc { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.35; color: rgba(244,241,234,0.68); }
 @keyframes tfs-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
 

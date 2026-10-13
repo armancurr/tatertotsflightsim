@@ -1,11 +1,14 @@
 /**
  * Synthesised sound (owned by src/audio): the flown aircraft's engine voice (Cessna O-360 + prop,
- * F-16 F110, A-10 TF34s or the JetRanger's turboshaft + rotors; swapped on onAircraftChange / the
- * frame's def), wind, horns, tyres, motors, hydraulics and the crash. Listens for the crash effects' window events:
+ * F-16 F110, A-10 TF34s, the JetRanger's turboshaft + rotors, or a vessel's marine diesels + hull —
+ * the Princess V50, fed from state.vessel by the input tracker; swapped on onAircraftChange / the
+ * frame's def), wind, horns, tyres, motors, hydraulics and the crash. A vessel gets no horns, tyres,
+ * gear/flap motors or touchdowns, and only a little apparent wind. Listens for the crash effects' window events:
  *   `sim:explosion` {detail: {position, size}}  and  `sim:impact` {detail: {position, speed}}.
  * QA hooks on window: `runAudioSelfTest()` and `simAudio` {levels, meter, override, resume, selfTest}.
  */
 import { createAudio, createAudioInputTracker, runAudioSelfTest, type AudioInputs } from '../../audio';
+import { shareAudio } from '../../audio/naval';
 import { A10_WEAPONS } from '../../config';
 import { combatWorld } from '../../combat/world';
 import { secondaryPlan, isAirBurst } from '../../combat/fx/plan';
@@ -40,8 +43,11 @@ const mod: SystemModule = {
   order: 90,
   create(ctx) {
     const w = globalThis as unknown as Win;
-    const soundOf = (s: unknown): EngineSound => (s === 'jet' || s === 'turbofan' || s === 'turboshaft' ? s : 'piston');
+    const soundOf = (s: unknown): EngineSound =>
+      s === 'jet' || s === 'turbofan' || s === 'turboshaft' || s === 'marineDiesel' || s === 'pwc' ? s : 'piston'; // Sea-Doo (pwc) voice: 'pwc'
     const audio = createAudio({ engine: soundOf(ctx.actions?.currentAircraft?.().sound) });
+    // ── naval guns: the navalAudio system plays into this mix (src/audio/naval.ts) ──
+    if (ctx.scene) shareAudio(ctx.scene, audio);
     const track = createAudioInputTracker();
     // Reused per-frame tracker source (no allocation in update).
     const src = {} as Parameters<typeof track>[0];
